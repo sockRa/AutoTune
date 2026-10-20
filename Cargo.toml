@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "crates/autotune-probe",
+    "crates/autotune-power-trial",
+    "crates/autotune-recovery-contract",
+    "crates/autotune-recovery-core",
+    "crates/autotune-recovery-windows",
+    "crates/autotune-recovery-harness",
+]
+resolver = "2"

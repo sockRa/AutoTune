@@ -1,0 +1,12 @@
+[package]
+name = "autotune-recovery-windows"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.99.1"
+publish = false
+
+[dependencies]
+autotune-recovery-contract = { path = "../autotune-recovery-contract" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_SystemInformation", "Win32_Foundation", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Console", "Win32_System_SystemInformation", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }

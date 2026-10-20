@@ -1,0 +1,11 @@
+/target/
+*.probe.json
+.bmad-loop/runs/
+.bmad-loop/cache/
+.bmad-loop/policy.toml
+/_bmad/render/
+/.agents/
+/.claude/
+/.opencode/
+/_bmad/
+/.bmad-loop/
