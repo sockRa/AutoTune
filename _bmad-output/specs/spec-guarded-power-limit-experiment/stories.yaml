@@ -1,0 +1,62 @@
+- id: "recovery-evidence"
+  title: "Reconcile fake recovery evidence and remaining acceptance gaps"
+  description: >-
+    Pilot the existing recovery plan without changing Rust behavior. Inspect the
+    tracked fake-only implementation, docs/windows-recovery.md and
+    docs/windows-storage-v1.md against this SPEC and its acceptance companions.
+    Add docs/recovery-continuation.md with an evidence-to-gap table for real
+    Revoke/StorageFailed delivery, external witness, blocked-call and worker-kill
+    barriers, console closure and the live/cold storage-validation asymmetry.
+    Distinguish implemented, verified now, historical and blocked evidence; do not
+    promote any W or G gate. Run the normal format/lint/workspace-test gates, not
+    ignored/direct tests or the probe. Keep source behavior unchanged. This is
+    the first verification task of the already authorized fake-only continuation.
+  spec_checkpoint: false
+  done_checkpoint: false
+
+- id: "fault-notifications"
+  title: "Deliver authenticated fake-worker revocation and storage failure"
+  description: >-
+    Continue the existing guardian integration gap documented in
+    docs/windows-recovery.md. Wire bounded authenticated Revoke/StorageFailed
+    notifications through the real fake-only guardian/worker loop for supported
+    heartbeat, lease, cancellation and storage-failure paths. Preserve exact
+    guardian-owned recovery epoch, original permit retirement, serialized calls,
+    finite cleanup budget, publication-before-dispatch and fail-closed uncertainty.
+    Add focused regression and fake process/IPC tests. Do not add hardware access,
+    relax storage or process isolation, or claim quiescence from worker death.
+    Use the pilot's evidence table to avoid reimplementing completed work. If an
+    unresolved architecture decision is required, block instead of inventing it.
+  spec_checkpoint: false
+  done_checkpoint: false
+
+- id: "external-witness"
+  title: "Add an external synthetic witness and deterministic call barriers"
+  description: >-
+    Implement the remaining external fake witness and deterministic blocked-call
+    barriers required by recovery-infrastructure-scope.md and W01--W24. Keep
+    synthetic device state observable independently of worker lifetime using only
+    fixed harness-owned roles and isolated test roots. Authenticate and bound any
+    added IPC and preserve the existing bootstrap/trust and schema boundaries.
+    Demonstrate that witness observations survive an owned worker exit and that
+    barriers deterministically distinguish not-entered, entered and returned
+    operations. No arbitrary executable/backend, live device or new recovery
+    authority. Preserve unknown late outcomes as unknown; block on missing design
+    authority rather than weakening invariants.
+  spec_checkpoint: false
+  done_checkpoint: false
+
+- id: "worker-failure-evidence"
+  title: "Exercise owned worker loss and blocked fake calls without false recovery claims"
+  description: >-
+    Using the authenticated notifications, external witness and barriers from the
+    preceding stories, add bounded fake-only worker-kill and blocked/late-call
+    acceptance tests. Observe the outer real-process surface where supported;
+    uncertain calls must not admit a racing replacement writer or another trial.
+    Terminate only test-owned processes, retain unsupported console/job cases as
+    blockers, and preserve cold-scan read-only behavior. Update the evidence table
+    and docs/windows-recovery.md with reproducible fake commands and honest
+    P0/P1 limits. Do not attempt production-root, OS-crash, power-loss or hardware
+    qualification, or resolve the live/cold architecture asymmetry without review.
+  spec_checkpoint: false
+  done_checkpoint: false
