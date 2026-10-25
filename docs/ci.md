@@ -67,3 +67,10 @@ also passed 137 selected tests, fmt, workspace Clippy and all test linking from 
 separate byte-exact commit archive. Neither result establishes repeated-baseline
 acceptance, physical energy, workload execution or Windows recovery acceptance.
 Later evidence-only documentation is not a separate observed CI pass.
+
+[Run 40228219662](https://github.com/sockRa/AutoTune/actions/runs/40228219662)
+passed both platforms for lifecycle delivery `ad73825d232008c74ffc98a5057258bd8204af21`.
+Its separate byte-exact local commit archive passes 151 selected tests (14 lifecycle),
+fmt, workspace Clippy and test linking. Scope exclusions above are unchanged:
+synthetic lifecycle tests do not establish real workload/recovery acceptance.
+The nonblocking checkout Node 20 deprecation annotation persists.
