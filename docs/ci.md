@@ -59,3 +59,11 @@ also completed successfully on both platforms for the energy-helper delivery,
 commit `f722522d0491ee0d9d12aa8c3ac753ec7b62b46b`. The same coverage limits apply.
 The checkout action emitted a nonblocking Node 20 deprecation annotation; its
 pinned replacement is a maintenance follow-up, not a waived failing check.
+
+[Run 40225364733](https://github.com/sockRa/AutoTune/actions/runs/40225364733)
+completed successfully on both platforms for the synthetic repeat-provenance ledger,
+commit `d97671a0e1014db12b080e850632a3e67a238121`. Local Windows GNU verification
+also passed 137 selected tests, fmt, workspace Clippy and all test linking from a
+separate byte-exact commit archive. Neither result establishes repeated-baseline
+acceptance, physical energy, workload execution or Windows recovery acceptance.
+Later evidence-only documentation is not a separate observed CI pass.

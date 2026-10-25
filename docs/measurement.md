@@ -146,8 +146,16 @@ integer requirements described above when decoding it.
 There is no fixed cadence, live gap detection, live collection, workload lifecycle
 (E3.1), baseline/repeated-run comparison (E3.3), live energy integration or optimizer.
 Future work needs approved workload/license/execution decisions, reliable device
-mapping, live time/collection policy, cadence and missing-data handling, baseline
-required metadata vocabulary/completeness, warm-up, variation/drift, seed-matching,
+mapping, live time/collection policy, cadence and missing-data handling, required
+baseline metadata vocabulary/completeness, warm-up, variation/drift, seed-matching,
 conditions and objective/uncertainty policy. The ledger does not evaluate these
 policies. Full E3.3 and Gate B remain open. Synthetic tests do not qualify
 hardware, recovery, performance or any product release gate.
+
+E3.1 investigation found no approved lifecycle transition contract. A meaningful
+pure model still needs definitions of observable phases/readiness, stop requests
+versus termination evidence and races, crash/descendant scope, and phase deadlines
+and resource bounds. Caller-supplied numbers cannot settle those meanings. Recovery
+fake-worker timing, permissions and quiescence contracts are not workload policy;
+successful process exit would not establish E4 correctness. No lifecycle code or
+backend execution is implemented by this ledger.
