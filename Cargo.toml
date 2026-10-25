@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/autotune-measurement",
     "crates/autotune-probe",
     "crates/autotune-power-trial",
     "crates/autotune-recovery-contract",
