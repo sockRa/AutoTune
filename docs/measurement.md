@@ -52,10 +52,47 @@ Exported `u64`/`i64` values require lossless integer consumers. Ordinary JavaScr
 `Number` decoding can round integers beyond `2^53 - 1` in magnitude. No JavaScript
 interoperability is verified.
 
+## Synthetic energy estimate — narrow E3.3 slice
+
+`energy::Policy::new(start_ns, end_ns, maximum_gap_ns)` requires an explicitly
+supplied positive-duration inclusive observation window and positive maximum gap.
+Equal/reversed endpoints or a zero gap return typed `PolicyError`s, not unavailable
+evidence. There are no defaults or approved product thresholds.
+`energy::estimate(&recorder, policy)` returns an immutable owned report.
+
+Exact power observations must exist at both boundaries; there is no endpoint
+interpolation or extrapolation. Every in-window power observation must be available
+and fresh **at receipt**, with adjacent observation gaps <= the supplied maximum.
+Unavailable/stale samples are never filtered out, bridged or treated as zero.
+Any sticky recorder rejection makes the entire window unavailable, since the
+rejected metric/time is unknown. Non-power samples and unavailable/stale power
+outside the window are ignored otherwise. Typed unavailable reasons identify
+missing endpoints, unavailable/stale observations, excess gaps or rejected input;
+no partial energy quantity is exported. Multiple failures have no promised
+precedence. Estimation never modifies the recorder or re-evaluates freshness now.
+
+For valid coverage, piecewise-linear integration uses **observation**, not receipt,
+times: `twice_picojoules = sum((left_mW + right_mW) * delta_ns)`.
+Operands are widened before addition and all u128 sum/product arithmetic is checked.
+One mW-ns is one pJ; the doubled numerator retains half-pJ values without rounding.
+Schema-version-1 JSON exports `twice_picojoules` as a **decimal string**, never a
+JSON number, plus interval count, algorithm identifier, identity, original recorder
+policy, window/gap policy, run-relative time basis and simulated provenance.
+Other integer fields still require lossless consumers as above. Unavailable reports
+carry only a typed reason in their outcome, not an energy quantity.
+
+This is **estimated synthetic energy**, not directly measured physical energy,
+workload correctness or an efficiency claim. No measured-energy producer exists.
+
+Standalone report identity and policy neither uniquely identify nor authenticate
+a trace. The report contains no trace digest or embedded samples: retain the exact
+original recorder export alongside the report. Identity equality is never proof
+of trace integrity.
+
 ## Remaining integration and decisions
 
-There is no fixed cadence, gap detection, live collection, workload lifecycle
-(E3.1), baseline/repeated-run comparison (E3.3), energy integration or optimizer.
+There is no fixed cadence, live gap detection, live collection, workload lifecycle
+(E3.1), baseline/repeated-run comparison (E3.3), live energy integration or optimizer.
 Future work needs approved workload/license/execution decisions, reliable device
 mapping, live time/collection policy, cadence and missing-data handling, baseline
 conditions and objective/uncertainty policy. Synthetic tests do not qualify

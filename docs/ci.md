@@ -42,3 +42,14 @@ locally. Missing prerequisites are failures/blockers, not permission to bypass a
 check. Local Windows GNU results do not verify either hosted Linux or Windows
 MSVC execution. See [ROADMAP.md](../ROADMAP.md) for current evidence and handoff;
 configured CI is not an observed remote pass.
+
+## Observed hosted evidence — 2026-10-25
+
+[Run 40179174853](https://github.com/sockRa/AutoTune/actions/runs/40179174853)
+completed successfully for commit `8778c5f4f241631b8282631039abd50b7d35d881`.
+Both Ubuntu 24.04 and Windows 2025/MSVC passed their configured formatting,
+Clippy and test scopes; Windows also linked all workspace test binaries.
+This closes E1.1's workspace/CI exit criterion, not E1 as a whole or recovery
+acceptance. The run covers that exact commit, not later changes or the dirty
+recovery working tree. OS-conditional steps skipped on the other platform are
+expected; Windows recovery tests remained unexecuted as documented above.
