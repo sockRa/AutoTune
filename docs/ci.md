@@ -82,3 +82,11 @@ verification passes 163 selected tests (12 summary), fmt, workspace Clippy and
 test linking. These descriptive synthetic summaries do not establish statistical
 sufficiency, baseline comparability, efficiency or workload qualification.
 Evidence-only follow-ups retain the source-delivery observation boundary.
+
+[Run 40231558147](https://github.com/sockRa/AutoTune/actions/runs/40231558147)
+passes both platforms for owner-authorized preservation publication
+`dad05f7d8f78d2b2946f24354409349e30be57e9`. The existing dirty recovery source
+was preserved unchanged, not declared accepted. A separate byte-exact commit
+archive passes Windows GNU fmt/Clippy/workspace linking and 163 selected tests.
+Windows recovery tests remain unexecuted; historical failures, native feasibility
+and G1–G7 blockers are unchanged. This observation does not cover later 6A source.

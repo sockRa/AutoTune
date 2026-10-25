@@ -1,6 +1,7 @@
 //! Pure synthetic telemetry recording. No clocks, hardware, workloads or I/O.
 pub mod energy;
 pub mod lifecycle;
+pub mod metadata;
 pub mod repeat;
 pub mod summary;
 

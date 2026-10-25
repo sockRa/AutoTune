@@ -141,6 +141,46 @@ the recorder or energy schemas. Embedded recorder JSON is a string, not a parsed
 or rewritten object; consumers must preserve its exact bytes and the lossless
 integer requirements described above when decoding it.
 
+## Selected metadata assertions — approved 6A, narrow E3.3 slice
+
+`metadata::Field::new(category, key)` selects an exact key in
+`metadata::Category::{Conditions, Settings, Versions}`. Keys follow the existing
+nonblank/256-UTF-8-byte/no-control convention; there is no key vocabulary,
+trimming, case folding, Unicode normalization or numeric interpretation.
+`metadata::Selection::new(fields)` takes an explicit ordered vector, rejects
+duplicate category/key pairs and allows an empty selection. It never selects
+additional keys automatically. Counts follow the supplied vector, not product
+defaults or a total memory/serialization budget.
+
+`metadata::report(left_run, right_run, selection)` accepts immutable
+`repeat::Run` references and returns `Result<Report, serde_json::Error>` without
+I/O or parsing recorder JSON. Each observation retains its selected field and
+independent left/right evidence: `provided` with exact value, `key_absent`, or
+`category_unavailable` with exact reason. Only two provided strings produce
+`equal` or `different`. Either missing/unavailable side produces `unknown`, even
+when both sides have the same absence or unavailable reason. Equality concerns
+caller assertion strings only, not actual settings, identity or execution.
+Unselected differences are not observations; empty selection is not a pass.
+
+The owned report exposes immutable `selection()`, `observations()`,
+`left_run_json()`, `right_run_json()` and `comparability()` accessors.
+Each observation exposes `field()`, `left()`, `right()` and `outcome()`.
+Version-1 deterministic `to_json()` retains complete serialized left/right Run
+snapshots, including identity, all context and each exact original recorder JSON
+string. These are nested JSON **strings**: preserve their bytes and use lossless
+integer consumers when decoding. Later source changes cannot rewrite a report.
+Source snapshots contain unselected context too; selection limits observations,
+not retention or privacy redaction. Review metadata before sharing reports.
+
+Provenance is `simulated`; comparability is always `not_assessed`. No overall
+pass, required-baseline vocabulary, completeness, correctness, improvement or
+efficiency verdict exists. Recorder rejection remains in the source snapshot;
+it does not prevent observing retained assertion strings. A Run does not carry
+ledger-wide rejection state, so that state is neither assessed nor inferred;
+retain the ledger separately when needed. This additive report changes no
+existing schema and does not close E3.3 or Gate B. Actual baseline requirements,
+variation/drift, licensed workloads and E7.2 objective policies remain unresolved.
+
 ## Synthetic direct-worker lifecycle — narrow E3.1 slice
 
 Owner decision (2026-10-25, recommended choices 1A–5A/9A): implement the pure
