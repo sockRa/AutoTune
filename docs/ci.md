@@ -53,3 +53,9 @@ This closes E1.1's workspace/CI exit criterion, not E1 as a whole or recovery
 acceptance. The run covers that exact commit, not later changes or the dirty
 recovery working tree. OS-conditional steps skipped on the other platform are
 expected; Windows recovery tests remained unexecuted as documented above.
+
+[Run 40180217837](https://github.com/sockRa/AutoTune/actions/runs/40180217837)
+also completed successfully on both platforms for the energy-helper delivery,
+commit `f722522d0491ee0d9d12aa8c3ac753ec7b62b46b`. The same coverage limits apply.
+The checkout action emitted a nonblocking Node 20 deprecation annotation; its
+pinned replacement is a maintenance follow-up, not a waived failing check.
