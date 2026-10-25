@@ -218,6 +218,53 @@ does not change recorder, energy, repeat or recovery formats. Integers require
 lossless consumers as above. Count/string limits bound retained evidence, not total
 serialization memory, real execution or resources.
 
+## Synthetic warm-up and descriptive summary — narrow E3.3 slice
+
+Owner-approved choices 7A/8A (2026-10-25) authorize caller-selected leading
+observation exclusion and descriptive **n/min/max**, not successful warm-up,
+statistical sufficiency, a baseline verdict or numeric product thresholds.
+Construct `summary::Policy::new(temperature, graphics_clock, memory_clock,
+gpu_utilization, memory_utilization, power)` with six explicit `usize` counts.
+There is no `Default`; zero is valid. `warmup_for(metric)` exposes the count.
+`summary::describe(&recorder, policy)` returns `Result<Report, serde_json::Error>`.
+It performs no I/O, time advancement, floating-point or sum arithmetic.
+
+Each metric counts its own observations in original recorder append order,
+including unavailable/stale observations. The first requested count is classified
+`warmup`; all remaining observations are `included`. Included means selected for
+calculation, **not validated usable**. No sample is discarded or zero-filled.
+`metrics()` always contains temperature, graphics clock, memory clock, GPU
+utilization, memory utilization and power in that order. Each immutable entry
+retains metric-derived unit, requested warm-up, observed count, and classifications
+with zero-based **global source sample indices**, not per-metric indices.
+
+The internal conservative missing-data rules are not new baseline acceptance
+policy: no observations, fewer observations than requested warm-up, and exactly
+exhausted observations have distinct typed `InsufficientReason`s. There is no
+fallback to shorter warm-up. Any unavailable/stale **included** observation makes
+the whole metric insufficient, with no n/min/max in its outcome. Warm-up-only
+missing/stale evidence does not block otherwise complete included evidence.
+Any sticky recorder rejection overrides every metric conservatively, because the
+rejected input's metric/time is unknown. Multiple defects have no promised reason
+precedence; the exact original source remains available for details.
+
+Only complete fresh available post-warm-up evidence produces `Outcome::Described`:
+`n` is its observation count (not elapsed time, independent trials or a sufficiency
+claim), and signed `i64` min/max retain original units exactly. One observation
+may produce n=1 and min=max. Variation and drift are always `not_assessed`; no
+correctness, comparability, efficiency, improvement or ranking verdict is made.
+
+The owned immutable report snapshots the **exact original recorder JSON string**
+(`recorder_json()`), identity, recorder policy, summary policy and rejection marker.
+Source mutation/drop cannot change it; describing/exporting never mutates the
+source. Deterministic schema-version-1 JSON includes simulated provenance,
+run-relative time basis and all six summaries. Raw readings/reasons/times remain
+in the embedded string without parsing or rewriting. Integers (including `usize`
+counts/indices, `u64` seeds/times and `i64` extrema) require lossless consumers;
+ordinary JavaScript Number is not sufficient. Storage/loops derive from accepted
+samples and six metrics, never requested warm-up magnitude. This is not a total
+memory budget and changes no recorder/energy/repeat/lifecycle schema.
+
 ## Remaining integration and decisions
 
 There is no fixed cadence, live gap detection, live collection, real workload
@@ -225,7 +272,8 @@ lifecycle integration (E3.1), baseline/repeated-run comparison (E3.3), live ener
 integration or optimizer.
 Future work needs approved workload/license/execution decisions, reliable device
 mapping, live time/collection policy, cadence and missing-data handling, required
-baseline metadata vocabulary/completeness, warm-up, variation/drift, seed-matching,
+baseline metadata vocabulary/completeness, qualified warm-up selection and
+acceptance, variation/drift, seed-matching,
 conditions and objective/uncertainty policy. The ledger does not evaluate these
 policies. Full E3.3 and Gate B remain open. Synthetic tests do not qualify
 hardware, recovery, performance or any product release gate.
@@ -236,4 +284,5 @@ real readiness/termination evidence, cancellation/escalation, descendants/orphan
 resource bounds and clock qualification remain unfinished integration work.
 Recovery fake-worker contracts are not workload policy. No workload/process or
 hardware execution is implemented or authorized; process exit is not E4 correctness.
-E3.3 metadata evaluation, warm-up and descriptive statistics are separate work.
+E3.3 metadata-difference reporting remains separate work. The synthetic summary
+does not complete E3.3 or Gate B or choose required baseline conditions.

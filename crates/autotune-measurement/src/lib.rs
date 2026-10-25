@@ -2,6 +2,7 @@
 pub mod energy;
 pub mod lifecycle;
 pub mod repeat;
+pub mod summary;
 
 use serde::Serialize;
 
