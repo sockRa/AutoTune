@@ -74,3 +74,11 @@ Its separate byte-exact local commit archive passes 151 selected tests (14 lifec
 fmt, workspace Clippy and test linking. Scope exclusions above are unchanged:
 synthetic lifecycle tests do not establish real workload/recovery acceptance.
 The nonblocking checkout Node 20 deprecation annotation persists.
+
+[Run 40229676176](https://github.com/sockRa/AutoTune/actions/runs/40229676176)
+passed both platforms for warm-up/summary delivery
+`e85c3d9b982de15d4871d1edc166403513b16e4a`. Separate byte-exact local commit
+verification passes 163 selected tests (12 summary), fmt, workspace Clippy and
+test linking. These descriptive synthetic summaries do not establish statistical
+sufficiency, baseline comparability, efficiency or workload qualification.
+Evidence-only follow-ups retain the source-delivery observation boundary.
