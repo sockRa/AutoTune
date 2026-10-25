@@ -1,5 +1,6 @@
 //! Pure synthetic telemetry recording. No clocks, hardware, workloads or I/O.
 pub mod energy;
+pub mod repeat;
 
 use serde::Serialize;
 

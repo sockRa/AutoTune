@@ -89,11 +89,65 @@ a trace. The report contains no trace digest or embedded samples: retain the exa
 original recorder export alongside the report. Identity equality is never proof
 of trace integrity.
 
+## Synthetic repeat-run provenance ledger — narrow E3.3 slice
+
+Construct `repeat::Policy::new(run_capacity,
+maximum_metadata_entries_per_category)` with two explicit positive counts, then
+`repeat::Ledger::new(policy)`. Neither count has a default or triggers
+preallocation. `ledger.append(&recorder, context)` snapshots the **exact original
+Recorder JSON string**, including raw samples, original recording policy and
+sticky recorder rejections, plus its immutable identity and supplied context.
+Empty, stale, missing-data and rejected recorders are retainable evidence, not
+successful or complete baselines. No energy/performance aggregation is performed.
+
+`repeat::Context` has three required explicit fields: `conditions`, `settings`
+and `versions`. Each is `repeat::Metadata::Provided { entries }`, a nonempty
+`BTreeMap<String, String>`, or `Unavailable { reason }`. A provided map is only a
+**partial caller assertion**: it does not establish completeness, actually applied
+settings, readback, licensed execution or physical identity. There is no required
+vocabulary or approval of its contents. Keys have exact case-sensitive string
+semantics with no normalization or trimming; maps export in sorted key order.
+All keys, values and unavailable reasons must be nonblank, at most 256 UTF-8 bytes
+and contain no control characters, matching the recorder identity convention.
+The entry limit applies independently to each category, not to their sum;
+unavailable categories carry only their reason and consume no entries.
+
+Context validation occurs at append. Typed `repeat::Error` variants distinguish
+zero policy counts, empty/overfull categories, invalid key/value/reason (with
+`Category` and `Field`), duplicate run IDs, full run capacity and serialization
+failure. Any failed append sets sticky `had_rejections` without changing accepted
+snapshots; later valid appends do not clear it. No eviction or replacement occurs.
+Multiple simultaneous violations have no promised error precedence. Invalid
+policy construction creates no ledger. Counts bound retained evidence, not a
+total memory/serialization budget; recorder snapshot size follows the supplied
+recorder's own policy and evidence.
+
+Run IDs must be distinct, even if other identity fields change. IDs are labels,
+not authentication or trace-integrity proof. Other workload/version/seed/device
+labels may differ freely and are preserved, never silently equated. Timestamps
+stay relative to each run independently: equal or differing offsets imply no
+cross-run epoch relationship or comparability.
+
+`runs()` exposes an immutable append-ordered slice of `repeat::Run`; its
+`identity()`, `context()` and `recorder_json()` accessors expose only immutable
+snapshots. Later source/context changes cannot rewrite retained evidence.
+`policy()`, `had_rejections()` and `assessment()` expose immutable ledger state.
+Deterministic `to_json()` exports schema version 1, simulated provenance,
+run-relative time basis, immutable policy, ledger rejection marker and snapshots.
+Its assessment is always `not_evaluated` (`repeat::Assessment::NotEvaluated`),
+never a successful baseline, comparability or efficiency verdict. Repeated export
+does not modify sources or re-age evidence. This internal format does not change
+the recorder or energy schemas. Embedded recorder JSON is a string, not a parsed
+or rewritten object; consumers must preserve its exact bytes and the lossless
+integer requirements described above when decoding it.
+
 ## Remaining integration and decisions
 
 There is no fixed cadence, live gap detection, live collection, workload lifecycle
 (E3.1), baseline/repeated-run comparison (E3.3), live energy integration or optimizer.
 Future work needs approved workload/license/execution decisions, reliable device
 mapping, live time/collection policy, cadence and missing-data handling, baseline
-conditions and objective/uncertainty policy. Synthetic tests do not qualify
+required metadata vocabulary/completeness, warm-up, variation/drift, seed-matching,
+conditions and objective/uncertainty policy. The ledger does not evaluate these
+policies. Full E3.3 and Gate B remain open. Synthetic tests do not qualify
 hardware, recovery, performance or any product release gate.
