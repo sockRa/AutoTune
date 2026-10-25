@@ -89,6 +89,7 @@ fn bootstrap_strict_roundtrip_secret_redaction_and_handle_inventory_rejections()
         pipe: format!(r"\\.\pipe\AutoTune-fake-v1-{}", "a".repeat(64)),
         key: [9; 32],
         fixture_root: Some("synthetic:fixture".into()),
+        console_test: false,
         profile: FakeProfile {
             device: support::preparation().device,
             runtime: support::runtime(),
@@ -107,6 +108,27 @@ fn bootstrap_strict_roundtrip_secret_redaction_and_handle_inventory_rejections()
     );
     assert!(format!("{b:?}").contains("[REDACTED]"));
     assert!(!format!("{b:?}").contains("9, 9"));
+    let mut console = b.clone();
+    console.console_test = true;
+    console.validate().unwrap(); // Guardian stays detached; only its coordinator opts in.
+    assert_eq!(
+        decode::<ProcessBootstrap>(&canonical(&console).unwrap(), BOOTSTRAP_LIMIT).unwrap(),
+        console
+    );
+    let mut worker = b.clone();
+    worker.context.supervisor_role = Role::Guardian;
+    worker.context.child_role = Role::Worker;
+    worker.fixture_root = None;
+    worker.handles.custody = Some(CustodyHandle {
+        handle: 108,
+        identity: worker.context.child.image,
+    });
+    worker.validate().unwrap();
+    worker.console_test = true;
+    assert!(
+        worker.validate().is_err(),
+        "worker may never request a console"
+    );
     let mut bad = b.clone();
     bad.handles.supervisor_query = 100;
     assert!(bad.validate().is_err());

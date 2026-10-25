@@ -417,6 +417,12 @@ pub enum Message {
     },
     Arm(Box<process::ArmCapsule>),
     Dispatch(Box<process::DispatchProof>),
+    /// Fake-only oracle traffic; neither message retires the pending permit.
+    FakeCall(Box<process::FakeInvocation>),
+    FakeResult {
+        operation_id: u64,
+        result: RawResult,
+    },
     Recorded(process::ResultReceipt),
     StorageFailed(storage::RecoveryWindow),
     Armed {

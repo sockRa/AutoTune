@@ -1,5 +1,16 @@
 /target/
 *.probe.json
+# Local secrets; keep sanitized examples eligible for version control.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Local planning, execution evidence, and machine-specific operations notes.
+/_bmad-output/
+/docs/opencode-setup.md
+/docs/source-backup-review.md
+
 .bmad-loop/runs/
 .bmad-loop/cache/
 .bmad-loop/policy.toml

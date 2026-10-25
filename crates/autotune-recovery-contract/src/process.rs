@@ -71,6 +71,8 @@ pub struct ProcessBootstrap {
     pub pipe: String,
     pub key: Hash,
     pub fixture_root: Option<String>,
+    /// Explicit opt-in for an owned console-closure diagnostic, never normal work.
+    pub console_test: bool,
     pub profile: FakeProfile,
 }
 impl std::fmt::Debug for ProcessBootstrap {
@@ -103,6 +105,7 @@ impl ProcessBootstrap {
             || self.context.child_role != Role::Worker && self.handles.custody.is_some()
             || self.context.child_role == Role::Guardian && self.fixture_root.is_none()
             || self.context.child_role != Role::Guardian && self.fixture_root.is_some()
+            || self.console_test && self.context.child_role == Role::Worker
         {
             return Err(Rejection::Binding);
         }
@@ -126,6 +129,31 @@ pub enum FakeBehavior {
     MissingCandidateApi,
     MissingRestoreApi,
     ErrorAfterChange,
+    CancelAfterCandidate,
+    StorageFailureAfterCandidate,
+    WorkerKilledDuringCandidate,
+    BlockedCandidateReturns,
+    StorageFailureDuringBlockedCandidate,
+    HeartbeatLossDuringBlockedCandidate,
+    StorageStallDuringBlockedCandidate,
+}
+/// Test oracle invocation, emitted only after worker admission and entry checks.
+/// It is not an execution permission or a ReturnAndIdle completion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FakeInvocation {
+    pub permit: Permission,
+    pub device: Device,
+    pub entry_ms: u64,
+    pub write_mw: Option<u32>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WitnessCall {
+    pub invocation: FakeInvocation,
+    pub effect_ms: Option<u64>,
+    pub result: Option<RawResult>,
+    pub worker_lost_before_effect: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -229,6 +257,7 @@ pub struct ProcessCheckReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoundTripReport {
+    pub in_call_controls_acknowledged: u64,
     pub guardian: MeasuredProcess,
     pub worker: MeasuredProcess,
     pub coordinator: MeasuredProcess,
@@ -250,6 +279,8 @@ pub struct RoundTripReport {
     pub fixture_root: String,
     pub pending: Option<Permission>,
     pub recovery: Option<RecoveryWindow>,
+    pub witness_calls: Vec<WitnessCall>,
+    pub witness_current_mw: u32,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

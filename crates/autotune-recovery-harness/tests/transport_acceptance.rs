@@ -1,5 +1,6 @@
 //! Actual owned-process/pipe observations, never hardware acceptance.
 #![cfg(windows)]
+mod common;
 
 use autotune_recovery_contract::{
     decode,
@@ -7,13 +8,13 @@ use autotune_recovery_contract::{
     Role, FRAME_LIMIT,
 };
 use std::{
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
 
 fn run(args: &[&str]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_autotune-recovery-harness"))
+    let mut child = common::command()
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -45,6 +46,9 @@ fn measured_bootstrap_mutual_pipe_roundtrip_returns_no_device_authority() {
     assert_eq!(report.role, Role::Verifier);
     assert!(report.process.process.pid > 0);
     assert!(report.process.process.creation_100ns > 0);
+    assert!(report.no_console, "ordinary verifier must be detached");
+    assert_eq!(report.console_window, 0);
+    assert!(report.console_processes.is_empty());
     assert_ne!(report.process.process.binary, [0; 32]);
     assert_eq!(report.candidate_entries, 0);
     assert_eq!(report.restore_entries, 0);
@@ -107,9 +111,9 @@ fn actual_owned_job_close_kills_member_but_preserves_authenticated_sibling() {
 }
 
 #[test]
-fn unsupported_enclosing_job_or_console_reports_blocker_not_false_acceptance() {
-    for case in ["isolation", "console-close"] {
-        let out = run(&["--fake-transport-case", case]);
+fn unsupported_enclosing_job_reports_blocker_not_false_acceptance() {
+    {
+        let out = run(&["--fake-transport-case", "isolation"]);
         let report: ProcessCheckReport = decode(json_line(&out), FRAME_LIMIT).unwrap();
         assert!(report.zero_device_permissions);
         if report.blocker.is_some() {
@@ -144,26 +148,13 @@ fn guardian_survival_or_enclosing_job_rejection_is_explicit_without_mutation() {
         return;
     }
     assert!(gate.status.success() && gate_report.passed);
-    let console = run(&["--fake-transport-case", "console-close"]);
-    let console_report: ProcessCheckReport = decode(json_line(&console), FRAME_LIMIT).unwrap();
-    let mut actions = vec![
+    let actions = [
         "observe",
         "kill-coordinator",
         "close-job",
         "expired-getter",
         "deny-candidate",
     ];
-    if console_report.blocker.is_none() {
-        assert!(console.status.success() && console_report.passed);
-        actions.push("close-console");
-    } else {
-        assert_eq!(console.status.code(), Some(2));
-        assert!(console_report.zero_device_permissions && !console_report.passed);
-        eprintln!(
-            "W01 console-closure acceptance remains BLOCKED on this host: {}",
-            console_report.blocker.as_deref().unwrap()
-        );
-    }
     for action in actions {
         let out = run(&["--fake-process-check", action]);
         assert!(
@@ -213,5 +204,42 @@ fn guardian_survival_or_enclosing_job_rejection_is_explicit_without_mutation() {
         }
         // This proves the read-only lifecycle/entry-rejection slice only. No
         // candidate is run, and no fake or physical restoration is established.
+    }
+}
+
+#[test]
+#[ignore = "opt-in only: creates and closes an isolated harness-owned console; W01 remains blocked unless observed"]
+fn opt_in_owned_console_closure_acceptance() {
+    let out = run(&["--fake-transport-case", "console-close"]);
+    let report: ProcessCheckReport = decode(json_line(&out), FRAME_LIMIT).unwrap();
+    assert!(report.zero_device_permissions);
+    assert!(
+        report.blocker.is_none(),
+        "W01 BLOCKED: {:?}",
+        report.blocker
+    );
+    assert!(out.status.success() && report.passed);
+
+    let out = run(&["--fake-process-check", "close-console"]);
+    assert!(
+        out.status.success(),
+        "W01 BLOCKED: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let reports: Vec<RoleStatus> = out
+        .stdout
+        .split(|b| *b == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| decode(line, FRAME_LIMIT).unwrap())
+        .collect();
+    assert_eq!(reports.len(), 2);
+    assert_eq!(reports[0].process, reports[1].process);
+    assert_eq!(reports[0].worker, reports[1].worker);
+    for report in reports {
+        assert!(report.no_job && report.no_console);
+        assert!(report.worker.is_some());
+        assert_eq!(report.candidate_entries, 0);
+        assert_eq!(report.restore_entries, 0);
+        assert!(report.pending.is_none());
     }
 }

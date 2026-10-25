@@ -726,6 +726,10 @@ impl Drop for ChildGuard {
 }
 fn child(root: &Path, kind: &str, step: &str) -> (ChildGuard, mpsc::Receiver<String>) {
     let mut command = Command::new(std::env::current_exe().unwrap());
+    std::os::windows::process::CommandExt::creation_flags(
+        &mut command,
+        windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
+    );
     command
         .args(["--exact", "storage_child", "--nocapture"])
         .env("AUTO_STORAGE_ROOT", root)

@@ -71,20 +71,46 @@ fn main() -> ExitCode {
     if args.first().is_some_and(|a| a == "--fake-roundtrip") && args.len() <= 2 {
         use autotune_recovery_contract::process::FakeBehavior;
         let behavior = match args.get(1).map(String::as_str).unwrap_or("normal") {
-            "normal" => FakeBehavior::Normal,
+            "normal" | "alternate-baseline" | "startup-owner-conflict" => FakeBehavior::Normal,
             "error-after-change" => FakeBehavior::ErrorAfterChange,
             "missing-candidate" => FakeBehavior::MissingCandidateApi,
+            "cancel-after-candidate" => FakeBehavior::CancelAfterCandidate,
+            "storage-failure-after-candidate" => FakeBehavior::StorageFailureAfterCandidate,
+            "worker-killed-during-candidate" => FakeBehavior::WorkerKilledDuringCandidate,
+            "blocked-candidate-returns" => FakeBehavior::BlockedCandidateReturns,
+            "storage-failure-during-blocked-candidate" => {
+                FakeBehavior::StorageFailureDuringBlockedCandidate
+            }
+            "heartbeat-loss-during-blocked-candidate" => {
+                FakeBehavior::HeartbeatLossDuringBlockedCandidate
+            }
+            "storage-stall-during-blocked-candidate" => {
+                FakeBehavior::StorageStallDuringBlockedCandidate
+            }
             "missing-restore" => FakeBehavior::MissingRestoreApi,
             _ => return ExitCode::from(64),
         };
-        return match autotune_recovery_harness::runtime::roundtrip_check(behavior) {
+        let result = if args.get(1).is_some_and(|a| a == "startup-owner-conflict") {
+            autotune_recovery_harness::runtime::startup_owner_conflict_check()
+        } else if args.get(1).is_some_and(|a| a == "alternate-baseline") {
+            autotune_recovery_harness::runtime::alternate_baseline_check()
+        } else {
+            autotune_recovery_harness::runtime::roundtrip_check(behavior)
+        };
+        return match result {
             Ok(report) => {
+                let unresolved = report.final_state
+                    == autotune_recovery_contract::storage::StoredState::RecoveryRequired;
                 println!(
                     "{}",
                     String::from_utf8(autotune_recovery_contract::canonical(&report).unwrap())
                         .unwrap()
                 );
-                ExitCode::SUCCESS
+                if unresolved {
+                    ExitCode::from(2)
+                } else {
+                    ExitCode::SUCCESS
+                }
             }
             Err(e) => {
                 eprintln!("fake round trip failed: {e:?}");
@@ -180,5 +206,6 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 fn help() {
+    println!("--fake-roundtrip CASE: normal, error-after-change, missing-candidate, cancel-after-candidate, storage-failure-after-candidate, worker-killed-during-candidate, blocked-candidate-returns, heartbeat-loss-during-blocked-candidate, storage-failure-during-blocked-candidate, storage-stall-during-blocked-candidate, alternate-baseline. Synthetic process/IPC/storage evidence only; requires permitted guardian isolation.");
     println!("autotune-recovery-harness [--help | --platform-check | --fake-ipc-check]\nFake-only recovery infrastructure under development. Arming is blocked.\n--platform-check samples clocks/isolation only; creates no child or journal.\n--fake-ipc-check launches one measured verifier for authenticated IPC; zero device permissions.\n--fake-transport-case CASE and --fake-process-check ACTION exercise fixed isolated diagnostic roles; see docs/windows-recovery.md.\nDiagnostics can create retained protected test fixtures and owned processes. Reports contain private process/token identity: review before exporting.\nNo NVML, hardware capability, production root, or automatic replay.");
 }

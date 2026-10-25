@@ -10,9 +10,78 @@ storage thread. The reducer↔journal adapter and a real-process
 missing-candidate variants end to end. Live publication validates the pinned
 ancestry, active chain, lineage, stage identity, backup and bounded namespace;
 cold startup retains the full history scan (see [storage contract](windows-storage-v1.md)).
-The external fake witness, worker-kill/blocked-call barriers and console-close
-evidence remain unfinished. The harness refuses all arming. See [current evidence](windows-recovery.md).
+An external fake witness and selected worker-kill/blocked-call barriers now exist;
+the exhaustive interleaving matrix and console-close evidence remain unfinished.
+The harness refuses hardware arming. See [current evidence](windows-recovery.md).
 Rules below remain requirements, not a claim of complete infrastructure acceptance.
+
+2026-10-23 continuation: the real round-trip path now sends authenticated
+`Revoke`/`StorageFailed` notifications before successor dispatch/receipts and
+supports ordered RAM-only result receipts after publication failure. Fixed fake
+profiles add cancellation after candidate return and a publisher failure at its
+`Closed` barrier. These are narrowly tested P1 subcases, not complete asynchronous
+cancellation, heartbeat, blocked-call or storage-stall integration. Worker status
+now exposes its actual pending permit and frozen recovery window.
+
+2026-10-23 witness continuation: additive fake-only `FakeInvocation`, `WitnessCall`,
+`Message::FakeCall` and `Message::FakeResult` carry oracle traffic over the existing
+authenticated worker channel. They never authorize entry or retire a permit.
+The worker checks its immutable policy and chooses T/B before emitting entry;
+the I/O lane requires the exact outstanding Dispatch and permits one oracle call
+before the exact worker ReturnAndIdle. The guardian-owned harness witness retains
+synthetic state/entry/effect traces across worker termination, validates sealed
+write arguments, and can release a late effect after confirmed owned worker exit.
+It is not independent of guardian loss and is not a native fence. The existing
+portable worker-local fake backend remains only for P0 tests; actual role calls
+now use the external witness, including getters. RoundTripReport adds witness
+calls/current state, separately from API and worker-completion evidence.
+
+Fixed cases add `worker-killed-during-candidate`, `blocked-candidate-returns` and
+`alternate-baseline`. A watchdog fault releases the blocked synthetic effect
+barrier, not the guardian pending slot; only the same authenticated worker's
+completion permits cleanup. Watchdog/heartbeat reduction continues during Dispatch
+RPC. At that checkpoint revocation was delivered only after RPC return; the
+2026-10-24 continuation below adds selected in-call delivery. No arbitrary backend,
+new peer, reconnect or replacement worker
+was added. These are selected P1 W12/W14/W20/W21 cases, not complete acceptance.
+
+2026-10-24 rejection/diagnostic investigation: after authentication, guardian errors
+now attempt the existing typed `Rejected` response at the role boundary, including
+errors before readiness. The launcher preserves the reason as `RemoteRejection`
+and labels handshake/readiness/request/final-receive transport boundaries. This is
+diagnostic data, not authority; unavailable delivery remains a failure, with no
+retry/reconnect or success report. A fixed `startup-owner-conflict` case holds the
+same fixture lock while launching the guardian and must reject before readiness.
+
+Opt-in `AUTOTUNE_RECOVERY_DIAG` observations are buffered in RAM (1024 events,
+256 KiB maximum) and written only after role execution returns. Overflow is marked
+explicitly. These optional logs can be lost on termination and are not journal or
+durability evidence. This removes synchronous diagnostic file opens/writes from
+the timed actor path; the 100 ms publication ceiling and every other guard remain
+unchanged. Original intermittent end-to-end reliability remains unqualified; see
+the exact repeated results and retained failures in [the evidence](windows-recovery.md).
+
+## 2026-10-24 selected asynchronous blocked-call control
+
+The sole authenticated worker I/O thread now runs the fake oracle off-thread and
+services a separate bounded queue of two control messages while the same Dispatch
+is outstanding. Only `Revoke` and `StorageFailed` can enter this queue; their
+authenticated zero-operation Heartbeat acknowledgements never retire the permit.
+Controls accepted while the oracle is active are drained before FakeResult, with
+an atomic gate preventing late controls from leaking into a successor RPC.
+Failure/overflow closes progression; no reconnect, retransmit or replacement lane.
+The worker processes these notifications while waiting for the oracle result,
+retaining its entry and exact permit until ReturnAndIdle after the result.
+
+The blocked fixture releases its synthetic effect only after actual worker control
+acknowledgement. Additive fake profiles cover real coordinator heartbeat loss,
+publisher failure at Closed, and a Closed-barrier stall past the unchanged 100 ms
+deadline. The stalled sole publisher is released late by the same fixture barrier,
+remains quarantined, and cannot close the session. Reports add the count
+`in_call_controls_acknowledged` independently of idle, API and journal evidence.
+These are selected P1 W08/W12/W20/W21/W23 subcases, not the exhaustive matrix.
+Blocked-call coordinator cancellation/IPC loss, lease/budget edges and all prior
+root/console/reliability/hardware blockers remain open.
 
 ## Platform and dependency selection
 
@@ -70,6 +139,12 @@ Research on 2026-10-19 checked [registry metadata](https://crates.io/api/v1/crat
 
 ## Process and call lifecycle
 
+- Ordinary fixed roles are detached (including the coordinator, still suspended
+  and assigned to its dedicated kill-on-close job before resume). Test subprocess
+  wrappers use `CREATE_NO_WINDOW`. A trusted inherited bootstrap `console_test`
+  flag selects only explicit owned-console diagnostics; the guardian remains
+  detached and workers reject this flag. Only opted-in coordinator/verifier
+  diagnostics use `CREATE_NEW_CONSOLE`; normal suites never request them.
 - Guardian detaches and verifies no console/any-job membership before ready and arm. Enclosing jobs that deny breakaway cause rejection; no policy modification/service/elevation workaround. Coordinator job teardown cannot contain guardian/worker.
 - One worker lane, one pending operation, explicit finite getter-validation chain and no hidden recursive calls. Missing API availability is a fake injected flag here. Validate required identity/bounds/runtime/ownership results before subsequent permission, not through untraced internal calls.
 - Watchdog/cancel/IPC loss/worker exit never establish quiescence. Same-worker exact completion can retire its permit; no replacement/parallel restore while unresolved. Guardian loss permits already-entered return only, no successor after observed loss.

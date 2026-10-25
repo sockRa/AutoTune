@@ -88,6 +88,12 @@ impl WorkerPolicy {
     pub fn phase(&self) -> WorkerPhase {
         self.phase
     }
+    pub fn pending(&self) -> Option<&Permission> {
+        self.pending.as_ref()
+    }
+    pub fn recovery_window(&self) -> Option<RecoveryWindow> {
+        self.recovery.clone()
+    }
     pub fn candidate_entries(&self) -> u32 {
         self.ledger
             .iter()
@@ -411,10 +417,7 @@ impl WorkerPolicy {
     }
     /// Exactly one explicit fake API call, no validation getters hidden inside it.
     pub fn fake_call(&mut self, entry: &Entry) -> Result<RawResult> {
-        if self.pending.as_ref() != Some(&entry.permit) || self.call_entered {
-            return Err(Rejection::Binding);
-        }
-        self.call_entered = true;
+        self.external_call(entry, entry.permit.dispatched_ms)?;
         Ok(match entry.permit.operation {
             Operation::Enumerate | Operation::Identity => {
                 RawResult::Identity(self.profile.device.clone())
@@ -444,6 +447,33 @@ impl WorkerPolicy {
                     .baseline()?;
                 RawResult::Api { status: 0 }
             }
+        })
+    }
+    /// Enter the same single-use policy lane with state owned by an external
+    /// fake oracle. Only the sealed manifest can supply a setter argument.
+    pub fn external_call(&mut self, entry: &Entry, entry_ms: u64) -> Result<FakeInvocation> {
+        if self.pending.as_ref() != Some(&entry.permit) || self.call_entered {
+            return Err(Rejection::Binding);
+        }
+        let write_mw = match entry.permit.operation {
+            Operation::CandidateOnce => {
+                Some(self.manifest.as_ref().ok_or(Rejection::Binding)?.target_mw)
+            }
+            Operation::RestoreBaseline => Some(
+                self.manifest
+                    .as_ref()
+                    .ok_or(Rejection::Binding)?
+                    .capture
+                    .baseline()?,
+            ),
+            _ => None,
+        };
+        self.call_entered = true;
+        Ok(FakeInvocation {
+            permit: entry.permit.clone(),
+            device: self.profile.device.clone(),
+            entry_ms,
+            write_mw,
         })
     }
     pub fn revalidate_entry(&self, entry: &Entry, now: u64, guardian_alive: bool) -> Result<()> {
@@ -534,7 +564,9 @@ impl WorkerPolicy {
                                 .baseline()?,
                         )
                     {
-                        self.reads.push((return_ms, self.current));
+                        if let RawResult::Value(value) = result {
+                            self.reads.push((return_ms, value));
+                        }
                         if self.reads.len() == 2 {
                             self.phase = WorkerPhase::Verified;
                         }

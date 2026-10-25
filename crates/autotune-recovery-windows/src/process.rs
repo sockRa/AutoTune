@@ -36,6 +36,8 @@ pub enum ProcessError {
     Nt(i32),
     Policy(&'static str),
     Context(&'static str, Box<ProcessError>),
+    /// Authenticated diagnostic rejection, never imported execution authority.
+    RemoteRejection(String),
     Contract(autotune_recovery_contract::Rejection),
     Storage(crate::storage::StorageError),
     Io(std::io::ErrorKind),
@@ -724,6 +726,11 @@ pub struct LaunchRequest<'a> {
 pub fn launch(image: Arc<Executable>, request: LaunchRequest<'_>) -> Result<Launch> {
     launch_impl(image, request, false)
 }
+/// Explicit console-closure diagnostic only. Guardian remains detached; its
+/// bootstrap requests an owned console solely for the diagnostic coordinator.
+pub fn launch_console_test(image: Arc<Executable>, request: LaunchRequest<'_>) -> Result<Launch> {
+    launch_impl(image, request, true)
+}
 pub fn launch_verifier(
     image: Arc<Executable>,
     session: Hash,
@@ -748,7 +755,7 @@ pub fn launch_verifier(
 fn launch_impl(
     image: Arc<Executable>,
     request: LaunchRequest<'_>,
-    verifier_console: bool,
+    console_test: bool,
 ) -> Result<Launch> {
     let LaunchRequest {
         parent_role,
@@ -804,14 +811,10 @@ fn launch_impl(
         image.path.display()
     )))?;
     let mut process = PROCESS_INFORMATION::default();
-    let detach = role != Role::Coordinator && !verifier_console;
+    let console_flags = console_creation_flags(role, console_test)?;
     let flags = CREATE_SUSPENDED
         | EXTENDED_STARTUPINFO_PRESENT
-        | if detach {
-            DETACHED_PROCESS
-        } else {
-            CREATE_NEW_CONSOLE
-        }
+        | console_flags
         | if matches!(role, Role::Guardian | Role::Worker)
             && in_any_job(unsafe { BorrowedHandle::borrow_raw(GetCurrentProcess()) })?
         {
@@ -867,6 +870,7 @@ fn launch_impl(
             pipe: server.name.clone(),
             key: crate::random().map_err(|_| ProcessError::Policy("CNG RNG"))?,
             fixture_root: root.map(|p| p.to_string_lossy().into_owned()),
+            console_test,
             profile,
         };
         map.write(&bootstrap)?;
@@ -899,6 +903,15 @@ fn launch_impl(
         server,
     })
 }
+fn console_creation_flags(role: Role, console_test: bool) -> Result<u32> {
+    match (role, console_test) {
+        (Role::Guardian | Role::Worker | Role::Verifier | Role::Coordinator, false)
+        | (Role::Guardian, true) => Ok(DETACHED_PROCESS),
+        (Role::Coordinator | Role::Verifier, true) => Ok(CREATE_NEW_CONSOLE),
+        _ => Err(ProcessError::Policy("console launch role")),
+    }
+}
+
 pub struct ChildBootstrap {
     pub envelope: ProcessBootstrap,
     pub supervisor: OwnedHandle,
@@ -971,4 +984,39 @@ pub fn inherited_bootstrap(role: Role) -> Result<ChildBootstrap> {
         supervisor,
         custody,
     })
+}
+
+#[cfg(test)]
+mod quiet_launch_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_roles_never_create_a_console_and_independent_roles_stay_detached() {
+        for role in [
+            Role::Guardian,
+            Role::Worker,
+            Role::Coordinator,
+            Role::Verifier,
+        ] {
+            let flags = console_creation_flags(role, false).unwrap();
+            assert_eq!(flags & CREATE_NEW_CONSOLE, 0);
+            assert_eq!(flags, DETACHED_PROCESS);
+        }
+    }
+
+    #[test]
+    fn only_explicit_diagnostic_roles_may_get_a_console() {
+        assert_eq!(
+            console_creation_flags(Role::Guardian, true).unwrap(),
+            DETACHED_PROCESS
+        );
+        for role in [Role::Coordinator, Role::Verifier] {
+            assert_eq!(
+                console_creation_flags(role, true).unwrap(),
+                CREATE_NEW_CONSOLE
+            );
+        }
+        assert!(console_creation_flags(Role::Worker, true).is_err());
+        assert!(console_creation_flags(Role::Launcher, true).is_err());
+    }
 }

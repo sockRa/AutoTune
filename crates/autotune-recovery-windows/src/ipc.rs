@@ -503,6 +503,10 @@ enum RpcRequest {
     Bind(Hash, std::sync::mpsc::SyncSender<Result<()>>),
 }
 pub struct RpcLane {
+    controls: std::sync::mpsc::SyncSender<Message>,
+    oracle_active: std::sync::Arc<std::sync::Mutex<bool>>,
+    control_acks: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    oracle_release: std::sync::Arc<std::sync::atomic::AtomicBool>,
     requests: Option<std::sync::mpsc::SyncSender<RpcRequest>>,
     replies: std::sync::mpsc::Receiver<Result<Frame>>,
     pending: bool,
@@ -510,17 +514,128 @@ pub struct RpcLane {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl RpcLane {
-    pub fn start(mut channel: Channel) -> Result<Self> {
+    pub fn start(channel: Channel) -> Result<Self> {
+        Self::start_with_oracle(channel, |_, _, _| {
+            Err(ProcessError::Policy("no fake oracle configured"))
+        })
+    }
+    /// Fake-only external oracle off the I/O thread. A FakeCall is intermediate
+    /// evidence, never an idle reply. Exactly one such invocation is allowed for
+    /// the outstanding Dispatch, with the exact original permit and frame IDs.
+    pub fn start_with_oracle(
+        mut channel: Channel,
+        oracle: impl FnMut(
+                &autotune_recovery_contract::process::DispatchProof,
+                autotune_recovery_contract::process::FakeInvocation,
+                &std::sync::atomic::AtomicBool,
+            ) -> Result<autotune_recovery_contract::RawResult>
+            + Send
+            + 'static,
+    ) -> Result<Self> {
         let (tx, rx) = std::sync::mpsc::sync_channel::<RpcRequest>(1);
         let (reply, replies) = std::sync::mpsc::sync_channel(1);
+        let oracle_release = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let release = oracle_release.clone();
+        let oracle = std::sync::Arc::new(std::sync::Mutex::new(oracle));
+        let (controls, control_rx) = std::sync::mpsc::sync_channel::<Message>(2);
+        let oracle_active = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let active = oracle_active.clone();
+        let control_acks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let acknowledged = control_acks.clone();
         let thread = std::thread::Builder::new()
             .name("autotune-ipc".into())
             .spawn(move || {
                 while let Ok(request) = rx.recv() {
                     let outcome = match request {
-                        RpcRequest::Frame(m, g, id) => channel
-                            .send(m, g, id, boot_ms().saturating_add(WATCHDOG_MS))
-                            .and_then(|_| channel.receive(None)),
+                        RpcRequest::Frame(m, g, id) => (|| {
+                            let dispatch = match &m {
+                                Message::Dispatch(proof) => Some((**proof).clone()),
+                                _ => None,
+                            };
+                            channel.send(m, g, id, boot_ms().saturating_add(WATCHDOG_MS))?;
+                            let frame = channel.receive(None)?;
+                            if let Message::FakeCall(invocation) = &frame.message {
+                                let proof = dispatch
+                                    .ok_or(ProcessError::Policy("unsolicited fake call"))?;
+                                if invocation.permit != proof.permit
+                                    || frame.generation != g
+                                    || frame.operation_id != id
+                                {
+                                    return Err(ProcessError::Policy("fake call permit mismatch"));
+                                }
+                                // The oracle may block, but must not own the
+                                // authenticated control lane. Still one device
+                                // operation, with no replacement worker.
+                                let oracle = oracle.clone();
+                                let invocation = (**invocation).clone();
+                                let release = release.clone();
+                                let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+                                *active.lock().map_err(|_| ProcessError::Policy("oracle control state poisoned"))? = true;
+                                let call = std::thread::Builder::new()
+                                    .name("autotune-fake-call".into())
+                                    .spawn(move || {
+                                        let result = oracle.lock()
+                                            .map_err(|_| ProcessError::Policy("fake oracle poisoned"))
+                                            .and_then(|mut oracle| oracle(&proof, invocation, &release));
+                                        let _ = result_tx.send(result);
+                                    })?;
+                                let mut completed = None;
+                                let result = loop {
+                                    // Control acks cannot retire Dispatch or be
+                                    // mistaken for ReturnAndIdle.
+                                    while let Ok(control) = control_rx.try_recv() {
+                                        channel.send(control, 0, 0, boot_ms().saturating_add(WATCHDOG_MS))?;
+                                        let ack = channel.receive(Some(boot_ms().saturating_add(WATCHDOG_MS)))?;
+                                        if ack.generation != 0 || ack.operation_id != 0
+                                            || !matches!(ack.message, Message::Heartbeat)
+                                        {
+                                            return Err(ProcessError::Policy("in-call control acknowledgement"));
+                                        }
+                                        acknowledged.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                    }
+                                    if let Some(result) = completed.take() {
+                                        break result;
+                                    }
+                                    match result_rx.try_recv() {
+                                        Ok(result) => {
+                                            // Stop new controls atomically, then
+                                            // drain already accepted ones before
+                                            // FakeResult. None may outlive Dispatch.
+                                            *active.lock().map_err(|_| ProcessError::Policy("oracle control state poisoned"))? = false;
+                                            completed = Some(result?);
+                                        }
+                                        Err(std::sync::mpsc::TryRecvError::Empty) => std::thread::sleep(std::time::Duration::from_millis(1)),
+                                        Err(std::sync::mpsc::TryRecvError::Disconnected) => return Err(ProcessError::Policy("fake oracle lost")),
+                                    }
+                                };
+                                call.join().map_err(|_| ProcessError::Policy("fake oracle panic"))?;
+                                channel.send(
+                                    Message::FakeResult {
+                                        operation_id: id,
+                                        result,
+                                    },
+                                    g,
+                                    id,
+                                    boot_ms().saturating_add(WATCHDOG_MS),
+                                )?;
+                                let completion = channel.receive(None)?;
+                                if !matches!(completion.message, Message::ReturnAndIdle { .. }) {
+                                    return Err(ProcessError::Policy(
+                                        "oracle result is not worker idle",
+                                    ));
+                                }
+                                Ok(completion)
+                            } else {
+                                if dispatch.is_some()
+                                    && matches!(frame.message, Message::ReturnAndIdle {
+                                        outcome: ref o, ..
+                                    } if matches!(**o, autotune_recovery_contract::Completion::Returned { .. }))
+                                {
+                                    return Err(ProcessError::Policy("returned call has no external oracle entry"));
+                                }
+                                Ok(frame)
+                            }
+                        })(),
                         RpcRequest::Bind(digest, ack) => {
                             channel.bind_digest(digest);
                             let _ = ack.send(Ok(()));
@@ -534,6 +649,10 @@ impl RpcLane {
                 }
             })?;
         Ok(Self {
+            controls,
+            oracle_active,
+            control_acks,
+            oracle_release,
             requests: Some(tx),
             replies,
             pending: false,
@@ -560,6 +679,8 @@ impl RpcLane {
         if self.failed || self.pending {
             return Err(ProcessError::Policy("one pending RPC/no reconnect"));
         }
+        self.oracle_release
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         self.requests
             .as_ref()
             .ok_or(ProcessError::Policy("RPC closed"))?
@@ -567,6 +688,48 @@ impl RpcLane {
             .map_err(|_| ProcessError::Policy("RPC queue full"))?;
         self.pending = true;
         Ok(())
+    }
+    /// Test-oracle effect barrier only, never permission or pending retirement.
+    pub fn release_fake_barrier(&self) {
+        self.oracle_release
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    /// Only revocation/storage notifications may accompany a pending Dispatch.
+    /// Queue exhaustion is a failure, never dropped authority or a retry.
+    pub fn notify_pending(
+        &self,
+        generation: u64,
+        window: autotune_recovery_contract::storage::RecoveryWindow,
+        storage_failed: bool,
+    ) -> Result<usize> {
+        if !self.pending || self.failed {
+            return Err(ProcessError::Policy(
+                "in-call notification requires pending lane",
+            ));
+        }
+        let active = self
+            .oracle_active
+            .lock()
+            .map_err(|_| ProcessError::Policy("oracle control state poisoned"))?;
+        if !*active {
+            return Ok(0);
+        }
+        self.controls
+            .try_send(Message::Revoke {
+                generation,
+                trigger_ms: window.trigger_ms,
+                deadline_ms: window.deadline_ms,
+            })
+            .map_err(|_| ProcessError::Policy("in-call control queue full/closed"))?;
+        if storage_failed {
+            self.controls
+                .try_send(Message::StorageFailed(window))
+                .map_err(|_| ProcessError::Policy("in-call control queue full/closed"))?;
+        }
+        Ok(if storage_failed { 2 } else { 1 })
+    }
+    pub fn control_acknowledgements(&self) -> usize {
+        self.control_acks.load(std::sync::atomic::Ordering::SeqCst)
     }
     pub fn poll(&mut self) -> Option<Result<Frame>> {
         match self.replies.try_recv() {
@@ -593,5 +756,228 @@ impl RpcLane {
                 .map_err(|_| ProcessError::Policy("RPC thread panic"))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use autotune_recovery_contract::storage::RecoveryWindow;
+
+    // Real isolated local pipe, with the normal codec/MAC/sequence path. Peer
+    // bootstrap authentication is covered by the separate process tests.
+    fn pair() -> (Channel, Channel) {
+        let identity = current_identity().unwrap();
+        let server = Server::new(&identity).unwrap();
+        let name = wide(std::ffi::OsStr::new(&server.name)).unwrap();
+        let client = owned(unsafe {
+            CreateFileW(
+                name.as_ptr(),
+                FILE_READ_DATA | FILE_WRITE_DATA,
+                0,
+                ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_OVERLAPPED,
+                ptr::null_mut(),
+            )
+        })
+        .unwrap();
+        let event = event().unwrap();
+        let mut o = OVERLAPPED {
+            hEvent: event.as_raw_handle(),
+            ..Default::default()
+        };
+        let connected = unsafe { ConnectNamedPipe(server.pipe.as_raw_handle(), &mut o) };
+        assert!(connected != 0 || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED);
+        let make = |pipe, from, to| Channel {
+            pipe,
+            peer: duplicate(current_process_handle(), SUPERVISOR_ACCESS, false).unwrap(),
+            key: [9; 32],
+            session: [8; 32],
+            from,
+            to,
+            digest: [7; 32],
+            next: 1,
+            receiver: Receiver::new(to, from, [8; 32], [7; 32]),
+            poisoned: false,
+        };
+        (
+            make(server.pipe, Role::Launcher, Role::Guardian),
+            make(client, Role::Guardian, Role::Launcher),
+        )
+    }
+
+    #[test]
+    fn authenticated_in_call_controls_do_not_retire_dispatch_or_admit_a_successor() {
+        let (guardian, mut worker) = pair();
+        let now = boot_ms();
+        let permit = Permission {
+            session: [8; 32],
+            boot: [6; 32],
+            digest: [7; 32],
+            generation: 1,
+            operation_id: 1,
+            operation: Operation::CandidateOnce,
+            dispatched_ms: now,
+            watchdog_ms: now + WATCHDOG_MS,
+            expiry_ms: now + WATCHDOG_MS,
+            recovery_trigger_ms: None,
+        };
+        let proof = DispatchProof {
+            permit: permit.clone(),
+            intent_sequence: 1,
+            intent_utc_ms: 1,
+            publication: Some([5; 32]),
+        };
+        let window = RecoveryWindow {
+            trigger_ms: now,
+            deadline_ms: now + CLEANUP_MS,
+        };
+        let expected_window = window.clone();
+        let expected = permit.clone();
+        let peer = std::thread::spawn(move || {
+            let frame = worker.receive(Some(boot_ms() + 5000)).unwrap();
+            assert!(matches!(frame.message, Message::Dispatch(_)));
+            worker
+                .send(
+                    Message::FakeCall(Box::new(FakeInvocation {
+                        permit: expected.clone(),
+                        entry_ms: now,
+                        write_mw: Some(242_123),
+                        device: Device {
+                            uuid: "SYNTHETIC-test".into(),
+                            pci: "0000:01:00.0".into(),
+                            vendor: 1,
+                            device: 2,
+                            subsystem: 3,
+                            model: "fake".into(),
+                        },
+                    })),
+                    1,
+                    1,
+                    boot_ms() + 5000,
+                )
+                .unwrap();
+            let revoke = worker.receive(Some(boot_ms() + 5000)).unwrap();
+            assert_eq!((revoke.generation, revoke.operation_id), (0, 0));
+            assert_eq!(
+                revoke.message,
+                Message::Revoke {
+                    generation: 2,
+                    trigger_ms: expected_window.trigger_ms,
+                    deadline_ms: expected_window.deadline_ms
+                }
+            );
+            worker
+                .send(Message::Heartbeat, 0, 0, boot_ms() + 5000)
+                .unwrap();
+            let failed = worker.receive(Some(boot_ms() + 5000)).unwrap();
+            assert_eq!(failed.message, Message::StorageFailed(expected_window));
+            worker
+                .send(Message::Heartbeat, 0, 0, boot_ms() + 5000)
+                .unwrap();
+            let result = worker.receive(Some(boot_ms() + 5000)).unwrap();
+            let Message::FakeResult {
+                result,
+                operation_id: 1,
+            } = result.message
+            else {
+                panic!()
+            };
+            worker
+                .send(
+                    Message::ReturnAndIdle {
+                        permit: expected,
+                        outcome: Box::new(Completion::Returned {
+                            entry_ms: now,
+                            return_ms: boot_ms(),
+                            result,
+                        }),
+                    },
+                    1,
+                    1,
+                    boot_ms() + 5000,
+                )
+                .unwrap();
+        });
+        let mut lane = RpcLane::start_with_oracle(guardian, |_, _, release| {
+            let deadline = boot_ms() + 5000;
+            while !release.load(std::sync::atomic::Ordering::SeqCst) {
+                if boot_ms() >= deadline {
+                    return Err(ProcessError::Policy("test barrier expired"));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Ok(RawResult::Api { status: 0 })
+        })
+        .unwrap();
+        assert!(lane.notify_pending(2, window.clone(), true).is_err());
+        lane.submit(Message::Dispatch(Box::new(proof)), 1, 1)
+            .unwrap();
+        let deadline = boot_ms() + 5000;
+        loop {
+            if lane.notify_pending(2, window.clone(), true).unwrap() == 2 {
+                break;
+            }
+            assert!(boot_ms() < deadline);
+            std::thread::yield_now();
+        }
+        while lane.control_acknowledgements() != 2 {
+            assert!(lane.poll().is_none(), "a control ack is not ReturnAndIdle");
+            assert!(boot_ms() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(lane.poll().is_none());
+        assert!(lane
+            .submit(Message::Control(Control::Observe), 0, 0)
+            .is_err());
+        lane.release_fake_barrier();
+        let frame = loop {
+            if let Some(frame) = lane.poll() {
+                break frame.unwrap();
+            }
+            assert!(boot_ms() < deadline);
+            std::thread::yield_now();
+        };
+        assert!(
+            matches!(frame.message, Message::ReturnAndIdle { permit: ref p, .. } if *p == permit)
+        );
+        assert!(lane.notify_pending(2, window, true).is_err());
+        lane.shutdown().unwrap();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn delayed_reader_retains_client_final_frame_after_writer_handle_close() {
+        let (mut reader, mut writer) = pair();
+        let expected = Message::Rejected {
+            reason: "synthetic-report".repeat(2000),
+        };
+        let message = expected.clone();
+        std::thread::spawn(move || writer.send(message, 0, 0, boot_ms() + 2000))
+            .join()
+            .unwrap()
+            .unwrap();
+        let frame = reader
+            .receive(Some(boot_ms() + 2000))
+            .expect("final client report must not disappear after successful send");
+        assert_eq!(frame.message, expected);
+    }
+
+    #[test]
+    fn delayed_reader_retains_server_final_frame_after_writer_handle_close() {
+        let (mut writer, mut reader) = pair();
+        let expected = Message::Rejected {
+            reason: "synthetic-report".repeat(2000),
+        };
+        let message = expected.clone();
+        std::thread::spawn(move || writer.send(message, 0, 0, boot_ms() + 2000))
+            .join()
+            .unwrap()
+            .unwrap();
+        let frame = reader
+            .receive(Some(boot_ms() + 2000))
+            .expect("final server report must not disappear after successful send");
+        assert_eq!(frame.message, expected);
     }
 }
