@@ -141,10 +141,88 @@ the recorder or energy schemas. Embedded recorder JSON is a string, not a parsed
 or rewritten object; consumers must preserve its exact bytes and the lossless
 integer requirements described above when decoding it.
 
+## Synthetic direct-worker lifecycle — narrow E3.1 slice
+
+Owner decision (2026-10-25, recommended choices 1A–5A/9A): implement the pure
+synthetic lifecycle first, distinguish stop intent from observed termination,
+keep late terminal evidence as conflicts, scope evidence to the direct worker,
+and use explicit caller phase deadlines with unknown outcomes on expiry.
+The four outcomes below are observation labels, not correctness verdicts.
+Absolute-offset deadlines and expiry winning ties are internal technical
+conventions for this model, not hardware limits or a real workload safety contract.
+
+`lifecycle::Binding::new(identity, direct_worker)` owns the complete existing
+identity plus a worker label (nonblank, at most 256 UTF-8 bytes, no control
+characters). These are immutable synthetic labels, not process authentication,
+license/consent evidence or GPU mapping. Construct
+`Deadlines::new(requested_ns, launched_ns, ready_ns, running_ns, stop_requested_ns)`
+and `lifecycle::Policy::new(event_capacity, deadlines)`, then
+`Lifecycle::new(binding, policy)`. Every deadline and the capacity must be positive;
+there are no defaults, ordering requirements or capacity preallocations.
+Construction explicitly requests at run-relative synthetic time zero, with no
+launch evidence or outcome. Terminated has no deadline.
+
+`append(&binding, event, at_ns)` requires exact identity (including seed/version)
+and worker binding, nonregressing `u64` synthetic time (equality allowed), and
+remaining event capacity. This is one supplied effective event time, not separate
+occurrence/receipt times or a qualified observation clock. Nothing advances time
+spontaneously; export does not age evidence. There is no real clock or suspend
+guarantee. Deadlines are **absolute offsets from request time zero**, not durations
+rebased on phase entry or repeated stop requests.
+
+Normal order is explicit `LaunchedObserved` -> `ReadyObserved` ->
+`RunningObserved`, from requested -> launched -> ready -> running. None can skip a
+phase or resume after stop. `StopRequested` branches from any active phase; repeats
+are no-ops and establish intent only. It never proves termination.
+`TerminatedObserved { reason }` is the only event that marks phase terminated:
+
+- `Completed` requires previously observed running, including completion after
+  a stop request; outcome is `completed_observed`, not correctness or success.
+- `Stopped` requires stop-requested phase and previously observed launch;
+  outcome is `stop_observed`, without a causality claim.
+- `Crashed` requires previously observed launch, including early launched/ready
+  failure; outcome is `outcome_unknown`.
+
+`NeverLaunchedObserved` explicitly asserts launch was never dispatched; it requires
+no observed launch and requested/stop-requested phase, sets `never_launched`, and
+does not fabricate termination. Missing launch alone proves nothing. `WorkerLost`
+requires observed launch; `ControllerLost` is allowed in any active phase. Both
+close `outcome_unknown` while retaining the last observed phase. `AdvanceTime`
+supplies time without a requested phase transition.
+
+After binding/time/capacity validation, the active deadline is checked **before
+event semantics**. At equality or excess, even an otherwise invalid-phase event
+is retained as `BoundExceeded`, closes `outcome_unknown`, and does not apply its
+requested transition. Expiry therefore precedes competing completion. A valid
+transition into an active destination also checks that destination's deadline at
+the same time: its observed new phase is retained, but an already-expired bound
+closes unknown. No expiry infers termination, cleanup or physical runtime bounds.
+
+Outcome terminalization is separate from phase. Once any outcome is set, it and
+the phase are immutable. Subsequent binding/time/capacity-valid events are retained
+as explicit `Conflict` with sticky `had_conflicts`; only `AdvanceTime` is a retained
+no-op. Late termination cannot overwrite loss/expiry, and late stop cannot overwrite
+completion. Invalid phase/order, binding, time or capacity returns typed
+`lifecycle::Error`; failed appends change only sticky `had_rejections`, not accepted
+events, time, phase or outcome. Multiple validation failures have no promised
+precedence. Full capacity never evicts evidence or infers progress, even at expiry.
+
+`events()` exposes immutable append-ordered records containing the raw event/time,
+decision and resulting phase/outcome. `binding()`, `policy()`, `phase()`, `outcome()`,
+`had_rejections()` and `had_conflicts()` expose immutable state. `to_json()` exports
+deterministic schema-version-1 JSON with simulated provenance, run-relative time
+basis, request/last accepted times, binding, policy, all accepted records and sticky
+markers. Descendants, orphans and resource release are explicitly `unknown`;
+correctness is `not_evaluated`, even after completion. This additive internal schema
+does not change recorder, energy, repeat or recovery formats. Integers require
+lossless consumers as above. Count/string limits bound retained evidence, not total
+serialization memory, real execution or resources.
+
 ## Remaining integration and decisions
 
-There is no fixed cadence, live gap detection, live collection, workload lifecycle
-(E3.1), baseline/repeated-run comparison (E3.3), live energy integration or optimizer.
+There is no fixed cadence, live gap detection, live collection, real workload
+lifecycle integration (E3.1), baseline/repeated-run comparison (E3.3), live energy
+integration or optimizer.
 Future work needs approved workload/license/execution decisions, reliable device
 mapping, live time/collection policy, cadence and missing-data handling, required
 baseline metadata vocabulary/completeness, warm-up, variation/drift, seed-matching,
@@ -152,10 +230,10 @@ conditions and objective/uncertainty policy. The ledger does not evaluate these
 policies. Full E3.3 and Gate B remain open. Synthetic tests do not qualify
 hardware, recovery, performance or any product release gate.
 
-E3.1 investigation found no approved lifecycle transition contract. A meaningful
-pure model still needs definitions of observable phases/readiness, stop requests
-versus termination evidence and races, crash/descendant scope, and phase deadlines
-and resource bounds. Caller-supplied numbers cannot settle those meanings. Recovery
-fake-worker timing, permissions and quiescence contracts are not workload policy;
-successful process exit would not establish E4 correctness. No lifecycle code or
-backend execution is implemented by this ledger.
+The approved E3.1 slice resolves synthetic lifecycle semantics only, not full E3.1
+or Gate B. Fixed licensed backend selection, verified GPU mapping, process isolation,
+real readiness/termination evidence, cancellation/escalation, descendants/orphans,
+resource bounds and clock qualification remain unfinished integration work.
+Recovery fake-worker contracts are not workload policy. No workload/process or
+hardware execution is implemented or authorized; process exit is not E4 correctness.
+E3.3 metadata evaluation, warm-up and descriptive statistics are separate work.
