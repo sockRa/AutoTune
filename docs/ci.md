@@ -90,3 +90,13 @@ was preserved unchanged, not declared accepted. A separate byte-exact commit
 archive passes Windows GNU fmt/Clippy/workspace linking and 163 selected tests.
 Windows recovery tests remain unexecuted; historical failures, native feasibility
 and G1–G7 blockers are unchanged. This observation does not cover later 6A source.
+
+[Run 40232305689](https://github.com/sockRa/AutoTune/actions/runs/40232305689)
+passes both platforms for selected metadata delivery
+`98f7ac20e53913b3de6eeb8e17bc9430bdafe100`. Separate byte-exact local commit
+verification passes 177 selected tests (14 metadata), fmt, warning-denied workspace
+Clippy and all test linking. These exact caller-assertion observations do not
+assess comparability, completeness, baselines, correctness or improvement. All
+execution exclusions above remain unchanged; the nonblocking checkout Node 20
+annotation persists. Later evidence-only documentation is not another observed
+runtime CI pass.
