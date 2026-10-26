@@ -1,9 +1,10 @@
 # Canonical live-evidence primitives (phase 1)
 
-**Status: implemented, independently reviewed and locally verified for E3.2;
-uncommitted. Not a live producer, session envelope, consent channel or
-qualification result.** This page documents the phase-1 byte/integer/digest layer
-of the proposed `autotune.live-session` v1 format. It was authorized by the local
+**Status: implemented, independently reviewed, locally verified and committed as
+`c1cc27e637c8c113a219a93250543fe437f08d49` (no push). Not a live producer,
+session envelope, consent channel or qualification result.** This page documents
+the phase-1 byte/integer/digest layer of the proposed `autotune.live-session` v1
+format. It was authorized by the local
 [phase-1 scope](../_bmad-output/specs/spec-e3-first-real-benchmark/live-evidence-codec-scope.md)
 and implemented under
 [the phase-1 spec](../_bmad-output/implementation-artifacts/spec-e3-live-evidence-primitives.md).
@@ -188,7 +189,8 @@ added: the existing `sha2` dependency is reused.
 ## Local verification
 
 Date: 2026-10-26. Baseline HEAD `f44ccf01b0f0e5d77172ad7b72c7a52cd1e5033a`
-with the uncommitted phase-1 working-tree changes. Installed Rust 1.99.1 Windows
+with the then-uncommitted phase-1 working-tree changes (committed unchanged as
+`c1cc27e637c8c113a219a93250543fe437f08d49`). Installed Rust 1.99.1 Windows
 GNU, existing LLVM-MinGW, `--locked --offline`, fresh target
 `C:\Users\manni\AppData\Local\Temp\opencode\autotune-evidence-parent-final-20261026-target`.
 

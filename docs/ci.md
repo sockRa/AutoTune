@@ -92,7 +92,9 @@ system changes. Manifest
 `C:\Users\manni\AppData\Local\Temp\opencode\autotune-evidence-parent-final-20261026-manifest.json`,
 SHA256 `2d86bf46d385d8835681757a30d417a2b73ee9803f25df7aae87fdb160996976`,
 binds baseline `f44ccf01b0f0e5d77172ad7b72c7a52cd1e5033a` plus the uncommitted
-phase-1 tree, all commands, log/exit-code hashes, identical before/after hashes
+phase-1 tree (later committed unchanged as
+`c1cc27e637c8c113a219a93250543fe437f08d49`), all commands, log/exit-code hashes,
+identical before/after hashes
 of 105 source/CI files and the independent vector derivation. Documentation,
 spec and roadmap annotations followed the run; no tested Rust/CI source changed.
 The earlier dev-run manifest
