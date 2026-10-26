@@ -8,6 +8,7 @@
 - [Workspace CI scope](ci.md) — deterministic checks and unverified hosted-run boundary.
 - [Synthetic telemetry and energy evidence](measurement.md) — E3.2 recording and E3.3 estimation semantics, not live sampling or workload execution.
 - [Pure FMA contract and CPU reference](fma-reference.md) — frozen design validation, deterministic inputs and checking supplied vectors, not GPU execution or baseline acceptance.
+- [Canonical live-evidence primitives](live-evidence.md) — phase-1 compact bytes, decimal integers/ratios, domain-separated digests and strict decoding; no envelope fields, live producer, clock/process execution or evidence authority.
 - [Isolated benchmark-worker foundation](benchmark-worker.md) — prepared reference, injected fixtures, compile-only CUDA adapter and owned Windows fake containment; no live admission.
 - [NVIDIA read-only qualification](nvidia-feasibility.md) — API sources, observed reads and unverified writes.
 - [Power-trial simulation](power-trial-mock.md) — model behavior, test mapping and native blockers.

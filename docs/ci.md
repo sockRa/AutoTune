@@ -54,6 +54,54 @@ configured CI is not an observed remote pass.
 
 ## Verification evidence
 
+### Canonical live-evidence primitives (phase 1) — 2026-10-26
+
+Portable `autotune_benchmark_worker::evidence` (`canonical`, `digest`, `parse`)
+adds compact canonical bytes, decimal-string integers/ratios, four
+domain-separated SHA-256 digests and a bounded strict reader with re-encode
+canonicality. It is CPU-only primitives with no envelope fields, live producer,
+clock read, process launch or native call. After three independent reviews and
+the resulting patches, a fresh offline Windows GNU target on installed Rust 1.99.1
+and the existing LLVM-MinGW passes workspace fmt, warning-denied workspace
+all-target Clippy, all test linking and **256 explicitly selected CPU-only tests
+(13 evidence)**, plus feature all-target Clippy/linking and four feature-library
+typed/static tests.
+
+Exact restricted selection (not the broader package/hosted selection):
+
+```text
+cargo +stable fmt --all -- --check
+cargo +stable clippy --workspace --all-targets --locked --offline -- -D warnings
+cargo +stable test --workspace --no-run --locked --offline
+cargo +stable test -p autotune-recovery-contract -p autotune-recovery-core -p autotune-measurement -p autotune-fma-reference --locked --offline
+cargo +stable test -p autotune-probe --lib --locked --offline
+cargo +stable test -p autotune-probe --test probe --locked --offline -- --skip every_matrix_scenario_is_deterministic_and_cli_matches_schema --skip usage_help_and_default_mock_exit_behavior
+cargo +stable test -p autotune-power-trial --lib --test safety --locked --offline
+cargo +stable test -p autotune-benchmark-worker --lib --test worker --test monitor --test evidence --locked --offline
+cargo +stable clippy -p autotune-benchmark-worker --all-targets --features native-cuda --locked --offline -- -D warnings
+cargo +stable test -p autotune-benchmark-worker --all-targets --features native-cuda --locked --offline --no-run
+cargo +stable test -p autotune-benchmark-worker --lib --features native-cuda --locked --offline
+```
+
+The 256 tests are 13 evidence, 36 monitor, 8 worker integration, one worker
+library, 147 model/FMA/measurement, 12 probe library, 9 probe pure (both CLI tests
+filtered) and 30 trial safety. Worker-process and trial-CLI targets are not
+selected and no `--ignored` run occurred; workspace and feature all-target builds
+use `--no-run`, not execution. No new process/native/GPU tests, installation or
+system changes. Manifest
+`C:\Users\manni\AppData\Local\Temp\opencode\autotune-evidence-parent-final-20261026-manifest.json`,
+SHA256 `2d86bf46d385d8835681757a30d417a2b73ee9803f25df7aae87fdb160996976`,
+binds baseline `f44ccf01b0f0e5d77172ad7b72c7a52cd1e5033a` plus the uncommitted
+phase-1 tree, all commands, log/exit-code hashes, identical before/after hashes
+of 105 source/CI files and the independent vector derivation. Documentation,
+spec and roadmap annotations followed the run; no tested Rust/CI source changed.
+The earlier dev-run manifest
+`autotune-evidence-phase1-20261026-manifest.json`, SHA256
+`189575d2fb70c2fa34008638a8f7de487e14bce257ee6ac617a7c55c6532604e`, is
+historical because its test run preceded the `digest.rs` lint fix. No hosted or
+actual-commit/native/hardware/release-gate qualification is claimed, and a codec
+round trip is not live evidence or authority to execute anything.
+
 ### Injected monitor policy — 2026-10-26
 
 Loop 2 replaces loop 1's oversized union-event storage with compact controls,

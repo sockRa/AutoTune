@@ -6,6 +6,12 @@ automated benchmark/search/validation product toward an isolated checked workloa
 but does not supply live monitoring, baseline acceptance, search or any release gate.
 No existing recovery, probe or synthetic measurement implementation is changed.
 
+The crate also hosts the portable `evidence` module: canonical value encoding,
+decimal integer/ratio accessors, domain-separated digests and a strict bounded
+decoder. It is a byte/digest layer only, with no Windows, clock, process or CUDA
+dependency, and is documented in [live-evidence.md](live-evidence.md). It creates
+no live evidence and closes no gate.
+
 ## Prepared reference and injected worker
 
 `autotune_fma_reference::reference::PreparedReference` prepares exactly one
