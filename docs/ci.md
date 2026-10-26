@@ -54,6 +54,68 @@ configured CI is not an observed remote pass.
 
 ## Verification evidence
 
+### Injected monitor policy — 2026-10-26
+
+Loop 2 replaces loop 1's oversized union-event storage with compact controls,
+paired sample/begin observations and sparse missed ranges. Installed Rust 1.99.1
+Windows GNU/existing LLVM-MinGW and a fresh offline target pass workspace fmt,
+warning-denied all-target Clippy, all test linking, **236 explicitly selected
+CPU-only tests (29 monitor)**, feature all-target Clippy/linking and four
+feature-library typed/static tests. No monitor tests are ignored or filtered.
+The full injected 600-second trace has 60001 10 ms polls and six queries every
+250 ms, verifies the independent 600 s deadline and every retained operation's
+original anchor/order, and does not stop prematurely for capacity.
+
+Exact restricted test selection (not the broader package/hosted selection):
+
+```text
+cargo +stable test -p autotune-recovery-contract -p autotune-recovery-core -p autotune-measurement -p autotune-fma-reference --locked --offline
+cargo +stable test -p autotune-probe --lib --locked --offline
+cargo +stable test -p autotune-probe --test probe --locked --offline -- --skip every_matrix_scenario_is_deterministic_and_cli_matches_schema --skip usage_help_and_default_mock_exit_behavior
+cargo +stable test -p autotune-power-trial --lib --test safety --locked --offline
+cargo +stable test -p autotune-benchmark-worker --lib --test worker --test monitor --locked --offline
+cargo +stable test -p autotune-benchmark-worker --lib --features native-cuda --locked --offline
+```
+
+Worker-process and trial CLI targets are not selected; both probe CLI tests are
+filtered. Workspace and feature all-target builds use `--no-run`, not execution.
+No new process/native/GPU tests, ignored tests, installation or system changes.
+Manifest `C:\Users\manni\AppData\Local\Temp\opencode\autotune-monitor-loop2-01-20261026-manifest.json`,
+SHA256 `24f91bb27bfcbcd6009a14a13f1695947729b67f0dc23227a6166fa109255be9e`,
+binds actual baseline `7eaef9e9ed5e9a1329fd1c8e7e24dac83b7e0ef3`, all commands,
+log hashes and identical before/after source hashes. Documentation/spec/roadmap
+annotations followed the run; no tested Rust/CI source changed. No hosted or
+actual-commit/native/hardware/release-gate qualification is claimed. These counts
+predate the loop-2 review patches; the post-patch run below is the current
+source-bound result.
+
+Historical loop-1 evidence is not a new pass: final03 manifest
+`C:\Users\manni\AppData\Local\Temp\opencode\autotune-monitor-final03-20261026-manifest.json`,
+SHA256 `c867d97a79c01f0f05bdf56c03682637acca6c3a9c78ce865ae8c03891720022`.
+Retained scope-deviation history, verbatim:
+
+**Scope deviation retained, not a clean-scope claim:** the earlier `final` and
+`final02` broad package selections inadvertently ran four existing mock CLI
+subprocess tests (two probe/two trial), twice. Their initial manifest scope
+strings incorrectly stated no process execution; final03 explicitly corrects
+that record and excludes those tests. No live probe, owned-worker/recovery
+process test, native DLL or GPU ran. Initial missing-dlltool-PATH and new-test
+Clippy `int_plus_one` failures are retained and fixed without installation or
+lint suppression. Parent review must disposition the scope deviation; a later
+restricted pass does not erase it. No hosted/hardware/release-gate claim.
+
+Loop-2 review patches (ten fixture gaps plus a one-line terminal-completion
+guard) were then re-verified from a fresh
+`autotune-monitor-parent-final-20261026-target` against the same baseline:
+workspace fmt, warning-denied all-target Clippy/linking, 243 audited CPU-only
+tests (36 monitor), feature all-target Clippy/linking and four feature-library
+typed/static tests pass. Manifest
+`C:\Users\manni\AppData\Local\Temp\opencode\autotune-monitor-parent-final-20261026-manifest.json`,
+SHA256 `ccc81b75fad31b24a83fdeed6d5ddd73f5cef2a72e5ddcd657d9d10fe9306527`,
+binds commands, logs and unchanged before/after hashes of 105 source/CI files.
+No worker-process/trial-CLI target, ignored test, native load or GPU execution
+ran. The deviation above stays historical noncompliance.
+
 ### Separate bounded-worker local verification — 2026-10-26
 
 Installed Rust 1.99.1 Windows GNU with existing LLVM-MinGW and a fresh target

@@ -69,6 +69,86 @@ the retained evidence. `Report` is immutable after each call, and every outcome
 is sticky: later `advance` calls do not replace it. The injected clock is a
 caller-supplied monotonic source; the worker never reads the OS clock.
 
+## Injected monitor policy (E3.1/E3.2)
+
+`monitor` is portable pure policy, independent of the Windows modules. It reads
+no OS clock and calls no getter, process or backend. It always selects unchanged
+`Profile::approved_design().limits`; there are no policy overrides.
+
+Caller flow:
+
+1. Build `Binding` with nonzero session/run/clock token, worker `Identity` and
+   positive QPC frequency. Supply an origin `Anchor` to
+   `Controller::new(binding, origin, Session::{Pilot,Acceptance})`.
+2. Supply a current anchor on every `begin`, `complete`, `poll` or `request_stop`.
+   Ticket/record times are nanoseconds relative to the origin's interrupt time,
+   **not absolute OS ticks**. The session budget starts at origin.
+3. `begin` returns at most one `Ticket`. Inject its matching `Record` into
+   `complete`: exact binding/metric/slot/scheduled/start, query-end, receipt,
+   typed unit/status and optional integer value. No getter runs here.
+4. Independently call `poll` while a getter is unresolved, including on the
+   approved 10 ms control schedule. A blocked getter must not block control.
+   Inspect immutable `report()`; the library does not drive a timer.
+
+Each raw anchor retains QPC-before/after and interrupt/unbiased 100 ns readings.
+Checked u128 conversions retain ticks/frequency, floor elapsed lower bounds and
+ceil uncertainty. Brackets above 1 ms, epoch changes, regression, overflow,
+interrupt/QPC disagreement above 5 ms or interrupt/unbiased divergence above
+5 ms reject stickily. Both consecutive and origin-relative intervals are checked;
+equality at the maxima passes. Sleep-including time is interrupt elapsed.
+Rejected anchors never become trusted time. Clock-fault stops use the last
+validated time; both deadline-reached helpers conservatively return true while
+current time is invalid, without changing the original numeric stop/deadlines.
+
+Six absolute 250 ms schedules use temperature, power, graphics clock, memory
+clock, GPU utilization, memory utilization tie order. Only the latest due slot
+is queried; older unstarted slots become inclusive missed ranges. Polling
+records misses without replacing the outstanding ticket. Only exactly bound,
+temporally ordered returns with a valid current clock resolve call uncertainty.
+Query bracket <=50 ms and transport <=100 ms pass equality. Wrong units,
+missing available values, negative physical values, utilization outside 0..100,
+and values accompanying unavailable statuses reject. Non-safety unavailable
+status **without a value** records separate baseline insufficiency. These flags
+describe rejected returns only: false does not prove coverage. Consult missed
+ranges, pending state and raw records; there is no baseline verdict.
+
+`fixture_compute_eligible()` requires both fresh matching safety observations
+and no stop/clock fault. Initially false, it stops at temperature >=75 degC,
+power >=200000 mW, or either query-end age >=750 ms. Initial absence also stops
+at 750 ms. Receipt never refreshes age; host query-end is not known sensor age.
+Whole-session expiry (180/600 s) wins at equality. First stop fixes cooperative
+and exit deadlines (+1/+3 s, capped by session expiry); late returns and repeated
+stops cannot renew deadlines or reopen eligibility.
+
+Evidence uses **three pre-reserved vectors**, never a full Record-sized union
+per poll: compact control observations, raw samples paired with their begin
+observations, and sparse missed ranges keyed by original sequence. One unresolved
+begin is retained independently, including across malformed returns. The
+allocation-free `report().events()` iterator reconstructs one event at a time in
+original operation order (including raw rejected records, anchors and skips).
+`terminal_evidence()` separately retains the first overflowing operation; no
+eviction or unbounded late log occurs. Current state may still observe late
+returns, but the first stop and terminal evidence remain unchanged.
+
+Control events have 65535 ordinary slots and samples 32767, reserving one of each
+profile ceiling for terminal evidence; paired begins do not consume a second
+control slot. Sparse storage holds at most 65535 individual missed ranges; a
+batch that cannot fit is retained whole in terminal evidence. All three actual
+vector capacities plus inline controller/terminal state must fit the 20 MiB
+ordinary evidence budget, leaving the 8 MiB writer and 4 MiB failure reserves
+untouched. Allocation is fallible (`InitError::Capacity`); vectors never grow.
+Separately, first use initializes a `OnceLock` via `Profile::approved_design()`,
+which allocates its temporary ID `String` once; that standard allocation can
+abort on OOM and is not covered by `InitError::Capacity`. `capacity()` exposes
+retained counts and allocated policy bytes, **not total RSS, allocator overhead,
+initialization peak, disk or host-process bounds**. The full 600-second fixture
+retains 60002 controls and 14400 paired samples without a capacity stop.
+
+This is fixture eligibility only, not thermal re-entry/utilization qualification,
+physical GPU mapping, exact execution consent, live export, baseline/energy/search
+assessment or termination/GPU-quiescence proof. Existing `Worker` native rejection
+is unchanged; no monitor result can enable it.
+
 ## Compile-only opt-in CUDA adapter
 
 The `native-cuda` feature builds a Windows x64, thread-affine adapter. Nothing
