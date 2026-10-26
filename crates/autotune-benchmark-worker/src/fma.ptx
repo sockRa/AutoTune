@@ -1,0 +1,42 @@
+// Originally authored AutoTune kernel, no vendor sample code.
+.version 6.4
+.target sm_75
+.address_size 64
+.visible .entry autotune_fma(
+    .param .u64 pa, .param .u64 pb, .param .u64 px, .param .u64 po,
+    .param .u32 pn, .param .u32 pk
+) {
+    .reg .pred %p<3>;
+    .reg .b32 %r<8>;
+    .reg .b64 %rd<10>;
+    .reg .f32 %f<4>;
+    ld.param.u64 %rd1, [pa];
+    ld.param.u64 %rd2, [pb];
+    ld.param.u64 %rd3, [px];
+    ld.param.u64 %rd4, [po];
+    ld.param.u32 %r4, [pn];
+    ld.param.u32 %r5, [pk];
+    mov.u32 %r1, %ctaid.x;
+    mov.u32 %r2, %ntid.x;
+    mov.u32 %r3, %tid.x;
+    mad.lo.u32 %r1, %r1, %r2, %r3;
+    setp.ge.u32 %p1, %r1, %r4;
+    @%p1 bra DONE;
+    mul.wide.u32 %rd5, %r1, 4;
+    add.u64 %rd6, %rd1, %rd5;
+    add.u64 %rd7, %rd2, %rd5;
+    add.u64 %rd8, %rd3, %rd5;
+    add.u64 %rd9, %rd4, %rd5;
+    ld.global.f32 %f1, [%rd6];
+    ld.global.f32 %f2, [%rd7];
+    ld.global.f32 %f3, [%rd8];
+    mov.u32 %r6, 0;
+LOOP:
+    fma.rn.f32 %f3, %f1, %f2, %f3;
+    add.u32 %r6, %r6, 1;
+    setp.lt.u32 %p2, %r6, %r5;
+    @%p2 bra LOOP;
+    st.global.f32 [%rd9], %f3;
+DONE:
+    ret;
+}

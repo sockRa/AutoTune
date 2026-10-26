@@ -11,7 +11,14 @@ Both jobs check formatting and Clippy for **every workspace test target** with
 warnings denied. Linux runs the entire workspace's portable paths. Windows runs
 tests in `autotune-probe`, `autotune-power-trial`, `autotune-recovery-contract` and
 `autotune-recovery-core`, plus the independent synthetic-only
-`autotune-measurement` library. Probe tests explicitly use synthetic adapters.
+`autotune-measurement` library and pure `autotune-fma-reference` design/input/oracle
+library, plus `autotune-benchmark-worker` injected fixtures. Probe tests explicitly use synthetic adapters; FMA tests check supplied
+CPU vectors and do not execute a GPU workload.
+
+The benchmark-worker's Windows process tests are ignored and never executed in
+hosted CI. Windows additionally compiles/lints its `native-cuda` feature and runs
+only library tests using typed fake exports/static PTX checks, never a GPU DLL
+loader. The fake-only executable has no native mode. See [worker boundaries](benchmark-worker.md).
 
 Windows recovery/storage/harness tests are **compiled, linked and linted, not executed**
 by this CI definition. Their approved scratch-root, NTFS/ACL and enclosing-job
@@ -30,7 +37,9 @@ Use the installed toolchain matching 1.99.1 and the host's existing linker setup
 cargo +1.99.1 fmt --all -- --check
 cargo +1.99.1 clippy --workspace --all-targets --locked --offline -- -D warnings
 cargo +1.99.1 test --workspace --no-run --locked --offline
-cargo +1.99.1 test -p autotune-probe -p autotune-power-trial -p autotune-recovery-contract -p autotune-recovery-core -p autotune-measurement --locked --offline
+cargo +1.99.1 test -p autotune-probe -p autotune-power-trial -p autotune-recovery-contract -p autotune-recovery-core -p autotune-measurement -p autotune-fma-reference -p autotune-benchmark-worker --locked --offline
+cargo +1.99.1 clippy -p autotune-benchmark-worker --all-targets --features native-cuda --locked --offline -- -D warnings
+cargo +1.99.1 test -p autotune-benchmark-worker --lib --features native-cuda --locked --offline
 ```
 
 On Linux, replace the test commands with `cargo +1.99.1 test --workspace --locked --offline`.
@@ -43,7 +52,44 @@ check. Local Windows GNU results do not verify either hosted Linux or Windows
 MSVC execution. See [ROADMAP.md](../ROADMAP.md) for current evidence and handoff;
 configured CI is not an observed remote pass.
 
-## Observed hosted evidence — 2026-10-25
+## Verification evidence
+
+### Separate bounded-worker local verification — 2026-10-26
+
+Installed Rust 1.99.1 Windows GNU with existing LLVM-MinGW and a fresh target
+passes fmt, warning-denied workspace Clippy/linking and 211 selected deterministic
+tests; five ignored worker-process tests are then explicitly run serially and all
+pass. Opt-in native-feature all-target Clippy/linking and four library tests pass
+using only typed exports/static checks (one protocol test overlaps default tests).
+No native GPU DLL is loaded or hardware executed. No hosted/actual-commit claim.
+Source/results manifest
+`C:\Users\manni\AppData\Local\Temp\opencode\autotune-worker-final03-20261026-manifest.json`
+SHA256 `95557c80710f7a4e3c5b73b3dc3df2ed8aa550e7f3907ee533952aac3b863509`
+binds full baseline `c6e3821d0cbf31e039fdc68b3b055963822a0123`, before/after source,
+contract/binary hashes, retained logs/exitcodes and initial fixed failures.
+These results follow the independent-review patches (frozen profile limits,
+driver retention, evidence/deadline/upload coverage, documentation and CI
+boundary); final03 supersedes final02, whose logs remain retained. Later
+doc-only evidence annotations do not change tested Rust/CI source. Parent-loss
+child exit is observed via the original duplicated process handle; accounting for
+the lost sole-owned job is explicitly unavailable, not a successful-session claim.
+
+### Separate local-only FMA delivery — 2026-10-26
+
+The expanded pure-package scope passes locally on installed Rust 1.99.1 Windows
+GNU: fmt, warning-denied workspace Clippy, all workspace test linking and
+**200 selected deterministic tests, including 23 FMA tests**, zero failed/ignored/
+filtered. This is uncommitted working-tree evidence, not a hosted result for
+the new crate/CI definition. Source/results manifest
+`C:\Users\manni\AppData\Local\Temp\opencode\autotune-fma-final-20261026-manifest.json`
+SHA256 `8fe0f2fd56e2f1fb2d1d3ec4b76c87b935aded76419505a8c1880d295041bfaf`
+binds baseline `c6e3821d0cbf31e039fdc68b3b055963822a0123`, source hashes,
+fresh target and native command results. Later evidence-only roadmap/CI text
+does not change tested Rust/CI behavior. No recovery acceptance, live workload,
+probe, GPU or system changes. An initial new-test Clippy type-complexity error
+was fixed with a test type alias; its failure log is retained separately.
+
+### Prior hosted observations — 2026-10-25, unchanged scope
 
 [Run 40179174853](https://github.com/sockRa/AutoTune/actions/runs/40179174853)
 completed successfully for commit `8778c5f4f241631b8282631039abd50b7d35d881`.

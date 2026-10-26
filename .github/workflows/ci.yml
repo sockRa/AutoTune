@@ -40,9 +40,15 @@ jobs:
         run: cargo +1.99.1 test --workspace --locked --offline
       - name: Test deterministic packages on Windows
         if: runner.os == 'Windows'
-        run: cargo +1.99.1 test -p autotune-probe -p autotune-power-trial -p autotune-recovery-contract -p autotune-recovery-core -p autotune-measurement --locked --offline
+        run: cargo +1.99.1 test -p autotune-probe -p autotune-power-trial -p autotune-recovery-contract -p autotune-recovery-core -p autotune-measurement -p autotune-fma-reference -p autotune-benchmark-worker --locked --offline
+      - name: Compile and lint opt-in CUDA adapter without loading a driver
+        if: runner.os == 'Windows'
+        run: cargo +1.99.1 clippy -p autotune-benchmark-worker --all-targets --features native-cuda --locked --offline -- -D warnings
+      - name: Test only typed CUDA ABI fakes, never native loading
+        if: runner.os == 'Windows'
+        run: cargo +1.99.1 test -p autotune-benchmark-worker --lib --features native-cuda --locked --offline
       - name: Report Windows execution boundary
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          'Windows recovery-windows and recovery-harness tests were compiled/linked, not executed. This job does not establish recovery acceptance or hardware qualification.' >> $env:GITHUB_STEP_SUMMARY
+          'Windows recovery-windows and recovery-harness tests were compiled/linked, not executed. The five ignored benchmark-worker owned-process tests were also not executed, and no CUDA adapter or GPU driver was loaded. This job does not establish recovery acceptance, process-containment acceptance or hardware qualification.' >> $env:GITHUB_STEP_SUMMARY

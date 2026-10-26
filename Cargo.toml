@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "crates/autotune-benchmark-worker",
+    "crates/autotune-fma-reference",
     "crates/autotune-measurement",
     "crates/autotune-probe",
     "crates/autotune-power-trial",

@@ -3,6 +3,23 @@
 version = 4
 
 [[package]]
+name = "autotune-benchmark-worker"
+version = "0.1.0"
+dependencies = [
+ "autotune-fma-reference",
+ "libloading",
+ "sha2",
+ "windows-sys",
+]
+
+[[package]]
+name = "autotune-fma-reference"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+]
+
+[[package]]
 name = "autotune-measurement"
 version = "0.1.0"
 dependencies = [

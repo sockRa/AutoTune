@@ -39,8 +39,9 @@ the above Disclaimer and U.S. Government End Users Notice.
 ## Rust dependencies
 
 Direct dependencies: serde and serde_json (MIT OR Apache-2.0), time (MIT OR
-Apache-2.0), libloading (ISC), sha2 (MIT OR Apache-2.0), and the separate
-recovery Windows port's windows-sys 0.61.2 (MIT OR Apache-2.0).
+Apache-2.0), libloading (ISC), sha2 (MIT OR Apache-2.0), and windows-sys 0.61.2
+(MIT OR Apache-2.0), used by the separate recovery Windows port and by the
+benchmark worker's process/CUDA modules.
 Cargo.lock pins direct and transitive versions;
 their upstream license texts ship in downloaded crate sources. For binary
 redistribution retain those license texts and notices for **all** included
