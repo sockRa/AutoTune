@@ -114,7 +114,10 @@ typed/static tests pass. Manifest
 SHA256 `ccc81b75fad31b24a83fdeed6d5ddd73f5cef2a72e5ddcd657d9d10fe9306527`,
 binds commands, logs and unchanged before/after hashes of 105 source/CI files.
 No worker-process/trial-CLI target, ignored test, native load or GPU execution
-ran. The deviation above stays historical noncompliance.
+ran. The deviation above stays historical noncompliance. The verified monitor
+source is preserved by owner-approved local commit
+`898ff279f01442dc67bb1c94bbe050369c59fc1c` (no push); the commit does not add a
+hosted, hardware or release-gate result.
 
 ### Separate bounded-worker local verification — 2026-10-26
 
