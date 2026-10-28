@@ -14,6 +14,15 @@ The codec produces and validates bytes only. Every value is injected by the
 caller. A passing round trip never creates live evidence, promotes provenance,
 grants consent or approval, or authorizes native work.
 
+Phase 2 maps the session envelope onto these bytes in
+[live-evidence-envelope.md](live-evidence-envelope.md): exact top-level and
+section order, typed observations with validated `unavailable` reasons, one
+`Domain::Session` digest, provenance policy and cross-field/retention refusal.
+The timing and metric-slot findings from the 2026-10-27 audit were resolved,
+focused-tested and statically reviewed on 2026-10-28. It does not change any phase-1
+byte, error variant or digest construction; a validated envelope is still not
+live evidence, consent, admission or qualification.
+
 ## Representation
 
 Documents are compact UTF-8 JSON in fixed model order with no whitespace. The

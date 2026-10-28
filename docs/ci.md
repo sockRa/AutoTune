@@ -54,6 +54,77 @@ configured CI is not an observed remote pass.
 
 ## Verification evidence
 
+### Envelope closeout — 2026-10-28
+
+The timing and aggregate metric-slot defects recorded below are resolved.
+Current focused verification passes 26 envelope tests, warning-denied
+library/envelope Clippy and package formatting. Independent static review found
+no code blockers. See [source hashes and commands](live-evidence-envelope.md#local-verification).
+The broad 2026-10-26 workspace record below is historical, not a rerun for
+this changeset. No process/native/GPU workload was executed.
+
+### Live-evidence session envelope (phase 2) — 2026-10-26
+
+Portable `autotune_benchmark_worker::evidence::envelope` adds the typed
+`autotune.live-session` v1 document on unchanged phase-1 primitives: 13-key
+top-level order, typed fixed-order sections, validated `unavailable` reasons,
+one `Domain::Session` digest, provenance policy, cross-field/retention refusal
+and 24 deterministic tests. After three independent reviews and the resulting
+patches (lifecycle/dispatch/telemetry timing, distinct-slot telemetry counts,
+`digest_only` output digests, stricter `usable` evidence, identity/empty-job
+consistency, text/range/hex tests and docs), an initially new offline Windows GNU target
+on installed Rust 1.99.1 and the existing LLVM-MinGW passes workspace fmt,
+warning-denied workspace all-target Clippy, all test linking and **280
+explicitly selected CPU-only tests (24 envelope, 13 evidence)**, plus feature
+all-target Clippy/linking and four feature-library typed/static tests.
+
+Exact restricted selection (not the broader package/hosted selection):
+
+```text
+cargo +stable fmt --all -- --check
+cargo +stable clippy --workspace --all-targets --locked --offline -- -D warnings
+cargo +stable test --workspace --no-run --locked --offline
+cargo +stable test -p autotune-recovery-contract -p autotune-recovery-core -p autotune-measurement -p autotune-fma-reference --locked --offline
+cargo +stable test -p autotune-probe --lib --locked --offline
+cargo +stable test -p autotune-probe --test probe --locked --offline -- --skip every_matrix_scenario_is_deterministic_and_cli_matches_schema --skip usage_help_and_default_mock_exit_behavior
+cargo +stable test -p autotune-power-trial --lib --test safety --locked --offline
+cargo +stable test -p autotune-benchmark-worker --lib --test worker --test monitor --test evidence --test envelope --locked --offline
+cargo +stable clippy -p autotune-benchmark-worker --all-targets --features native-cuda --locked --offline -- -D warnings
+cargo +stable test -p autotune-benchmark-worker --all-targets --features native-cuda --locked --offline --no-run
+cargo +stable test -p autotune-benchmark-worker --lib --features native-cuda --locked --offline
+```
+
+The 280 tests are 24 envelope, 13 evidence, 36 monitor, 8 worker integration,
+one worker library, 147 model/FMA/measurement, 12 probe library, 9 probe pure
+(both CLI tests filtered) and 30 trial safety. Worker-process and trial-CLI
+targets are not selected and no `--ignored` run occurred; workspace and feature
+all-target builds use `--no-run`, not execution. No new process/native/GPU tests,
+installation or system changes. Manifest
+`C:\Users\manni\AppData\Local\Temp\opencode\autotune-envelope-parent-final-20261026-manifest.json`,
+SHA256 `2e9d96bee22e883a3222b363fa81cf1f6bf4734a6c819312fd899dc436788809`,
+binds baseline `3655e6a8800c11f7bf3d5d78dc63495619b401b5` plus the uncommitted
+phase-2 tree, all commands, log/exit-code hashes, identical before/after hashes
+of 117 repository files and the two local contracts. The pinned session digest
+`2ffe9f82352de2704cd1aa49ec98c7215327517e44bb068e1ffe22b8c6a5795c` is
+encoder-produced only; reviewers recomputed an older fixture, not this digest.
+The original manifest's reviewer-recomputation claim is unsupported. Its corrected
+companion is
+`C:\Users\manni\AppData\Local\Temp\opencode\autotune-envelope-closeout-20261027-companion.json`;
+SHA256 `333b77f2ecdef234377d6e3a411c35505dd16c388e263a3491c0aaa35618d034`.
+Read both records together. The initial parent attempt stopped on PowerShell's
+handling of Cargo stderr; the successful rerun reused partial compilation, so
+this was not an entirely pristine first-attempt run. No hosted or
+actual-commit/native/hardware/release-gate qualification is claimed, and a
+validated envelope is not live evidence, consent, admission or authority to
+execute anything.
+
+The 2026-10-27 contract audit found an open stop/completion-window defect and
+unresolved aggregate slot-count semantics; see [envelope validation](live-evidence-envelope.md#validation-rules).
+The earlier three reviews preceded the final patches and are not acceptance of
+those patches. The 24 passing tests include expectations for the disputed rules;
+passing them is not contract conformance. Closeout remains blocked. No Rust was
+changed and no tests were rerun in this audit.
+
 ### Canonical live-evidence primitives (phase 1) — 2026-10-26
 
 Portable `autotune_benchmark_worker::evidence` (`canonical`, `digest`, `parse`)
