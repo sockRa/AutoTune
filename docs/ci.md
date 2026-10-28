@@ -54,6 +54,18 @@ configured CI is not an observed remote pass.
 
 ## Verification evidence
 
+### Published envelope and Windows clock bridge — 2026-10-28
+
+Hosted run **40747047726** for
+`8bada0eb46d9e50bb760ea2d11fed20384a5f260` completed successfully
+(`gh run watch --exit-status`, exit 0). Ubuntu 24.04 finished in 47 seconds;
+Windows 2025 finished in 1 minute 49 seconds. Configured workspace lint/format,
+portable Linux tests, Windows deterministic packages, Windows test linking and
+opt-in CUDA compile/typed-fake checks pass. No GPU driver loading, recovery
+acceptance execution or hardware qualification follows from these checks.
+The separate parent-observed real OS clock capture is documented in
+[worker evidence](benchmark-worker.md#windows-clock-capture--2026-10-28).
+
 ### Envelope closeout — 2026-10-28
 
 The timing and aggregate metric-slot defects recorded below are resolved.

@@ -18,6 +18,17 @@ struct Script {
     legacy_offset_status: i32,
     domain_offset_status: [i32; 2],
     modern_setter_present: bool,
+    device_count: u32,
+    identities: Vec<(&'static str, &'static str)>,
+    indices: Vec<u32>,
+    sampled_handles: Vec<usize>,
+    temperature_selectors: Vec<u32>,
+    uuid_status: i32,
+    pci_status: i32,
+    count_status: i32,
+    handle_status: i32,
+    null_handle: bool,
+    util_status: i32,
 }
 
 thread_local! {
@@ -28,6 +39,7 @@ fn reset() {
     SCRIPT.with(|s| {
         *s.borrow_mut() = Script {
             util: (17, 29),
+            device_count: 1,
             ..Script::default()
         }
     });
@@ -47,13 +59,22 @@ unsafe extern "C" fn shutdown() -> i32 {
 }
 unsafe extern "C" fn count(out: *mut u32) -> i32 {
     record("nvmlDeviceGetCount_v2");
-    *out = 1;
-    0
+    *out = SCRIPT.with(|s| s.borrow().device_count);
+    SCRIPT.with(|s| s.borrow().count_status)
 }
-unsafe extern "C" fn by_index(_: u32, out: *mut Handle) -> i32 {
+unsafe extern "C" fn by_index(index: u32, out: *mut Handle) -> i32 {
     record("nvmlDeviceGetHandleByIndex_v2");
-    *out = std::ptr::NonNull::<u8>::dangling().as_ptr().cast();
-    0
+    SCRIPT.with(|s| {
+        let mut s = s.borrow_mut();
+        s.indices.push(index);
+        // Opaque identity tokens only, never dereferenced.
+        *out = if s.null_handle {
+            std::ptr::null_mut()
+        } else {
+            (index as usize + 1) as Handle
+        };
+        s.handle_status
+    })
 }
 unsafe fn write_text(out: *mut c_char, len: u32) -> i32 {
     if len < 8 {
@@ -100,26 +121,64 @@ unsafe extern "C" fn name(_: Handle, out: *mut c_char, len: u32) -> i32 {
         _ => write_text(out, len),
     }
 }
-unsafe extern "C" fn uuid(_: Handle, out: *mut c_char, len: u32) -> i32 {
+unsafe extern "C" fn uuid(handle: Handle, out: *mut c_char, len: u32) -> i32 {
     record("nvmlDeviceGetUUID");
-    write_text(out, len)
-}
-unsafe extern "C" fn pci(_: Handle, out: *mut Pci) -> i32 {
-    record("nvmlDeviceGetPciInfo_v3");
-    (&mut (*out).bus_id)[..13].copy_from_slice(b"0000:01:00.0\0");
+    let (value, status) = SCRIPT.with(|s| {
+        let s = s.borrow();
+        (
+            s.identities.get(handle as usize - 1).map_or("fixture", |i| i.0),
+            s.uuid_status,
+        )
+    });
+    if status != 0 {
+        return status;
+    }
+    if value.len() + 1 > len as usize {
+        return 7;
+    }
+    std::ptr::copy_nonoverlapping(value.as_ptr().cast(), out, value.len());
+    *out.add(value.len()) = 0;
     0
 }
-unsafe extern "C" fn temperature(_: Handle, selector: u32, out: *mut u32) -> i32 {
+unsafe extern "C" fn pci(handle: Handle, out: *mut Pci) -> i32 {
+    record("nvmlDeviceGetPciInfo_v3");
+    let (value, status) = SCRIPT.with(|s| {
+        let s = s.borrow();
+        (
+            s.identities.get(handle as usize - 1).map_or("0000:01:00.0", |i| i.1),
+            s.pci_status,
+        )
+    });
+    if status != 0 {
+        return status;
+    }
+    if value.len() >= (*out).bus_id.len() {
+        return 7;
+    }
+    (&mut (*out).bus_id)[..value.len()].copy_from_slice(value.as_bytes());
+    (&mut (*out).bus_id)[value.len()] = 0;
+    0
+}
+unsafe extern "C" fn temperature(handle: Handle, selector: u32, out: *mut u32) -> i32 {
     record("nvmlDeviceGetTemperature");
+    SCRIPT.with(|s| {
+        let mut s = s.borrow_mut();
+        s.sampled_handles.push(handle as usize);
+        s.temperature_selectors.push(selector);
+    });
     if selector != 0 {
         return 2;
     }
     *out = 42;
     0
 }
-unsafe extern "C" fn clock(_: Handle, selector: u32, out: *mut u32) -> i32 {
+unsafe extern "C" fn clock(handle: Handle, selector: u32, out: *mut u32) -> i32 {
     record("nvmlDeviceGetClockInfo");
-    SCRIPT.with(|s| s.borrow_mut().selectors.push(selector));
+    SCRIPT.with(|s| {
+        let mut s = s.borrow_mut();
+        s.selectors.push(selector);
+        s.sampled_handles.push(handle as usize);
+    });
     *out = match selector {
         0 => 1500,
         2 => 7000,
@@ -127,16 +186,18 @@ unsafe extern "C" fn clock(_: Handle, selector: u32, out: *mut u32) -> i32 {
     };
     0
 }
-unsafe extern "C" fn power(_: Handle, out: *mut u32) -> i32 {
+unsafe extern "C" fn power(handle: Handle, out: *mut u32) -> i32 {
     record("nvmlDeviceGetPowerUsage");
+    SCRIPT.with(|s| s.borrow_mut().sampled_handles.push(handle as usize));
     *out = 65000;
     SCRIPT.with(|s| s.borrow().power_status)
 }
-unsafe extern "C" fn utilization(_: Handle, out: *mut Util) -> i32 {
+unsafe extern "C" fn utilization(handle: Handle, out: *mut Util) -> i32 {
     record("nvmlDeviceGetUtilizationRates");
+    SCRIPT.with(|s| s.borrow_mut().sampled_handles.push(handle as usize));
     let (gpu, memory) = SCRIPT.with(|s| s.borrow().util);
     *out = Util { gpu, memory };
-    0
+    SCRIPT.with(|s| s.borrow().util_status)
 }
 macro_rules! uint_stub {
     ($function:ident, $name:literal, $value:expr) => {
@@ -285,6 +346,241 @@ fn failure(field: &Field) -> &Failure {
         Reading::Unavailable { failure } => failure,
         _ => panic!("expected unavailable reading"),
     }
+}
+
+fn sampler(uuid: &str, pci_bus_id: &str) -> Result<NvmlSampler, Failure> {
+    Ok(NvmlSampler {
+        selected: session()?.select(uuid, pci_bus_id)?,
+    })
+}
+
+#[test]
+fn selective_samples_call_only_one_requested_getter() {
+    for (metric, getter, unit, expected, selector) in [
+        (SampleMetric::Temperature, "nvmlDeviceGetTemperature", "degC", 42, Some(0)),
+        (SampleMetric::Power, "nvmlDeviceGetPowerUsage", "mW", 65000, None),
+        (SampleMetric::GraphicsClock, "nvmlDeviceGetClockInfo", "MHz", 1500, Some(0)),
+        (SampleMetric::MemoryClock, "nvmlDeviceGetClockInfo", "MHz", 7000, Some(2)),
+        (SampleMetric::GpuUtilization, "nvmlDeviceGetUtilizationRates", "%", 17, None),
+        (SampleMetric::MemoryUtilization, "nvmlDeviceGetUtilizationRates", "%", 29, None),
+    ] {
+        reset();
+        let sampler = sampler("fixture", "0000:01:00.0").unwrap();
+        SCRIPT.with(|s| {
+            let mut s = s.borrow_mut();
+            assert_eq!(
+                s.calls,
+                [
+                    "nvmlInit_v2",
+                    "nvmlDeviceGetCount_v2",
+                    "nvmlDeviceGetHandleByIndex_v2",
+                    "nvmlDeviceGetUUID",
+                    "nvmlDeviceGetPciInfo_v3",
+                ]
+            );
+            s.calls.clear();
+            s.resolutions.clear();
+        });
+        let reading = sampler.sample(metric);
+        assert_eq!(reading.unit, unit);
+        assert_eq!(reading.symbol_presence, SymbolPresence::Present);
+        assert_eq!(value(&reading), &serde_json::json!(expected));
+        SCRIPT.with(|s| {
+            let s = s.borrow();
+            assert_eq!(s.calls, [getter]);
+            assert_eq!(s.resolutions, [getter]);
+            assert_eq!(s.sampled_handles, [1]);
+            let selectors = if metric == SampleMetric::Temperature {
+                &s.temperature_selectors
+            } else {
+                &s.selectors
+            };
+            assert_eq!(selectors, &selector.into_iter().collect::<Vec<_>>());
+        });
+    }
+}
+
+#[test]
+fn selective_samples_preserve_status_and_missing_symbol_distinctions() {
+    for (status, reason) in [
+        (3, Reason::Unsupported),
+        (4, Reason::PermissionDenied),
+        (15, Reason::GpuLost),
+        (999, Reason::QueryFailed),
+    ] {
+        reset();
+        let sampler = sampler("fixture", "0000:01:00.0").unwrap();
+        SCRIPT.with(|s| s.borrow_mut().power_status = status);
+        let reading = sampler.sample(SampleMetric::Power);
+        assert_eq!(failure(&reading).vendor_status, Some(status));
+        assert_eq!(failure(&reading).reason, reason);
+        assert_eq!(reading.unit, "mW");
+        assert_eq!(reading.symbol_presence, SymbolPresence::Present);
+    }
+    for (metric, getter) in [
+        (SampleMetric::Temperature, "nvmlDeviceGetTemperature"),
+        (SampleMetric::Power, "nvmlDeviceGetPowerUsage"),
+        (SampleMetric::GraphicsClock, "nvmlDeviceGetClockInfo"),
+        (SampleMetric::MemoryClock, "nvmlDeviceGetClockInfo"),
+        (SampleMetric::GpuUtilization, "nvmlDeviceGetUtilizationRates"),
+        (SampleMetric::MemoryUtilization, "nvmlDeviceGetUtilizationRates"),
+    ] {
+        reset();
+        let sampler = sampler("fixture", "0000:01:00.0").unwrap();
+        SCRIPT.with(|s| {
+            let mut s = s.borrow_mut();
+            s.missing = Some(getter);
+            s.calls.clear();
+            s.resolutions.clear();
+        });
+        let reading = sampler.sample(metric);
+        assert_eq!(failure(&reading).reason, Reason::SymbolMissing);
+        assert_eq!(failure(&reading).vendor_status, None);
+        assert_eq!(reading.symbol_presence, SymbolPresence::Absent);
+        assert_eq!(reading.unit, metric.unit());
+        SCRIPT.with(|s| {
+            assert!(s.borrow().calls.is_empty());
+            assert_eq!(s.borrow().resolutions, [getter]);
+        });
+    }
+}
+
+#[test]
+fn selective_utilization_keeps_only_requested_component() {
+    for (util, metric, expected) in [
+        ((17, 101), SampleMetric::GpuUtilization, 17),
+        ((101, 29), SampleMetric::MemoryUtilization, 29),
+    ] {
+        reset();
+        let sampler = sampler("fixture", "0000:01:00.0").unwrap();
+        SCRIPT.with(|s| s.borrow_mut().util = util);
+        assert_eq!(value(&sampler.sample(metric)), &serde_json::json!(expected));
+        SCRIPT.with(|s| s.borrow_mut().util = (101, 101));
+        assert_eq!(failure(&sampler.sample(metric)).reason, Reason::InvalidValue);
+        SCRIPT.with(|s| s.borrow_mut().util_status = 15);
+        let reading = sampler.sample(metric);
+        assert_eq!(failure(&reading).vendor_status, Some(15));
+        assert_eq!(failure(&reading).reason, Reason::GpuLost);
+        SCRIPT.with(|s| {
+            assert_eq!(
+                s.borrow().calls.iter().filter(|c| **c == "nvmlDeviceGetUtilizationRates").count(),
+                3
+            );
+        });
+    }
+}
+
+#[test]
+fn selective_identity_enumerates_and_retains_nonzero_device_until_drop() {
+    reset();
+    SCRIPT.with(|s| {
+        let mut s = s.borrow_mut();
+        s.device_count = 3;
+        s.identities = vec![
+            ("wanted", "0000:01:00.0"),
+            ("wanted", "0000:02:00.0"),
+            ("last", "0000:02:00.0"),
+        ];
+    });
+    let selected = sampler("wanted", "0000:02:00.0").unwrap();
+    SCRIPT.with(|s| {
+        let s = s.borrow();
+        assert_eq!(s.indices, [0, 1, 2]);
+        assert!(!s.calls.contains(&"nvmlShutdown"));
+        assert!(s.sampled_handles.is_empty());
+        assert!(!s.resolutions.iter().any(|r| r.starts_with("nvmlDeviceSet")));
+    });
+    // Moving the API value moves session ownership, not the opaque device token.
+    let moved = selected;
+    moved.sample(SampleMetric::Power);
+    moved.sample(SampleMetric::Temperature);
+    SCRIPT.with(|s| {
+        let s = s.borrow();
+        assert_eq!(s.sampled_handles, [2, 2]);
+        assert!(!s.calls.contains(&"nvmlShutdown"));
+        assert_eq!(s.indices, [0, 1, 2]); // Sampling never re-resolves the handle.
+    });
+    drop(moved);
+    SCRIPT.with(|s| {
+        let s = s.borrow();
+        assert_eq!(s.calls.last(), Some(&"nvmlShutdown"));
+        assert_eq!(s.calls.iter().filter(|c| **c == "nvmlShutdown").count(), 1);
+        assert_eq!(s.calls.iter().filter(|c| **c == "nvmlInit_v2").count(), 1);
+    });
+}
+
+#[test]
+fn selective_identity_requires_exact_unique_pair() {
+    for (identities, uuid, pci) in [
+        (vec![], "absent", "0000:01:00.0"),
+        (vec![], "Fixture", "0000:01:00.0"),
+        (vec![], "fixture", "00000000:01:00.0"),
+        (vec![("", "0000:01:00.0")], "fixture", "0000:01:00.0"),
+        (vec![("fixture", "")], "fixture", "0000:01:00.0"),
+        (vec![("fixture", "0000:01:00.0"); 2], "fixture", "0000:01:00.0"),
+        (vec![("a", "0000:01:00.0"), ("b", "0000:02:00.0")], "a", "0000:02:00.0"),
+        (vec![], "", "0000:01:00.0"),
+        (vec![], "fixture", ""),
+    ] {
+        reset();
+        SCRIPT.with(|s| {
+            let mut s = s.borrow_mut();
+            if !identities.is_empty() {
+                s.device_count = identities.len() as u32;
+            }
+            s.identities = identities;
+        });
+        let error = sampler(uuid, pci).err().unwrap();
+        assert_eq!(error.reason, Reason::InvalidValue);
+        assert_eq!(error.vendor_status, None);
+        SCRIPT.with(|s| {
+            let s = s.borrow();
+            assert!(s.sampled_handles.is_empty());
+            assert_eq!(s.calls.last(), Some(&"nvmlShutdown"));
+        });
+    }
+    for count in [0, 1025] {
+        reset();
+        SCRIPT.with(|s| s.borrow_mut().device_count = count);
+        assert!(sampler("fixture", "0000:01:00.0").is_err());
+        SCRIPT.with(|s| assert!(s.borrow().indices.is_empty()));
+    }
+}
+
+#[test]
+fn selective_identity_fails_closed_on_unavailable_enumeration_or_identity() {
+    for stage in 0..4 {
+        reset();
+        SCRIPT.with(|s| {
+            let mut s = s.borrow_mut();
+            match stage {
+                0 => s.count_status = 999,
+                1 => s.handle_status = 999,
+                2 => s.uuid_status = 999,
+                _ => s.pci_status = 999,
+            }
+        });
+        let error = sampler("fixture", "0000:01:00.0").err().unwrap();
+        assert_eq!(error.vendor_status, Some(999));
+        SCRIPT.with(|s| {
+            assert!(s.borrow().sampled_handles.is_empty());
+            assert_eq!(s.borrow().calls.last(), Some(&"nvmlShutdown"));
+        });
+    }
+    for getter in ["nvmlDeviceGetUUID", "nvmlDeviceGetPciInfo_v3"] {
+        reset();
+        SCRIPT.with(|s| s.borrow_mut().missing = Some(getter));
+        assert_eq!(
+            sampler("fixture", "0000:01:00.0").err().unwrap().reason,
+            Reason::SymbolMissing
+        );
+    }
+    reset();
+    SCRIPT.with(|s| s.borrow_mut().null_handle = true);
+    assert_eq!(
+        sampler("fixture", "0000:01:00.0").err().unwrap().reason,
+        Reason::InvalidValue
+    );
 }
 
 #[test]

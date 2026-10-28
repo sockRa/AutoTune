@@ -36,6 +36,76 @@ the above Disclaimer and U.S. Government End Users Notice.
 */
 use crate::{adapter::ReadOnlyAdapter, report::*};
 
+/// One read-only monitor getter per sampling invocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SampleMetric {
+    Temperature,
+    Power,
+    GraphicsClock,
+    MemoryClock,
+    GpuUtilization,
+    MemoryUtilization,
+}
+
+impl SampleMetric {
+    fn unit(self) -> &'static str {
+        match self {
+            Self::Temperature => "degC",
+            Self::Power => "mW",
+            Self::GraphicsClock | Self::MemoryClock => "MHz",
+            Self::GpuUtilization | Self::MemoryUtilization => "%",
+        }
+    }
+}
+
+/// Owns one trusted NVML session and its privately selected device handle.
+///
+/// Exact NVML UUID and PCI bus-ID matching is not physical workload mapping,
+/// workload admission, or a claim about the provenance of a live recording.
+pub struct NvmlSampler {
+    #[cfg(windows)]
+    selected: windows::SelectedSession,
+}
+
+impl NvmlSampler {
+    /// Enumerate and select exactly one device; incomplete identity fails closed.
+    /// `pci_bus_id` is the exact NVML v3 bus-ID text, without normalization.
+    pub fn open(uuid: &str, pci_bus_id: &str) -> Result<Self, Failure> {
+        #[cfg(windows)]
+        {
+            Ok(Self {
+                selected: windows::Session::open()?.select(uuid, pci_bus_id)?,
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (uuid, pci_bus_id);
+            Err(Failure::new(
+                Reason::UnsupportedPlatform,
+                "live NVML sampling requires Windows",
+            ))
+        }
+    }
+
+    /// Perform only the requested getter and return only its requested component.
+    pub fn sample(&self, metric: SampleMetric) -> Field {
+        #[cfg(windows)]
+        {
+            self.selected.sample(metric)
+        }
+        #[cfg(not(windows))]
+        {
+            Field::unavailable(
+                metric.unit(),
+                Failure::new(
+                    Reason::UnsupportedPlatform,
+                    "live NVML sampling requires Windows",
+                ),
+            )
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct NvmlAdapter {
     #[cfg(windows)]
@@ -188,6 +258,73 @@ mod windows {
         library: Symbols,
         path: PathBuf,
         shutdown: Init,
+    }
+
+    pub(super) struct SelectedSession {
+        session: Session,
+        handle: Handle,
+    }
+
+    impl SelectedSession {
+        pub(super) fn sample(&self, metric: SampleMetric) -> Field {
+            let session = &self.session;
+            let handle = self.handle;
+            match metric {
+                SampleMetric::Temperature => session.uint(
+                    handle,
+                    b"nvmlDeviceGetTemperature\0",
+                    metric.unit(),
+                    Some(0),
+                    200,
+                    false,
+                ),
+                SampleMetric::Power => session.uint(
+                    handle,
+                    b"nvmlDeviceGetPowerUsage\0",
+                    metric.unit(),
+                    None,
+                    10_000_000,
+                    false,
+                ),
+                SampleMetric::GraphicsClock | SampleMetric::MemoryClock => session.uint(
+                    handle,
+                    b"nvmlDeviceGetClockInfo\0",
+                    metric.unit(),
+                    Some(if metric == SampleMetric::GraphicsClock {
+                        0
+                    } else {
+                        2
+                    }),
+                    100_000,
+                    true,
+                ),
+                SampleMetric::GpuUtilization | SampleMetric::MemoryUtilization => field(
+                    metric.unit(),
+                    (|| {
+                        let mut util = Util::default();
+                        // SAFETY: documented getter ABI, writable repr(C) output;
+                        // the selected handle's owning Session remains alive.
+                        unsafe {
+                            check(
+                                session.get::<UtilQuery>(b"nvmlDeviceGetUtilizationRates\0")?(
+                                    handle, &mut util,
+                                ),
+                                b"nvmlDeviceGetUtilizationRates",
+                            )?;
+                        }
+                        unsigned(
+                            if metric == SampleMetric::GpuUtilization {
+                                util.gpu
+                            } else {
+                                util.memory
+                            },
+                            100,
+                            false,
+                        )
+                    })(),
+                ),
+            }
+        }
     }
 
     fn symbol_name(name: &[u8]) -> String {
@@ -353,6 +490,39 @@ mod windows {
                 )?;
             }
             Ok(count)
+        }
+        pub(super) fn select(
+            self,
+            uuid: &str,
+            pci_bus_id: &str,
+        ) -> Result<SelectedSession, Failure> {
+            if uuid.is_empty() || pci_bus_id.is_empty() {
+                return Err(invalid("empty NVML selection identity"));
+            }
+            let count = self.count()?;
+            if count > 1024 {
+                return Err(invalid("device count exceeds safety bound (1024)"));
+            }
+            let mut selected = None;
+            for index in 0..count {
+                let handle = self.handle(index)?;
+                let device_uuid = match self.device_text(handle, b"nvmlDeviceGetUUID\0").reading {
+                    Reading::Available { value } => value,
+                    Reading::Unavailable { failure } => return Err(failure),
+                };
+                let pci = self.pci_bus_id(handle)?;
+                if device_uuid.as_str() == Some(uuid)
+                    && pci == pci_bus_id
+                    && selected.replace(handle).is_some()
+                {
+                    return Err(invalid("ambiguous NVML UUID and PCI identity"));
+                }
+            }
+            let handle = selected.ok_or_else(|| invalid("NVML UUID and PCI identity not found"))?;
+            Ok(SelectedSession {
+                session: self,
+                handle,
+            })
         }
         fn device_text(&self, handle: Handle, name: &[u8]) -> Field {
             field(
@@ -531,7 +701,7 @@ mod windows {
                     .collect(),
             }
         }
-        pub fn device(&self, index: u32) -> Result<Device, Failure> {
+        fn handle(&self, index: u32) -> Result<Handle, Failure> {
             let mut handle = std::ptr::null_mut();
             // SAFETY: documented index getter; handle belongs to this session.
             unsafe {
@@ -543,17 +713,22 @@ mod windows {
             if handle.is_null() {
                 return Err(invalid("NVML returned null device handle"));
             }
-            let pci = (|| {
-                let mut pci = Pci::default();
-                // SAFETY: repr(C) Pci is the 68-byte nvmlPciInfo_t v3 layout.
-                unsafe {
-                    check(
-                        self.get::<PciQuery>(b"nvmlDeviceGetPciInfo_v3\0")?(handle, &mut pci),
-                        b"nvmlDeviceGetPciInfo_v3",
-                    )?;
-                }
-                text(&pci.bus_id).map(Into::into)
-            })();
+            Ok(handle)
+        }
+        fn pci_bus_id(&self, handle: Handle) -> Result<String, Failure> {
+            let mut pci = Pci::default();
+            // SAFETY: repr(C) Pci is the 68-byte nvmlPciInfo_t v3 layout.
+            unsafe {
+                check(
+                    self.get::<PciQuery>(b"nvmlDeviceGetPciInfo_v3\0")?(handle, &mut pci),
+                    b"nvmlDeviceGetPciInfo_v3",
+                )?;
+            }
+            text(&pci.bus_id)
+        }
+        pub fn device(&self, index: u32) -> Result<Device, Failure> {
+            let handle = self.handle(index)?;
+            let pci = self.pci_bus_id(handle).map(Into::into);
             let identity = [
                 (
                     "name".into(),

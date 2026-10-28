@@ -1,5 +1,50 @@
 # Read-only NVIDIA qualification boundary
 
+## Selective sampler API — 2026-10-28
+
+`nvml::NvmlSampler::open(uuid, pci_bus_id)` reuses the existing trusted loader,
+enumerates devices and retains one privately owned handle only for an exact,
+unique NVML UUID/PCI bus-ID pair. Bus-ID text is matched without normalization.
+Missing, ambiguous or unavailable identity fails closed. The session remains
+alive through every read and shuts down when dropped.
+
+`sample(SampleMetric)` returns the existing `Field` type for exactly one
+temperature, power, graphics clock, memory clock, GPU utilization or memory
+utilization reading. Units remain degC, mW, MHz and percent. Each call invokes
+one getter; utilization calls return only the requested component. Missing
+symbols and raw vendor failures remain distinct. No setter, new DLL loader or
+snapshot report-schema change was added.
+
+This API is not yet the independent timed sampler process: it has no scheduler,
+query bracket, transport, exact workload consent or CUDA/NVML physical mapping
+proof. Native sampling was not executed in this increment.
+
+Parent Windows GNU / Rust 1.99.1 focused verification:
+
+```text
+cargo +stable test -p autotune-probe --lib --locked --offline
+cargo +stable clippy -p autotune-probe --lib --locked --offline -- -D warnings
+cargo +stable fmt -p autotune-probe -- --check
+```
+
+Final run `mon_277EC5VE4WS9FVWR` returned `PROBE_EXIT=0`: 18 library tests
+passed, none ignored or filtered, including six new selective ABI-fake tests
+and all existing snapshot/no-setter cases. No native DLL was loaded. Earlier
+Clippy caught an allocated JSON value used solely for UUID comparison; replaced
+with borrowed string comparison. Rustfmt then caught a selector expression
+layout; corrected before the final successful rerun.
+
+Baseline `8bada0eb46d9e50bb760ea2d11fed20384a5f260` plus these uncommitted files:
+
+| File | SHA-256 |
+| --- | --- |
+| `crates/autotune-probe/src/nvml.rs` | `183b9f03bd1c967b760ee7be6d5ddf7c0c4e23c04caadafa4f9bef2b82f744ca` |
+| `crates/autotune-probe/src/nvml_tests.rs` | `1ebb799665121c264f561fc4322c264babf35f3595a633e1c681a20fa322cf2e` |
+
+Independent static review `st_01a183d8` approved the corrected source with no
+concrete findings; no commands ran in that review. No real selective sampler, GPU workload,
+Miri or hardware qualification result is claimed.
+
 ## What is queried
 
 The adapter enumerates every NVML device by index, preserving independent name,
