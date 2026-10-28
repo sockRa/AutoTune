@@ -77,9 +77,57 @@ caller-supplied monotonic source; the worker never reads the OS clock.
 
 ## Injected monitor policy (E3.1/E3.2)
 
-`monitor` is portable pure policy, independent of the Windows modules. It reads
+`monitor::{clock,schedule,controller}` is portable pure policy. It reads
 no OS clock and calls no getter, process or backend. It always selects unchanged
 `Profile::approved_design().limits`; there are no policy overrides.
+
+The separate Windows-only `monitor::windows_clock` adapter reads real OS clocks;
+it does not change this policy or enable native admission.
+
+### Windows clock capture — 2026-10-28
+
+`WindowsClock::new(nonzero_token)` captures the exact positive QPC frequency.
+`capture()` returns an `Anchor` in this order: QPC-before, precise interrupt
+time, precise unbiased interrupt time, QPC-after. The caller copies
+`clock_token()` and `qpc_frequency()` into the existing `Binding`. Failed or
+negative counters, invalid frequency, zero token and reversed brackets return
+typed errors; no anchor is fabricated. The two interrupt APIs have no status
+return. Raw 100 ns units are not an accuracy claim. Existing controller policy
+still assesses uncertainty, suspend, disagreement and regression.
+
+On Windows 10+ this uses the pinned `windows-sys` declarations, with no new
+package/version or timer-resolution change. No GPU API, sampler getter, process
+launch, live provenance or workload admission is added.
+
+Parent source-bound verification on Windows GNU / installed Rust 1.99.1:
+
+```text
+cargo +stable test -p autotune-benchmark-worker --lib monitor::windows_clock --locked --offline
+cargo +stable test -p autotune-benchmark-worker --test windows_clock --locked --offline -- --exact real_windows_clock_capture --nocapture
+cargo +stable test -p autotune-benchmark-worker --test monitor --test evidence --test envelope --locked --offline
+cargo +stable clippy -p autotune-benchmark-worker --lib --test windows_clock --test monitor --test evidence --test envelope --locked --offline -- -D warnings
+cargo +stable fmt -p autotune-benchmark-worker -- --check
+```
+
+All commands passed (`mon_X7VCKCE3MBF6ZDE0`, `CLOCK_EXIT=0`): six deterministic
+adapter tests, one real Windows capture, 36 monitor / 13 evidence / 26 envelope
+tests. The library filter excludes its unrelated worker-protocol test; no tests
+were ignored. Actual QPC frequency was 10000000; observed QPC brackets were
+4364107628410..4364107628469 and 4364107628471..4364107628471. These prove
+read-only capture and raw mapping, not calibrated accuracy or qualified timing.
+
+Baseline: `c9bd2245d026cd8628c073bb86a11054b30ab937` plus this uncommitted adapter; source SHA-256:
+
+| File | SHA-256 |
+| --- | --- |
+| `src/monitor/windows_clock.rs` | `a69f8f0b0c075baf09c24a50076df3cd00757d2f4dfbe36f4638dad7ce83939f` |
+| `src/monitor/mod.rs` | `a017571d497b00d144a600f5e6dedef6ef3bcd8de425bc45183b42ee70f1b72a` |
+| `tests/windows_clock.rs` | `b808b9a09aae2c42df09c9afa8a29c9f14e9815e3314e92ec23e11bfcefe5c51` |
+| `Cargo.toml` | `c64a62a9aceddea9a4840cf0c16381d8e8def2f40d2c6c770de1a396526a114b` |
+
+Independent static review `st_01a183cb` approved the snapshot with no findings;
+it did not execute checks. No Miri, non-Windows execution, hosted
+verification, GPU workload or physical timing qualification is claimed.
 
 Caller flow:
 

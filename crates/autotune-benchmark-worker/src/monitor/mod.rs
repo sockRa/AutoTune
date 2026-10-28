@@ -1,7 +1,9 @@
-//! Pure injected policy: fixture eligibility never grants execution consent.
+//! Injected policy and separate Windows clock capture; no execution consent.
 pub mod clock;
 pub mod controller;
 pub mod schedule;
+#[cfg(any(windows, test))]
+pub mod windows_clock;
 
 pub use clock::{Anchor, Binding, ClockError};
 pub use controller::{Controller, Report, Session, Stop, StopReason};
