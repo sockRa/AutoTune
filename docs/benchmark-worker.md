@@ -481,3 +481,11 @@ regression reproduced it locally; terminal writer failure now disconnects its
 command receiver before publishing error or dropping the sink. Local 217-test
 verification and static/link checks pass after correction; hosted acceptance
 remains pending for the corrective revision. The failed run remains evidence.
+
+Corrective source `ef8786e` subsequently passed both Linux and Windows/MSVC in
+[run 40948641366](https://github.com/sockRa/AutoTune/actions/runs/40948641366).
+This observes configured hosted deterministic/compile checks only. The next
+[fake-only Windows execution request](superpowers/specs/2026-10-29-e3-sampler-fixture-execution.md)
+pins two local images and its verification-first runner in an exact matrix;
+separate owner approval remains required. Its byte-pump tests use only memory
+streams. No sampler process/native/GPU execution or qualified baseline follows.

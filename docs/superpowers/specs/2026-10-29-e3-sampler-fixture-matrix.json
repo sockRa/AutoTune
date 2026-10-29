@@ -1,0 +1,25 @@
+﻿{
+    "version":  1,
+    "scope":  "windows_fake_sampler_only",
+    "source_revision":  "ef8786e0a4ea0831b17d14355ce98ecdcbe2883e",
+    "outer_wall_seconds":  90,
+    "diagnostic_bytes":  16777216,
+    "artifacts":  [
+                      {
+                          "path":  "target/sampler-verification/build/debug/deps/sampler_process-4d4cad9aff7075cc.exe",
+                          "sha256":  "831f7f743d82c936bc1678f64a8d849f81f1fcd7b325cbe9bfaa1e9a660f8653"
+                      },
+                      {
+                          "path":  "target/sampler-verification/build/debug/autotune-sampler-fixture.exe",
+                          "sha256":  "b4d524fda9e7137bfa11b1ae7ee75e76fefb2b0cd381251fbcf1c4719cd71b2e"
+                      }
+                  ],
+    "tests":  [
+                  "cancelled_async_launch_never_allows_a_late_sampler_to_continue",
+                  "fixed_hung_sampler_requires_observed_exit_after_force",
+                  "shared_wire_fixture_blocked_getter_keeps_control_responsive_until_force",
+                  "shared_wire_fixture_samples_six_metrics_and_drains_after_stop",
+                  "shared_wire_fixture_wrong_ready_identity_never_admits_a_query"
+              ],
+    "runner_sha256":  "fbd41a6e57c02fc25b040fbb26775c201475259f2b6f6837efc179c4428994dd"
+}
