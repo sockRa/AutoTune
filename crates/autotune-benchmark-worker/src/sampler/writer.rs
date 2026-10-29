@@ -158,6 +158,11 @@ impl Writer {
                             break;
                         }
                         Err(e) => {
+                            // Close admission before publishing the failure or
+                            // dropping a sink whose destructor can still block.
+                            // A peer observing teardown must not enqueue more
+                            // mandatory artifacts into a terminal writer.
+                            drop(receiver);
                             let _ = done.try_send(Err(e));
                             break;
                         }

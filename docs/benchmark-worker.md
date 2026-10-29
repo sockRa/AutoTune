@@ -474,3 +474,10 @@ Windows transport. Five sampler process fixtures remain compiled only.
 Source-level review of Win32 ownership is not executed OS evidence. Next is an
 exact source/artifact-bound execution matrix, separate consent and continued
 worker/device/manifest integration; there is still no native benchmark admission.
+
+Publication `74eecb1` was observed in hosted run 40947677375: Linux passed;
+Windows exposed a writer-test synchronization race. A deterministic gated-sink
+regression reproduced it locally; terminal writer failure now disconnects its
+command receiver before publishing error or dropping the sink. Local 217-test
+verification and static/link checks pass after correction; hosted acceptance
+remains pending for the corrective revision. The failed run remains evidence.

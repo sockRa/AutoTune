@@ -119,7 +119,7 @@ impl Sink for NeverWritten {
 #[test]
 fn storage_os_error_survives_as_bounded_incomplete_capture_without_a_complete_index() {
     use autotune_benchmark_worker::{evidence::Digest, sampler::writer::IncompleteCapture};
-    struct FailedSink(mpsc::Sender<()>);
+    struct FailedSink(mpsc::Sender<()>, mpsc::Receiver<()>);
     impl Sink for FailedSink {
         fn write(&mut self, name: &'static str, _: &[u8]) -> io::Result<()> {
             assert_eq!(name, "manifest.json");
@@ -129,11 +129,13 @@ fn storage_os_error_survives_as_bounded_incomplete_capture_without_a_complete_in
     impl Drop for FailedSink {
         fn drop(&mut self) {
             let _ = self.0.send(());
+            let _ = self.1.recv();
         }
     }
     let budget = Budget::new(8 * 1024 * 1024).unwrap();
     let (done, received) = mpsc::channel();
-    let mut writer = Writer::start(FailedSink(done), budget.clone()).unwrap();
+    let (release, blocked) = mpsc::channel();
+    let mut writer = Writer::start(FailedSink(done, blocked), budget.clone()).unwrap();
     writer
         .enqueue(
             Artifact::Manifest,
@@ -143,12 +145,12 @@ fn storage_os_error_survives_as_bounded_incomplete_capture_without_a_complete_in
     received.recv().unwrap();
     // Simulate a sink failing between controller poll and its next enqueue.
     // The failed send must not consume the original typed storage failure.
-    assert!(writer
-        .enqueue(
-            Artifact::Profile,
-            BoundText::copy("profile", &budget).unwrap()
-        )
-        .is_err());
+    let late_send = writer.enqueue(
+        Artifact::Profile,
+        BoundText::copy("profile", &budget).unwrap(),
+    );
+    release.send(()).unwrap();
+    assert!(late_send.is_err());
     let failure = writer.poll().unwrap().unwrap_err();
     assert_eq!(failure.operation, "manifest.json");
     assert_eq!(failure.os_code, Some(5));

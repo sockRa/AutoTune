@@ -17,6 +17,7 @@ fn fixed_hung_sampler_requires_observed_exit_after_force() {
     let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
         let observation = process.observe();
+        assert!(std::time::Instant::now() < until);
         if observation.wait_status == 0 {
             assert!(observation.exit_code.is_some());
             assert_eq!(observation.active_processes, Some(0));
@@ -38,9 +39,51 @@ fn cancelled_async_launch_never_allows_a_late_sampler_to_continue() {
     launch.request_termination().unwrap();
     let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
-        if let Some(result) = launch.poll() {
-            if let Ok(mut process) = result {
-                process.request_termination().unwrap();
+        let result = launch.poll();
+        assert!(std::time::Instant::now() < until);
+        if let Some(result) = result {
+            match result {
+                Ok(mut process) => {
+                    process.request_termination().unwrap();
+                    loop {
+                        let observed = process.observe();
+                        assert!(std::time::Instant::now() < until);
+                        if observed.wait_status == 0 {
+                            assert!(observed.wait_error.is_none());
+                            assert!(observed.exit_code.is_some());
+                            assert!(observed.exit_error.is_none());
+                            assert_eq!(observed.active_processes, Some(0));
+                            assert!(observed.accounting_error.is_none());
+                            break;
+                        }
+                        assert!(std::time::Instant::now() < until);
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+                Err(error) => {
+                    // After-spawn errors carry the original child handle. A
+                    // termination request cannot pass this case without exit
+                    // observation inside the ORIGINAL three-second bound.
+                    if let Ok(mut failed) =
+                        autotune_benchmark_worker::sampler::windows::FailedLaunch::from_error(error)
+                    {
+                        failed.request_termination().unwrap();
+                        loop {
+                            let observed = failed.observe();
+                            assert!(std::time::Instant::now() < until);
+                            if observed.wait_status == 0 {
+                                assert!(observed.wait_error.is_none());
+                                assert!(observed.exit_code.is_some());
+                                assert!(observed.exit_error.is_none());
+                                break;
+                            }
+                            assert!(std::time::Instant::now() < until);
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                    }
+                    // Other errors originate before successful CreateProcess;
+                    // no child handle exists in those source paths.
+                }
             }
             break;
         }
