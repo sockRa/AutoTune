@@ -489,3 +489,32 @@ This observes configured hosted deterministic/compile checks only. The next
 pins two local images and its verification-first runner in an exact matrix;
 separate owner approval remains required. Its byte-pump tests use only memory
 streams. No sampler process/native/GPU execution or qualified baseline follows.
+
+## Pilot workload declaration and run binding
+
+`workload::manifest` supplies an immutable `PilotManifest` for the three existing
+approved pilot stages. `PilotDraft` selects nonzero unique run IDs, a session and
+clock token, exact raw NVML identity, source/artifact hashes, approval/output
+scope and hashes of starting-settings/environment artifacts. Those hashes bind
+declarations; this API does not authenticate consent, read settings, validate
+required facts or admit execution. Acceptance repeats are outside this scope.
+
+`PilotManifest::freeze` reserves bounded storage before model construction.
+`parse` reserves codec capacity, uses the existing strict canonical reader and
+requires exact re-encoding against the frozen three-stage plans/profile. Seeds,
+shapes, counts or limits cannot be silently substituted. `profile_canonical`
+retains the exact scoped policy bytes whose profile digest the manifest binds.
+The shared numeric-limit encoder preserves the readonly profile's prior digest
+`d9ef3a0a5f1a138740a3ec657aac4d3b80515a910394dd8cf80aab2ead4bc6d9`.
+
+`bind_run` borrows the manifest, preserves the selected run/device/artifacts and
+original session-relative origin, and reserves all remaining stage envelopes
+plus finalization/shutdown against the pilot ceiling. `BoundRun::phase_deadline`
+is the existing pure RunPlan calculation: its caller must retain the actual
+first phase entry. It neither advances lifecycle nor freezes caller-supplied
+entries on repeated calls. Binding is not a readiness, safety or Start permit.
+
+The next integration is the worker Start/Ready/Dispatch channel and controller
+composition. Existing simulated worker native rejection and readonly sampler
+bytes remain unchanged. CPU tests and static review of this declaration seam
+do not establish process execution, real GPU identity/correctness or a baseline.

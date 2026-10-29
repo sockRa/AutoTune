@@ -9,3 +9,4 @@ pub mod monitor;
 pub mod process;
 pub mod sampler;
 pub mod worker;
+pub mod workload;

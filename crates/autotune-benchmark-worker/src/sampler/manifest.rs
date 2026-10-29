@@ -174,7 +174,7 @@ impl CaptureManifest {
         })
     }
 }
-fn valid_root(root: &str) -> bool {
+pub(crate) fn valid_root(root: &str) -> bool {
     let b = root.as_bytes();
     if !(4..=2048).contains(&b.len())
         || !b[0].is_ascii_alphabetic()
@@ -195,69 +195,72 @@ fn valid_root(root: &str) -> bool {
 /// It identifies approved design policy, never measured qualification or consent.
 pub fn profile_bytes() -> String {
     let profile = autotune_fma_reference::profile::Profile::approved_design();
-    let p = profile.limits;
-    macro_rules! limits {($($field:ident),*$(,)?)=>{object([$( (stringify!($field),Value::U64(p.$field as u64)) ),*])};}
     object([
         ("id", Value::Text(profile.id)),
         ("scope", Value::Text("readonly_sampler".into())),
-        (
-            "limits",
-            limits![
-                pilot_session_ns,
-                acceptance_session_ns,
-                preflight_ns,
-                finalization_ns,
-                shutdown_reserve_ns,
-                temperature_stop_degc,
-                power_stop_mw,
-                reentry_temperature_degc,
-                reentry_utilization_percent,
-                reentry_observations,
-                controller_tick_ns,
-                dispatch_completion_ns,
-                cycle_ns,
-                cooperative_stop_ns,
-                exit_observation_ns,
-                worker_commit_bytes,
-                sampler_commit_bytes,
-                controller_commit_bytes,
-                processes_per_job,
-                worker_cpu_ns_per_run,
-                sampler_cpu_ns_per_session,
-                controller_cpu_ns_per_session,
-                application_gpu_bytes,
-                free_gpu_headroom_bytes,
-                frame_bytes,
-                ordinary_queue_frames,
-                control_queue_frames,
-                sample_capacity,
-                event_capacity,
-                metadata_bytes,
-                evidence_ram_bytes,
-                writer_queue_bytes,
-                failure_snapshot_bytes,
-                serialized_bytes,
-                log_bytes,
-                cadence_ns,
-                metric_count,
-                query_bracket_ns,
-                transport_age_ns,
-                observation_gap_ns,
-                clock_bracket_ns,
-                clock_agreement_ns,
-                suspend_divergence_ns,
-                minimum_metric_observations,
-                minimum_quarter_observations,
-                drift_window_runs,
-                relative_mad_basis_points,
-                drift_basis_points,
-                individual_excursion_basis_points,
-                transition_temperature_degc,
-                transition_clock_basis_points,
-                minimum_gpu_utilization_percent,
-                minimum_submit_completion_percent
-            ],
-        ),
+        ("limits", limits_value()),
     ])
     .to_canonical()
+}
+
+/// Shared frozen numeric fields; callers supply their own explicit profile scope.
+pub(crate) fn limits_value() -> Value {
+    let profile = autotune_fma_reference::profile::Profile::approved_design();
+    let p = profile.limits;
+    macro_rules! limits {($($field:ident),*$(,)?)=>{object([$( (stringify!($field),Value::U64(p.$field as u64)) ),*])};}
+    limits![
+        pilot_session_ns,
+        acceptance_session_ns,
+        preflight_ns,
+        finalization_ns,
+        shutdown_reserve_ns,
+        temperature_stop_degc,
+        power_stop_mw,
+        reentry_temperature_degc,
+        reentry_utilization_percent,
+        reentry_observations,
+        controller_tick_ns,
+        dispatch_completion_ns,
+        cycle_ns,
+        cooperative_stop_ns,
+        exit_observation_ns,
+        worker_commit_bytes,
+        sampler_commit_bytes,
+        controller_commit_bytes,
+        processes_per_job,
+        worker_cpu_ns_per_run,
+        sampler_cpu_ns_per_session,
+        controller_cpu_ns_per_session,
+        application_gpu_bytes,
+        free_gpu_headroom_bytes,
+        frame_bytes,
+        ordinary_queue_frames,
+        control_queue_frames,
+        sample_capacity,
+        event_capacity,
+        metadata_bytes,
+        evidence_ram_bytes,
+        writer_queue_bytes,
+        failure_snapshot_bytes,
+        serialized_bytes,
+        log_bytes,
+        cadence_ns,
+        metric_count,
+        query_bracket_ns,
+        transport_age_ns,
+        observation_gap_ns,
+        clock_bracket_ns,
+        clock_agreement_ns,
+        suspend_divergence_ns,
+        minimum_metric_observations,
+        minimum_quarter_observations,
+        drift_window_runs,
+        relative_mad_basis_points,
+        drift_basis_points,
+        individual_excursion_basis_points,
+        transition_temperature_degc,
+        transition_clock_basis_points,
+        minimum_gpu_utilization_percent,
+        minimum_submit_completion_percent
+    ]
 }
