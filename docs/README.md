@@ -18,4 +18,24 @@
 - [Windows storage contract](windows-storage-v1.md) — journal/ownership/publication semantics and proof limits.
 - [Third-party notices](third-party-notices.md) — dependency notices, not a completed release license audit.
 
-For BMAD planning, use the roadmap's local-artifact map. A document marked final/done can describe a completed design or narrow implementation slice without closing the broader product epic or qualifying hardware.
+Use the roadmap's local-artifact map for retained BMAD contracts and evidence.
+BMAD/OMO automation is retired; those contracts are still relevant references,
+not instructions to reinstall the workflows. A document marked final/done can
+describe a completed design or narrow implementation slice without closing the
+broader product epic or qualifying hardware. Historical entries may describe an
+older state; use dated evidence and the current roadmap handoff together.
+
+## Repository hygiene
+
+Local agent state/configuration, tool worktrees, generated probe reports and
+environment secrets are ignored. Source, `Cargo.lock`, shared documentation and
+sanitized `.env.example` files remain eligible for version control. Check the
+rules without creating files or running application workloads:
+
+```powershell
+powershell.exe -NoProfile -File scripts/check-gitignore.ps1
+```
+
+This tests Git ignore behavior, not file contents or secret absence. Ignore rules
+do not untrack already committed files. The October 29 cleanup archive and the
+remaining active local-contract boundary are recorded in `ROADMAP.md`.

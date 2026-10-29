@@ -1,4 +1,7 @@
+# Rust build output; Cargo.lock remains version controlled for this workspace.
 /target/
+
+# Generated device reports can contain machine-specific hardware information.
 *.probe.json
 # Local secrets; keep sanitized examples eligible for version control.
 .env
@@ -6,17 +9,18 @@
 !.env.example
 !.env.*.example
 
-# Local planning, execution evidence, and machine-specific operations notes.
+# Local contracts/evidence are still used; ignore is not deletion or obsolescence.
 /_bmad-output/
+
+# Retired machine-specific operations notes; do not accidentally republish restores.
 /docs/opencode-setup.md
 /docs/source-backup-review.md
 
-.bmad-loop/runs/
-.bmad-loop/cache/
-.bmad-loop/policy.toml
-/_bmad/render/
+# Local agent configuration, automation state and nested tool worktrees.
+# Keep these root-scoped; source, docs, test fixtures and sanitized examples stay eligible.
+/.omo/
+/.bmad-loop/
+/_bmad/
 /.agents/
 /.claude/
 /.opencode/
-/_bmad/
-/.bmad-loop/

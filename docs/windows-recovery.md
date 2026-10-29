@@ -336,7 +336,9 @@ existing crate or hardware capability was needed for these corrections.
 New source-hash/dependency evidence is retained privately in the approved OpenCode
 temporary directory. Raw diagnostic JSON includes actual user/logon SID, process
 IDs, executable hashes and file identity; it must not be published without review.
-See [source-backup audit](source-backup-review.md). No stage/commit/push occurred.
+The historical source-backup audit was retired to the local cleanup archive on
+2026-10-29; see the [roadmap cleanup handoff](../ROADMAP.md) for its location.
+No stage/commit/push occurred during that historical audit.
 
 Prior foundation verification: **85 tests passed** (55 unchanged originals plus
 9 contract, 16 core, 2 harness CLI, 3 Windows diagnostic tests), zero ignored.
