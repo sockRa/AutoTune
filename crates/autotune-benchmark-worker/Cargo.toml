@@ -8,11 +8,14 @@ publish = false
 [features]
 default = []
 native-cuda = ["dep:libloading"]
+sampler-process-fixture = []
 
 [dependencies]
 autotune-fma-reference = { path = "../autotune-fma-reference" }
+autotune-probe = { path = "../autotune-probe" }
 sha2 = "0.10"
+serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 libloading = { version = "0.8", optional = true }
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_System_Performance", "Win32_System_WindowsProgramming"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_System_Performance", "Win32_System_WindowsProgramming", "Win32_System_ProcessStatus", "Win32_System_Console"] }

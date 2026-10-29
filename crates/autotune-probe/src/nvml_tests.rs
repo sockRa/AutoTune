@@ -510,6 +510,24 @@ fn selective_identity_enumerates_and_retains_nonzero_device_until_drop() {
 }
 
 #[test]
+fn selected_description_retains_exact_pair_and_queries_only_existing_runtime_getters() {
+    reset();
+    let selected = sampler("fixture", "0000:01:00.0").unwrap();
+    let before = SCRIPT.with(|s| s.borrow().calls.len());
+    let info = selected.describe();
+    assert_eq!(info.raw_uuid, "fixture");
+    assert_eq!(info.raw_pci, "0000:01:00.0");
+    assert_eq!(info.runtime.header_api_version, 13);
+    SCRIPT.with(|s| {
+        let state = s.borrow();
+        assert_eq!(&state.calls[before..], &["nvmlSystemGetCudaDriverVersion_v2", "nvmlSystemGetDriverVersion", "nvmlSystemGetNVMLVersion"]);
+        assert!(state.sampled_handles.is_empty());
+        assert!(!state.calls[before..].iter().any(|c| c.starts_with("nvmlDevice")));
+        assert!(!state.resolutions.iter().any(|c| c.starts_with("nvmlDeviceSet")));
+    });
+}
+
+#[test]
 fn selective_identity_requires_exact_unique_pair() {
     for (identities, uuid, pci) in [
         (vec![], "absent", "0000:01:00.0"),

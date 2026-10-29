@@ -67,7 +67,20 @@ pub struct NvmlSampler {
     selected: windows::SelectedSession,
 }
 
+/// Fresh runtime evidence and the exact identity retained at unique selection.
+/// Describing does not re-enumerate, select another device or read controls.
+#[derive(Clone, Debug)]
+pub struct SamplerInfo {
+    pub raw_uuid: String,
+    pub raw_pci: String,
+    pub runtime: Runtime,
+}
+
 impl NvmlSampler {
+    #[cfg(windows)]
+    pub fn describe(&self) -> SamplerInfo {
+        self.selected.describe()
+    }
     /// Enumerate and select exactly one device; incomplete identity fails closed.
     /// `pci_bus_id` is the exact NVML v3 bus-ID text, without normalization.
     pub fn open(uuid: &str, pci_bus_id: &str) -> Result<Self, Failure> {
@@ -263,9 +276,18 @@ mod windows {
     pub(super) struct SelectedSession {
         session: Session,
         handle: Handle,
+        raw_uuid: String,
+        raw_pci: String,
     }
 
     impl SelectedSession {
+        pub(super) fn describe(&self) -> SamplerInfo {
+            SamplerInfo {
+                raw_uuid: self.raw_uuid.clone(),
+                raw_pci: self.raw_pci.clone(),
+                runtime: self.session.runtime(),
+            }
+        }
         pub(super) fn sample(&self, metric: SampleMetric) -> Field {
             let session = &self.session;
             let handle = self.handle;
@@ -513,15 +535,24 @@ mod windows {
                 let pci = self.pci_bus_id(handle)?;
                 if device_uuid.as_str() == Some(uuid)
                     && pci == pci_bus_id
-                    && selected.replace(handle).is_some()
+                    && selected
+                        .replace((
+                            handle,
+                            device_uuid.as_str().expect("exact UUID match").to_owned(),
+                            pci,
+                        ))
+                        .is_some()
                 {
                     return Err(invalid("ambiguous NVML UUID and PCI identity"));
                 }
             }
-            let handle = selected.ok_or_else(|| invalid("NVML UUID and PCI identity not found"))?;
+            let (handle, raw_uuid, raw_pci) =
+                selected.ok_or_else(|| invalid("NVML UUID and PCI identity not found"))?;
             Ok(SelectedSession {
                 session: self,
                 handle,
+                raw_uuid,
+                raw_pci,
             })
         }
         fn device_text(&self, handle: Handle, name: &[u8]) -> Field {

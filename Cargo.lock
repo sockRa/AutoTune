@@ -7,7 +7,9 @@ name = "autotune-benchmark-worker"
 version = "0.1.0"
 dependencies = [
  "autotune-fma-reference",
+ "autotune-probe",
  "libloading",
+ "serde_json",
  "sha2",
  "windows-sys",
 ]

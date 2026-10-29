@@ -203,6 +203,78 @@ physical GPU mapping, exact execution consent, live export, baseline/energy/sear
 assessment or termination/GPU-quiescence proof. Existing `Worker` native rejection
 is unchanged; no monitor result can enable it.
 
+## Selective-getter/monitor bridge — 2026-10-29
+
+`sampler` is a portable pure conversion module, not a sampler process. It uses
+the existing probe library through a local path dependency; no external package
+or version changed. It never calls `NvmlSampler::open`, a getter, a clock or a
+process API and cannot enable native worker admission.
+
+- `sample_metric(Metric) -> SampleMetric` selects the identically named one of
+  six existing getter kinds without invoking it.
+- `map_field(Ticket, end_ns, receipt_ns, Field) -> MappedSample` returns the
+  original owned `raw: Field` beside `record: Result<Record, MappingError>`.
+  Both conversion success and failure preserve all original unit/symbol/value
+  or reason/vendor-status/detail evidence. No failed conversion is a missing
+  sample that callers may silently discard.
+- `MappingError::{Unit, Symbol, Value, DeviceLost}` identifies the conversion
+  failure. GPU loss by reason or vendor status 15 takes precedence over every
+  other conversion error, including for optional memory utilization.
+
+| Input | Conversion |
+| --- | --- |
+| Available, present symbol, exact unit, exact JSON integer fitting `i64` | `Status::Available`, `Some(value)`; no float/string coercion |
+| Unsupported / symbol missing / unsupported platform with consistent symbol evidence | `Status::Unsupported`, no value; raw reason/code retained |
+| Other unavailable reading with vendor status | `Status::Failed(original_code)`, no value |
+| Other unavailable reading without vendor status | `Status::Unavailable`, no value |
+| Wrong unit, contradictory symbol evidence, noninteger/unrepresentable value, device loss | Conversion error with unchanged raw evidence |
+
+Exact source units are `degC`, `mW`, `MHz`, `%`. Missing-symbol evidence requires
+`Absent`; runtime missing/load failed/unsupported-platform requires `NotChecked`;
+other unavailable reasons require `Present`. Available readings require
+`Present`. Physical negative/range checks stay in the existing controller.
+
+The caller must retain the `MappedSample` and match `record`: deliver `Ok(record)`
+to `Controller::complete` with the caller's receipt/processing anchor, or close
+admission on `Err` with `Controller::request_stop` while retaining the raw error.
+`StopReason::Requested` records that action; the exact mapping cause remains in
+the retained `MappedSample`, not a fabricated controller reason. This module
+does not store those results or implement the caller's supervision loop.
+
+Ticket binding/start, query-end and receipt numbers are copied unchanged. Their
+truth/order is not established by conversion. `Ticket.start_ns` remains the
+controller issue time and a conservative interval start, not an actual getter
+start; future transport must separately retain actual getter anchors. The
+controller still owns ticket, chronology, query-bracket/transport limits,
+physical ranges, missing metrics, safety freshness and sticky stops.
+
+Local Windows GNU / installed Rust 1.99.1, locked offline checks:
+
+```text
+cargo +stable test -p autotune-benchmark-worker --test sampler --test monitor --test evidence --test envelope --locked --offline
+cargo +stable test -p autotune-probe --lib --locked --offline
+cargo +stable clippy -p autotune-benchmark-worker --lib --test sampler --test monitor --test evidence --test envelope --locked --offline -- -D warnings
+cargo +stable fmt --all -- --check
+```
+
+The first mapping run reproduced the missing sampler API (Cargo exit 101) before
+implementation; all seven mapping tests then passed. The four controller
+composition tests passed against unchanged controller policy, for 11 sampler
+tests total. The listed checks pass: 11 sampler + 36 monitor + 13 evidence + 26
+envelope + 18 probe-library = 104 selected CPU-only tests, none ignored or
+filtered; scoped warning-denied Clippy and workspace formatting pass. Final
+source binding/review disposition is recorded in the roadmap handoff and
+`C:\Users\manni\AppData\Local\Temp\opencode\autotune-sampler-bridge-20261029-7fb6fa3a\manifest.json`.
+Baseline is `eb8cdf51bdb4c55b6a272fe7b9004d99b26d6a2b` plus the uncommitted bridge
+and preceding documented cleanup. This is not a fresh workspace test/Clippy,
+hosted, native-feature, real getter/clock/process/GPU or hardware qualification
+result. No live producer, baseline, energy, recovery or gate acceptance follows.
+
+Next required integration is the independently killable timed sampler's bounded
+transport/containment and nonblocking supervision, then exact manifest/worker/
+clock/device/consent binding and live evidence. Do not count this converter as
+the independent sampler itself.
+
 ## Compile-only opt-in CUDA adapter
 
 The `native-cuda` feature builds a Windows x64, thread-affine adapter. Nothing
@@ -309,3 +381,96 @@ Current source-bound local evidence and historical failures are in [ROADMAP.md](
 No hosted, actual-commit, hardware, baseline, energy, efficiency, tuning or recovery
 qualification follows. The next live step requires independent approved sampler,
 clock and exact-consent integration; there is no launchable native worker here.
+
+# Independent sampler integration — 2026-10-29
+
+The [independent sampler design](superpowers/specs/2026-10-29-e3-independent-sampler-design.md)
+and [implementation plan/log](superpowers/plans/2026-10-29-e3-independent-sampler.md)
+now have an in-progress source implementation under `sampler/`. This extends the
+previous delivered pure converter; it is not a completed live capture chain.
+
+Typed canonical channels bind session/run/manifest/device/clock/frequency and
+per-lane sequences. The injected supervisor keeps one getter pending, preserves
+actual versus issued/received anchors, closes admission on faults and separates
+termination requests from retained process-handle/job observations. Shared RAM
+reservations and nested control partitions retain their parent charge until the
+last frame/worker owner drops. Immutable sampler-only manifests retain exact
+selected identity and artifact/approval assertions. A fresh Windows-only probe
+description reuses existing runtime getters without re-enumeration or control
+reads. Production/fake sampler binaries and Windows containment/I/O source
+compile; no such child has been executed in this continuation.
+
+The derived envelope remains blocked/invalid, with compute/correctness/baseline
+unqualified, worker evidence unavailable and native completion unknown. It keeps
+simulated fixtures separate from live provenance; its API cannot authenticate an
+injected provenance argument or human consent. Raw export retains duplicate or
+late incoming records independently of the unique metric-slot envelope view.
+
+The source now includes a fixed controller, asynchronous measured startup,
+independent shutdown watchdog and controller CPU/commit observations, an off-path
+writer for the fixed artifact leaves and an exact-byte index excluding its own
+hash. Decoded-message reservations survive through supervisor retention; child
+cleanup messages preserve attempted/unknown semantics and never prove OS exit.
+A full injected 10 s sampler-only capture/export passes within unchanged resource
+budgets. The first full capture failed due to an overly broad raw-output reserve;
+actual incremental buffer growth now charges both old/new allocations during
+reallocation before releasing the old charge.
+
+The current unchanged-source checkpoint passes 190 explicit CPU-only tests,
+affected-package all-feature Clippy, workspace formatting and full-workspace
+all-feature linking; the roadmap binds exact source/log hashes. Rejected/truncated
+frame retention, draining queued observations, per-lane I/O completion evidence,
+exact envelope serialization totals, launch/allocation audit, fuller fixture wire
+coverage and final independent review remain open. No production executable or
+process fixture was run. Real capture, Windows containment, telemetry, baseline
+and Gate B remain unqualified; execution needs its exact separate approval.
+
+The later October 29 audit checkpoint passes 214 selected CPU-only tests,
+affected-package all-feature Clippy, workspace formatting and all-workspace
+all-feature linking; exact source/log/artifact hashes are retained in the
+roadmap's current handoff. Rejected/partial transport bytes, per-lane cancellation
+observations, bounded supplemental draining and unknown invalid-timing
+projections now have source/test coverage. Framing or codec-capacity rejection
+poisons the decoder before any successor can be accepted. Final export requires
+exact manifest/profile/raw byte accounting before `BoundEnvelope::encode`;
+session/index bytes remain separately indexed without self-reference.
+
+The shared child wire engine has three additional ignored Windows cases for
+cooperative six-metric capture, blocked getter/control responsiveness and wrong
+Ready identity. All five process cases were linked only. The corrected aggregate
+metadata fixture proves the earlier shared-RAM limit, not the separate 4 MiB
+metadata boundary. Full cleanup/allocation audit and independent whole-change
+review remain open; no completed sampler milestone or live qualification follows.
+
+## Independent sampler implementation milestone closeout
+
+The later October 29 closeout supersedes the draft implementation status above.
+The integrated source is complete for the software-only slice and independently
+reviewed; **217 CPU-only tests**, scoped all-feature Clippy, workspace formatting
+and all-workspace/all-feature compile/link pass. The roadmap retains the exact
+source/log/artifact manifest. This closes the implementation slice, not E3 or
+Gate B, Windows process acceptance, native sampling or a useful GPU baseline.
+
+Review found and resolved failed-launch handle/cleanup loss and storage-failure
+evidence loss. Failed launches retain their original process/job handles, job
+assignment state, optional creation identity, original error, termination result
+and per-lane I/O shutdown observations under the original deadlines. Unassigned
+children are terminated through the original process handle. None of these
+facts can establish successful launch or qualified exit.
+
+Writer failures retain operation, signed raw OS code and error kind. Every
+initial/final artifact send or finalization failure reaches an owned,
+manifest-bound `writer::IncompleteCapture` error containing cancellation result,
+independently observed writer completion and optional bounded raw events. Its
+diagnostic reservation precedes optional raw export; unavailable raw/unfinished
+threads stay explicit. The fixed CLI reports this incomplete diagnostic. A
+failed or blocked sink cannot promise durable failure output, and a timeout
+does not authorize a new writer or an extended deadline.
+
+The separate metadata ceiling now has coverage through the actual shared
+ingress/retention seam using owned reserved failure snapshots. The unused
+`wire::Queues` model and its separate test were removed; they were never the
+Windows transport. Five sampler process fixtures remain compiled only.
+Source-level review of Win32 ownership is not executed OS evidence. Next is an
+exact source/artifact-bound execution matrix, separate consent and continued
+worker/device/manifest integration; there is still no native benchmark admission.

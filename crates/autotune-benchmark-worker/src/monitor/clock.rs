@@ -47,7 +47,7 @@ pub fn ticks_to_ns(ticks: u64, frequency: u64, ceil: bool) -> Result<u64, ClockE
     u64::try_from(ns).map_err(|_| ClockError::Overflow)
 }
 
-pub(super) struct Clock {
+pub struct Clock {
     binding: Binding,
     origin: Anchor,
     last: Anchor,

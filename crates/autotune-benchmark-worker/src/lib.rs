@@ -7,4 +7,5 @@ pub mod evidence;
 pub mod monitor;
 #[cfg(windows)]
 pub mod process;
+pub mod sampler;
 pub mod worker;
