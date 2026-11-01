@@ -514,7 +514,26 @@ is the existing pure RunPlan calculation: its caller must retain the actual
 first phase entry. It neither advances lifecycle nor freezes caller-supplied
 entries on repeated calls. Binding is not a readiness, safety or Start permit.
 
-The next integration is the worker Start/Ready/Dispatch channel and controller
-composition. Existing simulated worker native rejection and readonly sampler
-bytes remain unchanged. CPU tests and static review of this declaration seam
-do not establish process execution, real GPU identity/correctness or a baseline.
+## Worker handshake channel and child gate
+
+`workload::wire` adds bounded canonical worker-role frames for Bootstrap, Ready,
+Start, Stop, StopAck and RoleFinished. Each lane/direction has its own sequence;
+role, complete manifest/run/device/artifact/clock binding and frozen plan must
+match. A rejected frame poisons its channel. Owned frames and decoded messages
+retain RAM reservations until dropped; callers retain borrowed rejected bytes
+and must poison the channel after external transport/framing failures.
+
+`workload::gate` accepts one Start intent after Bootstrap and Ready. Setup has a
+frozen deadline from the first Bootstrap receipt, capped at the original run
+cumulative boundary. Ready and Start receipt must precede it. Warm-up uses the
+controller's issue time conservatively, including IPC delay. Future Stop
+triggers fail; late receipts retain already-expired original stop ceilings.
+Repeated terminal messages cannot renew a deadline or erase the first fault.
+
+Ready fields are self-reports. RoleFinished is a cleanup observation, never OS
+exit or a GPU fence. The gate calls no backend and grants no native authority.
+Parent safety/re-entry/required-fact/consent validation, DispatchRecord and
+failure-vector transport, actual Windows pipe integration and independent
+process supervision remain required. Existing simulated worker native rejection
+and readonly sampler bytes remain unchanged. CPU/static evidence does not
+establish process execution, GPU identity/correctness or a useful baseline.

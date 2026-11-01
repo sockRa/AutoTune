@@ -48,7 +48,7 @@ pub enum Message {
     },
 }
 
-pub(super) fn object(fields: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
+pub(crate) fn object(fields: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
     let mut object = Object::new();
     for (key, value) in fields {
         object
@@ -60,7 +60,7 @@ pub(super) fn object(fields: impl IntoIterator<Item = (&'static str, Value)>) ->
 fn text(value: impl Into<String>) -> Value {
     Value::Text(value.into())
 }
-pub(super) fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     const HEX: &[u8] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -69,7 +69,7 @@ pub(super) fn hex(bytes: &[u8]) -> String {
     }
     out
 }
-pub(super) fn unhex<const N: usize>(value: &Value) -> Result<[u8; N], WireError> {
+pub(crate) fn unhex<const N: usize>(value: &Value) -> Result<[u8; N], WireError> {
     let bytes = string(value)?.as_bytes();
     if bytes.len() != N * 2 {
         return Err(WireError::Body);
@@ -85,18 +85,18 @@ pub(super) fn unhex<const N: usize>(value: &Value) -> Result<[u8; N], WireError>
     }
     Ok(out)
 }
-pub(super) fn exact<'a>(value: &'a Value, keys: &[&str]) -> Result<&'a Object, WireError> {
+pub(crate) fn exact<'a>(value: &'a Value, keys: &[&str]) -> Result<&'a Object, WireError> {
     let object = value.as_object().ok_or(WireError::Body)?;
     object.require_exact(keys).map_err(|_| WireError::Body)?;
     Ok(object)
 }
-pub(super) fn get<'a>(object: &'a Object, key: &str) -> &'a Value {
+pub(crate) fn get<'a>(object: &'a Object, key: &str) -> &'a Value {
     object.get(key).expect("exact fields validated")
 }
-pub(super) fn string(value: &Value) -> Result<&str, WireError> {
+pub(crate) fn string(value: &Value) -> Result<&str, WireError> {
     value.as_text().ok_or(WireError::Body)
 }
-pub(super) fn uint(value: &Value) -> Result<u64, WireError> {
+pub(crate) fn uint(value: &Value) -> Result<u64, WireError> {
     value.as_u64().map_err(|_| WireError::Body)
 }
 fn boolean(value: &Value) -> Result<bool, WireError> {
@@ -106,7 +106,7 @@ fn boolean(value: &Value) -> Result<bool, WireError> {
     }
 }
 
-pub(super) fn anchor_value(anchor: Anchor) -> Value {
+pub(crate) fn anchor_value(anchor: Anchor) -> Value {
     object([
         ("qpc_before", Value::U64(anchor.qpc_before)),
         ("qpc_after", Value::U64(anchor.qpc_after)),

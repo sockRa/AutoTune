@@ -288,6 +288,12 @@ impl PilotManifest {
     }
 }
 impl BoundRun<'_> {
+    pub fn origin_ns(&self) -> u64 {
+        self.origin_ns
+    }
+    pub fn profile_digest(&self) -> Digest {
+        self.manifest.profile_digest
+    }
     pub fn run(&self) -> [u8; 16] {
         self.manifest.draft.runs[self.index]
     }

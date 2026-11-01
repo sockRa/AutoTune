@@ -226,7 +226,7 @@ impl Channel {
     }
 }
 
-pub(super) fn validate_complexity(bytes: &[u8]) -> Result<(), WireError> {
+pub(crate) fn validate_complexity(bytes: &[u8]) -> Result<(), WireError> {
     let (mut quoted, mut escaped, mut structures) = (false, false, 0u16);
     for b in bytes {
         if quoted {

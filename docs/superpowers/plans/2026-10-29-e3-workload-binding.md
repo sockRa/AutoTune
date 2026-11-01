@@ -42,6 +42,37 @@ there is no approved=true or native execution token.
 
 ## Tasks and evidence
 
+### Worker handshake continuation
+
+The next source slice implements real encoded worker-role frames and the child
+handshake state boundary; OS transport/dispatch composition follows. It does
+not add a native executable or a native admission token. Bootstrap/Ready/Start
+are ordinary-lane messages with explicit controller-to-worker or reverse
+direction; Stop/StopAck/RoleFinished use the reserved control lane. Each lane
+and direction owns a sequence. Any decode/encode/transport-capacity rejection
+poisons that channel; no successor recovery. Encoded frames/decoded message
+ownership retain shared RAM charges until dropped/transferred.
+
+Frame keys: version, role, lane, direction, sequence, binding, kind, body.
+Binding includes session/run/device, manifest/profile/worker/sampler digests,
+original clock epoch/token/frequency, run origin and the frozen full RunPlan.
+Bootstrap carries exact manifest bytes; Ready carries observed identity/context,
+image digest, driver/capability/prepared-lane assertions and a raw anchor. These
+are self-reports, not physical mapping/execution proof. Start carries its issued
+anchor and can occur once after a matching Ready. Stop carries its first reason
+and trigger/cooperative/exit times capped at original run/session ceilings.
+RoleFinished records cleanup attempted/raw return/unknown, never OS exit.
+
+The handshake gate retains original-epoch ordering and first terminal state;
+duplicate Start, premature Start, invalid clocks or late Start close admission.
+Its Start intent uses a conservative warm-up bound from controller issue time,
+including transport delay, capped by the existing cumulative phase boundary.
+It never extends any approved phase cap or truncates required counts. Parent
+safety/re-entry/required-fact/consent validation remains separately required;
+gate acceptance alone is not native execution permission. Dispatch records,
+failure-vector transport, independent process supervision and parent controller
+composition are still required before a runnable benchmark can be claimed.
+
 - [x] Implement bounded immutable pilot declaration and exact profile/plan
   encoding, with public API tests for source/artifact/device/run binding,
   budget exhaustion, tampering and unchanged readonly profile bytes.
@@ -54,6 +85,30 @@ there is no approved=true or native execution token.
   process execution, real correctness or useful-baseline acceptance.
 
 ## Execution log
+
+- November 1 handshake milestone: canonical worker frames and child gate now
+  implement the scoped continuation above. Nine CPU tests cover actual bytes,
+  independent Start golden, binding/sequence/canonical rejection, sticky lanes,
+  ownership/control reservations, raw statuses, clocks and terminal/deadline
+  boundaries. Standards review found zero hard violations/material smells.
+  Spec review found two timing defects: setup consumed unused re-entry allowance
+  and future Stop triggers were accepted. Setup failure was reproduced before
+  correction; setup deadline is now frozen at Prepare and checked at Ready/Start,
+  and future triggers fail. Genuine late triggers keep expired original ceilings;
+  the reviewer withdrew its earlier suggestion to reject all late triggers.
+  Final independent static review found no remaining material defect.
+- Final source-bound handshake verification: baseline `de18d39` plus sources,
+  unchanged before/after inventories, 233 CPU-only tests (179 integration,
+  19 probe ABI fakes, 10 library fakes, 25 reference/prepared), formatting,
+  scoped all-feature Clippy and full-workspace/all-feature compile/link pass.
+  Manifest `target/workload-verification/handshake-reviewed-manifest.json`,
+  SHA-256 `4c512b76ac0a3bd0755b3dd6f55dab78046bda96d1de2dd2dbb887c2fdd6f0bc`.
+  The earlier eight-test pre-review manifest remains historical. No fake process,
+  native capture or GPU execution occurred. Pinned matrix images still match.
+- Declaration milestone `1bfcac3` passed Linux and Windows/MSVC in hosted run
+  40952952692. Handshake publication is a further software milestone, not
+  completion of Task 3: Dispatch/failure-vector transport, parent admission,
+  independent Windows supervision and exact consent still remain.
 
 - Initial declaration slice delivered: immutable scoped pilot manifest, exact
   three-stage plans/profile bytes, strict canonical reading and bound-run

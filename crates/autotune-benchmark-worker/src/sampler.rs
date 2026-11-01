@@ -30,7 +30,7 @@ pub mod windows;
 #[cfg(windows)]
 mod windows_io;
 pub mod wire;
-mod wire_model;
+pub(crate) mod wire_model;
 pub mod writer;
 
 /// Select exactly one existing getter kind without invoking it.
