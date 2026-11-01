@@ -537,3 +537,42 @@ failure-vector transport, actual Windows pipe integration and independent
 process supervision remain required. Existing simulated worker native rejection
 and readonly sampler bytes remain unchanged. CPU/static evidence does not
 establish process execution, GPU identity/correctness or a useful baseline.
+
+## Dispatch records and first-failure vector transport
+
+`workload::wire::Message` now carries `DispatchRecord` and `FailureChunk` on the
+ordinary worker-to-controller lane. `workload::dispatch::Record` binds j,
+warm-up/measured role, seed, shape/K, raw per-operation before/after anchors and
+signed statuses, pending/readback/check counts, first mismatch diagnostics,
+reported verified FMA count and optional input/output SHA-256. Upload, sentinel,
+launch and query calls retain distinct operation kinds. Unknown anchors,
+unreturned statuses and missing digests remain null. Raw clock-order conflicts
+remain available for parent adjudication; decoding is not acceptance.
+
+The input hash convention is plain SHA-256 of little-endian FP32 arrays A, B, X
+in that order; output is plain SHA-256 of every little-endian FP32 output word.
+These match the existing worker's buffer-digest convention and are distinct from
+domain-separated manifest/profile/session/raw-artifact digests. The transport
+checks the declared shape/count/work relationships; native call completeness,
+clock validity, sequence j across records, phase coverage and correctness are
+separate parent obligations. A child-reported `verified_fma` is no native proof.
+
+Successful vectors are not archived after full checking and hashing. The first
+full failing vector is split into at most 2048 words per frame. `FailureVector`
+reserves the entire bounded vector before allocating, requires contiguous exact
+dispatch/shape chunks and verifies the complete output SHA-256. Gap, duplicate,
+foreign chunk, hash mismatch or explicit poison retains received words and
+prevents completion. A complete matching hash binds bytes, not oracle correctness
+or execution. Session composition must ensure this is the first failure, retain
+the original record and stop; it must not instantiate replacement accumulators
+to recover from loss. Missing/partial readback remains explicit raw evidence.
+
+Each record holds at most 64 raw calls; each frame remains at most 64 KiB.
+Exhausting a representation bound stops with caller-owned trace preserved,
+never silently merges or drops calls. The worker codec's structural bound is
+4096 JSON structures inside its reserved codec RAM; sampler framing retains its
+256-structure bound and unchanged bytes. The existing global evidence/event,
+queue, failure snapshot and disk ceilings still apply in session composition.
+This supplies actual encoded result transport, with CPU coverage through P3's
+complete 1 MiB failure vector. Native production, actual pipes, parent admission,
+OS supervision and live baseline qualification remain unfinished.

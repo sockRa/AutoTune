@@ -101,6 +101,8 @@ impl WorkerBinding {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
+    DispatchRecord(super::dispatch::Record),
+    FailureChunk(super::dispatch::FailureChunk),
     Bootstrap {
         manifest: String,
     },
@@ -137,6 +139,8 @@ pub enum Message {
 impl Message {
     fn route(&self) -> (Lane, Direction, &'static str) {
         match self {
+            Self::DispatchRecord(_) => (Lane::Ordinary, Direction::FromWorker, "dispatch_record"),
+            Self::FailureChunk(_) => (Lane::Ordinary, Direction::FromWorker, "failure_chunk"),
             Self::Bootstrap { .. } => (Lane::Ordinary, Direction::ToWorker, "bootstrap"),
             Self::Ready { .. } => (Lane::Ordinary, Direction::FromWorker, "ready"),
             Self::Start { .. } => (Lane::Ordinary, Direction::ToWorker, "start"),
@@ -147,6 +151,8 @@ impl Message {
     }
     fn payload_bytes(&self) -> usize {
         match self {
+            Self::DispatchRecord(r) => r.allocation_bytes(),
+            Self::FailureChunk(c) => c.allocation_bytes(),
             Self::Bootstrap { manifest } => manifest.capacity(),
             Self::Stop { reason, .. } => reason.as_str().len(),
             _ => 0,
@@ -154,6 +160,8 @@ impl Message {
     }
     pub(super) fn validate(&self, b: WorkerBinding) -> Result<(), WireError> {
         match self {
+            Self::DispatchRecord(r) => r.validate(b)?,
+            Self::FailureChunk(c) => c.validate(b)?,
             Self::Bootstrap { manifest } => {
                 if manifest.capacity() > 16384
                     || Digest::of(Domain::Manifest, manifest.as_bytes()) != b.manifest
@@ -226,6 +234,8 @@ impl Message {
     }
     fn body(&self) -> Value {
         match self {
+            Self::DispatchRecord(r) => r.value(),
+            Self::FailureChunk(c) => c.value(),
             Self::Bootstrap { manifest } => object([("manifest", Value::Text(manifest.clone()))]),
             Self::Ready {
                 anchor,
@@ -283,6 +293,8 @@ impl Message {
             i32::try_from(v.as_i64().map_err(|_| WireError::Body)?).map_err(|_| WireError::Body)
         };
         let message = match kind {
+            "dispatch_record" => Self::DispatchRecord(super::dispatch::Record::parse(v, b)?),
+            "failure_chunk" => Self::FailureChunk(super::dispatch::FailureChunk::parse(v)?),
             "bootstrap" => {
                 let o = exact(v, &["manifest"])?;
                 Self::Bootstrap {
@@ -457,6 +469,7 @@ impl Channel {
             ("body", message.body()),
         ]);
         let encoded = value.to_canonical();
+        crate::sampler::wire::validate_complexity_limit(encoded.as_bytes(), 4096)?;
         let len = encoded.len().checked_add(4).ok_or(WireError::Length)?;
         if len > cap {
             return Err(WireError::Length);
@@ -488,7 +501,7 @@ impl Channel {
         if crate::sampler::wire::Channel::checked_length(prefix)? != frame.len() {
             return Err(WireError::Length);
         }
-        crate::sampler::wire::validate_complexity(&frame[4..])?;
+        crate::sampler::wire::validate_complexity_limit(&frame[4..], 4096)?;
         let cap = Profile::approved_design().limits.frame_bytes as usize;
         let mut allocation = self
             .budget
@@ -570,7 +583,7 @@ fn parse_identity(v: &Value) -> Result<Identity, WireError> {
     }
     Ok(i)
 }
-fn parse_anchor(v: &Value, b: WorkerBinding) -> Result<Anchor, WireError> {
+pub(super) fn parse_anchor(v: &Value, b: WorkerBinding) -> Result<Anchor, WireError> {
     let o = exact(
         v,
         &[

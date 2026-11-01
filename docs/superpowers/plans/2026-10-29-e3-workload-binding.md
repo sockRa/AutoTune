@@ -86,6 +86,41 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- Dispatch-transport milestone delivered: nine new CPU tests cover raw stage
+  clocks/statuses/unknowns, exact bound phase/count/work, strict nested rejection,
+  independent body golden, ownership/control compatibility, gaps/duplicates/hash
+  uncertainty and full P3 1 MiB vectors through actual encoded worker frames.
+  Independent Standards review found zero hard violations/material smells;
+  Spec review found no material defect, including the final explicit upload,
+  sentinel/launch kinds and boundary-test delta. No native/process/GPU paths ran.
+- Final dispatch verification binds baseline `ca6efa1` plus unchanged before/after
+  source inventories: 242 CPU-only tests (188 integration, 19 probe ABI fakes,
+  10 feature-library fakes, 25 reference/prepared), formatting, scoped all-feature
+  Clippy and full-workspace/all-feature compile/link pass. Manifest
+  `target/workload-verification/dispatch-final-manifest.json`, SHA-256
+  `d9d9386129d900bf0e7e25aa9f5ae1c13ffad3576a23d56488b5069ff3e5d83d`.
+  Both original pinned matrix images remain unchanged. Handshake `4c4fdfb`
+  now passed Linux and Windows/MSVC in hosted run 41337285143. Task 3 stays open
+  for parent adjudication/admission, native production and Windows composition;
+  decode/hash completion alone never closes correctness, process or Gate B.
+
+- Dispatch continuation scope (November 1): extend the existing worker channel
+  with bound DispatchRecord and FailureChunk bodies, keeping handshake/sampler
+  schema bytes unchanged. Records retain raw optional pre/post anchors and signed
+  statuses for input/submit/query/readback/check/hash, bound plan/index/phase,
+  lengths/full-check diagnostics, exact verified work and optional raw SHA-256
+  input/output digests. Missing/contradictory raw clocks remain observations for
+  parent assessment, not an admission/result verdict. Passed vectors are not
+  archived; the first full failing vector travels as ordered bounded chunks.
+  Receiver reserves its full storage before allocation, retains partial bytes on
+  gap/foreign/hash/transport failure and never claims OS/native completion.
+  Per-message structural bounds (64 raw calls, 2048 words per chunk, 4096 JSON
+  structures) exist inside the unchanged 64 KiB frame/RAM limits. Overflow must
+  stop/preserve caller-owned trace; never truncate or merge query calls silently.
+  These are representation bounds, not new polling/operating budgets. Sampler
+  complexity remains 256. Parent sequence/lifecycle/clock/coverage adjudication,
+  native producer, Windows adapter and exact consent remain Task 3 obligations.
+
 - November 1 handshake milestone: canonical worker frames and child gate now
   implement the scoped continuation above. Nine CPU tests cover actual bytes,
   independent Start golden, binding/sequence/canonical rejection, sticky lanes,

@@ -227,6 +227,9 @@ impl Channel {
 }
 
 pub(crate) fn validate_complexity(bytes: &[u8]) -> Result<(), WireError> {
+    validate_complexity_limit(bytes, 256)
+}
+pub(crate) fn validate_complexity_limit(bytes: &[u8], limit: u16) -> Result<(), WireError> {
     let (mut quoted, mut escaped, mut structures) = (false, false, 0u16);
     for b in bytes {
         if quoted {
@@ -241,7 +244,7 @@ pub(crate) fn validate_complexity(bytes: &[u8]) -> Result<(), WireError> {
             quoted = true;
         } else if matches!(*b, b'{' | b'[' | b',' | b':') {
             structures = structures.checked_add(1).ok_or(WireError::Capacity)?;
-            if structures > 256 {
+            if structures > limit {
                 return Err(WireError::Capacity);
             }
         }
