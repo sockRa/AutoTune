@@ -76,6 +76,21 @@ pub enum Phase {
     Warmup,
     Measured,
 }
+impl Phase {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Warmup => "warmup",
+            Self::Measured => "measured",
+        }
+    }
+    pub(super) fn parse(v: &Value) -> Result<Self, WireError> {
+        match string(v)? {
+            "warmup" => Ok(Self::Warmup),
+            "measured" => Ok(Self::Measured),
+            _ => Err(WireError::Body),
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FirstFailure {
     pub lane: u32,
@@ -160,16 +175,7 @@ impl Record {
     pub(super) fn value(&self) -> Value {
         object([
             ("dispatch", Value::U64(self.dispatch.into())),
-            (
-                "phase",
-                Value::Text(
-                    match self.phase {
-                        Phase::Warmup => "warmup",
-                        Phase::Measured => "measured",
-                    }
-                    .into(),
-                ),
-            ),
+            ("phase", Value::Text(self.phase.name().into())),
             ("seed", Value::U64(self.seed)),
             ("lanes", Value::U64(self.lanes.into())),
             ("steps", Value::U64(self.steps.into())),
@@ -275,11 +281,7 @@ impl Record {
         };
         Ok(Self {
             dispatch: u32_value(get(o, "dispatch"))?,
-            phase: match string(get(o, "phase"))? {
-                "warmup" => Phase::Warmup,
-                "measured" => Phase::Measured,
-                _ => return Err(WireError::Body),
-            },
+            phase: Phase::parse(get(o, "phase"))?,
             seed: uint(get(o, "seed"))?,
             lanes: u32_value(get(o, "lanes"))?,
             steps: u32_value(get(o, "steps"))?,

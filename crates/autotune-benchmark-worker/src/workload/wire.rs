@@ -101,6 +101,10 @@ impl WorkerBinding {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
+    PhaseEntered {
+        phase: super::dispatch::Phase,
+        anchor: Anchor,
+    },
     DispatchRecord(super::dispatch::Record),
     FailureChunk(super::dispatch::FailureChunk),
     Bootstrap {
@@ -139,6 +143,7 @@ pub enum Message {
 impl Message {
     fn route(&self) -> (Lane, Direction, &'static str) {
         match self {
+            Self::PhaseEntered { .. } => (Lane::Ordinary, Direction::FromWorker, "phase_entered"),
             Self::DispatchRecord(_) => (Lane::Ordinary, Direction::FromWorker, "dispatch_record"),
             Self::FailureChunk(_) => (Lane::Ordinary, Direction::FromWorker, "failure_chunk"),
             Self::Bootstrap { .. } => (Lane::Ordinary, Direction::ToWorker, "bootstrap"),
@@ -160,6 +165,11 @@ impl Message {
     }
     pub(super) fn validate(&self, b: WorkerBinding) -> Result<(), WireError> {
         match self {
+            Self::PhaseEntered { anchor, .. } => {
+                if anchor.clock_token != b.monitor.clock_token {
+                    return Err(WireError::Binding);
+                }
+            }
             Self::DispatchRecord(r) => r.validate(b)?,
             Self::FailureChunk(c) => c.validate(b)?,
             Self::Bootstrap { manifest } => {
@@ -234,6 +244,10 @@ impl Message {
     }
     fn body(&self) -> Value {
         match self {
+            Self::PhaseEntered { phase, anchor } => object([
+                ("phase", Value::Text(phase.name().into())),
+                ("anchor", anchor_value(*anchor)),
+            ]),
             Self::DispatchRecord(r) => r.value(),
             Self::FailureChunk(c) => c.value(),
             Self::Bootstrap { manifest } => object([("manifest", Value::Text(manifest.clone()))]),
@@ -293,6 +307,13 @@ impl Message {
             i32::try_from(v.as_i64().map_err(|_| WireError::Body)?).map_err(|_| WireError::Body)
         };
         let message = match kind {
+            "phase_entered" => {
+                let o = exact(v, &["phase", "anchor"])?;
+                Self::PhaseEntered {
+                    phase: super::dispatch::Phase::parse(get(o, "phase"))?,
+                    anchor: parse_anchor(get(o, "anchor"), b)?,
+                }
+            }
             "dispatch_record" => Self::DispatchRecord(super::dispatch::Record::parse(v, b)?),
             "failure_chunk" => Self::FailureChunk(super::dispatch::FailureChunk::parse(v)?),
             "bootstrap" => {

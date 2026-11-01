@@ -86,6 +86,55 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- Parent report-assessment milestone reviewed and source-bound verified:
+  independent Standards axis found zero hard violations/material smells; Spec
+  axis found no material defect. The count-completion dimension is separate from
+  later fault and all runtime/qualification obligations. Eight new tests pass;
+  final suite totals 250 CPU-only tests (196 integration, 19 probe ABI fakes,
+  10 feature-library fakes, 25 reference/prepared), plus formatting, scoped
+  all-feature Clippy and full-workspace/all-feature compile/link. Unchanged source
+  inventories bind baseline `64e5c00` plus sources in
+  `target/workload-verification/assessment-final-manifest.json`, SHA-256
+  `862f6ac8311d33af79d922c6f0b744164b60859f0fb7e7f884b0bdb98002e713`.
+  Original pinned sampler image hashes still match; no process/native/GPU paths
+  ran. Dispatch `8fb5de3` passed Linux and Windows/MSVC in hosted run 41338199629.
+  Native producer/parent admission/Windows composition remain Task 3, not a
+  substitute benchmark-only product or completed E3/Gate B.
+
+- Parent report-assessment continuation scope: add `workload::assessment::Audit`
+  over retained worker messages with bounded fixed metadata and no backend/OS
+  calls. It checks original Start, exact j order and full bound counts; distinct
+  Input/upload-A/B/X/sentinel/launch/query/readback/check/hash call order/statuses,
+  original raw clock brackets/order and separate source/receipt/controller-tick
+  streams, pending/readback/full-check assertions and exact reported work. The
+  auditor borrows messages: its caller must first retain every owned raw frame,
+  receipt and rejection; assessment is no archive or live truth claim.
+- Measurement entry now has a worker-role `PhaseEntered` frame, emitted before
+  measured work. Warm-up uses the existing conservative issued-Start bound;
+  measurement freezes its relative cap at the reported actual entry, capped at
+  the original cumulative boundary. Before entry is known only that immutable
+  cumulative deadline can be assessed. Native producer must send entry before
+  work and stop on uncertain send; independent controller supervision remains
+  mandatory. Queued evidence never rebases time; a newer controller tick is
+  considered when assessing an older entry/receipt. Controller ticks and delayed
+  receive observations use independent original-epoch clocks, preventing a valid
+  queued receipt from spuriously regressing the tick stream.
+- Per-cycle enforcement includes all input/submit/readback/check/hash work at
+  250 ms and first stream upload through returned completion at 100 ms, both
+  under earlier frozen phase ceilings with equality losing. Missing, malformed,
+  failed, skipped or duplicate evidence closes assessment, retaining counts and
+  first fault; late evidence cannot resume it. All-reports-complete is a narrow
+  dimension, never consent, coverage, physical identity, replayed successful GPU
+  vectors, teardown/exit or useful baseline acceptance. Safety/re-entry/exact
+  consent admission and native/Windows/controller composition remain Task 3.
+- Initial assessment checks: eight CPU tests pass, including actual encoded full
+  128+256 plan, explicit phase entry, retained message ownership, delayed source
+  and receipt streams, query NOT_READY before completion, malformed calls/clocks,
+  fixed metadata charges, silent-worker ticks and exact deadline equality. An
+  upload-start budget regression was observed red before correction (the first
+  draft counted from launch); final focused tests and scoped Clippy now pass.
+  Early compile failure used the wrong existing Phase variant name and is fixed.
+
 - Dispatch-transport milestone delivered: nine new CPU tests cover raw stage
   clocks/statuses/unknowns, exact bound phase/count/work, strict nested rejection,
   independent body golden, ownership/control compatibility, gaps/duplicates/hash

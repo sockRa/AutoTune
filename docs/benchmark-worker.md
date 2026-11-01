@@ -576,3 +576,43 @@ queue, failure snapshot and disk ceilings still apply in session composition.
 This supplies actual encoded result transport, with CPU coverage through P3's
 complete 1 MiB failure vector. Native production, actual pipes, parent admission,
 OS supervision and live baseline qualification remain unfinished.
+
+## Parent dispatch-report assessment
+
+`workload::assessment::Audit` borrows retained worker messages and controller
+receipts; it allocates only fixed, reserved metadata. Its caller must retain
+every raw message, receipt and rejection before assessment. It checks contiguous
+j, the bound phase/shape/count/work assertions, no pending operation, full
+readback/check assertions and distinct native upload/sentinel/launch/query stages
+followed by readback/check/hash. Repeated CUDA NOT_READY query observations may
+precede one returned completion. Aggregate Submit alone is insufficient for this
+fixed native call trace. Input/check/hash are host stages with no native status.
+
+Source anchors, receive observations and independent controller ticks each have
+their own validator against the same original epoch. Buffered worker timestamps
+may precede a previous controller receipt, and a queued receipt may precede a
+newer tick. Those facts do not fabricate a clock regression. Raw call brackets
+must still be ordered, epoch-valid and no later than their actual receipt.
+Missing, conflicting, suspended or regressed clocks close assessment.
+
+Warm-up retains the conservative original Start-issue deadline. A new bound
+`PhaseEntered` message reports actual measurement entry before measured work.
+After all warm-up records, measurement admission requires that entry and freezes
+its existing relative cap against the immutable cumulative boundary. Before the
+entry is observed only the cumulative deadline is known; the native producer
+must send entry before work and stop on uncertain sends. Controller supervision
+cannot wait for the producer or report auditor. Newer tick time prevents an old
+entry/receipt from retroactively extending the relative deadline.
+
+Stream submit-to-completion starts at the first upload, so upload/sentinel time
+counts toward the existing 100 ms ceiling. The complete input-through-hash cycle
+is capped at 250 ms; phase ceilings may expire earlier. Equality loses. Explicit
+`tick` calls assess silent-worker deadlines independently of incoming records.
+Fault/stop closes further assessment and preserves the first fault and counts.
+
+`reports_complete()` states only that all 128+256 pilot reports were counted; it
+does not erase a later fault. Callers inspect `fault()` separately. Matching
+reports/digests do not replay successful output vectors or prove native execution,
+physical identity, safety, consent, telemetry coverage, orderly teardown, exits
+or baseline usefulness. The actual parent safety/re-entry/required-fact/consent
+path, native producer and Windows/controller composition remain required.
