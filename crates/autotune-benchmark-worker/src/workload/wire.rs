@@ -421,6 +421,20 @@ pub struct Channel {
     _metadata: Reservation,
 }
 impl Channel {
+    /// Encode an owned observed trace only on its original execution binding.
+    pub fn encode_traced(
+        &mut self,
+        trace: &super::trace::TracedRecord,
+    ) -> Result<EncodedFrame, WireError> {
+        if self.poisoned {
+            return Err(WireError::Poisoned);
+        }
+        if trace.binding != self.binding {
+            self.poison();
+            return Err(WireError::Binding);
+        }
+        self.encode(&trace.message)
+    }
     pub fn new(
         binding: WorkerBinding,
         lane: Lane,

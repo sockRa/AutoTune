@@ -616,3 +616,41 @@ reports/digests do not replay successful output vectors or prove native executio
 physical identity, safety, consent, telemetry coverage, orderly teardown, exits
 or baseline usefulness. The actual parent safety/re-entry/required-fact/consent
 path, native producer and Windows/controller composition remain required.
+
+## Actual CUDA call tracing
+
+`CudaBackend::submit_observed`, `query_observed` and `readback_observed` instrument
+the actual typed adapter calls. Existing Backend methods delegate with a no-op
+observer; the simulated worker still rejects Native. Each upload, default-stream
+upload-completion query, launch, kernel query and readback has a pre-call and raw
+post-return callback. Callback failure keeps the adapter poisoned; no successor
+native call or speculative cleanup follows. Upload completion must return zero
+before launch. Its NOT_READY status is a failed submit, distinct from a pending
+kernel-stream query. Parent assessment now requires this previously omitted
+upload-completion stage explicitly.
+
+`workload::trace::CallTrace` reserves its 64-call storage before allocation and
+captures injected raw anchors/control state around these calls. It retains raw
+return values before attempting the post-call clock. A native error plus clock
+failure retains the original native error. Missing clocks, deadline equality,
+stop or capacity exhaustion prevent further observed entry. Pending kernel query
+does not renew the interval that began at first upload. Returned completion ends
+that 100 ms interval; readback/check/hash still count toward the 250 ms cycle and
+original phase ceiling. Input/check/hash host stages must be supplied explicitly.
+
+The collector pins the original binding, phase and invocation. `bind` rejects a
+different index/phase/shape/pending assertion and preserves both owners on error.
+An accepted `TracedRecord` retains its RAM charge and exposes a borrowed record;
+`Channel::encode_traced` enforces the exact original execution binding. A foreign
+channel is poisoned without consuming the trace. The first fault and an unmatched
+return remain owned supplemental observations; the future exporter must retain
+them separately from the matched-call frame.
+
+The full producer must preserve a continuous clock validator across traces, use
+one frozen actual phase entry and bind real host checking/hashing/output evidence.
+This seam is not that producer, an archive or admission authority. Typed ABI fakes
+exercise actual adapter paths without loading a DLL; portable tests cover the
+owned trace-to-frame/report-audit path. Host-buffer preparation, serial full-plan
+production, failed-vector export, native admission and Windows composition remain
+unfinished. No new binary/default native mode is added and no native call ran in
+this milestone.

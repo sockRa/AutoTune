@@ -86,6 +86,61 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- Final actual-adapter tracing verification binds baseline `ae44192` plus source
+  with identical before/after inventories: **261 CPU-only tests** (204 integration,
+  19 probe ABI fakes, 13 feature-library fakes, 25 reference/prepared), scoped
+  all-feature warning-denied Clippy, workspace formatting and full-workspace/
+  all-feature compile/link pass. Eight portable trace tests and three new typed
+  CUDA ABI-fake tests cover raw status/clock/control/fault retention, original
+  binding, trace charges, actual callback order and poisoned adapter successors.
+  Manifest `target/workload-verification/trace-reviewed-manifest.json`, SHA-256
+  `1f69ce90c5e7081329eae7cb412d5c8245779fe3a03c4ba416edaa98cb4c2d94`.
+  Earlier trace-final/pre-review checks remain historical; this manifest covers
+  the reviewed binding correction. Initial test enum-shadowing/array-comparison
+  compile failures and Clippy large-error/array-chunks/unused-import findings
+  were fixed without weakening lint. Both pinned original images still match.
+  No DLL loading/native/process/GPU tests. Assessment `e53c7e2` passed both hosted
+  platforms in run 41339063933; this source has its own later publication scope.
+
+- Independent tracing review: Standards found zero hard violations/material
+  smells. Spec found a material attribution defect: the first draft could bind
+  collected A calls to a B summary/channel. Fixed by retaining exact original
+  WorkerBinding/phase/j, validating summary/pending assertions, replacing plain
+  Message exposure with borrowed record inspection and `Channel::encode_traced`
+  enforcing the pinned identity. Final Spec review closed P2 with no remaining
+  material defect. The regression covers changed manifest with same clock,
+  seed/j/phase, foreign channel poison and preserved raw owners. Continuous
+  cross-trace clocks and frozen phase entry remain producer obligations.
+
+- Actual-adapter tracing continuation: `CudaBackend` now has observed
+  submit/query/readback methods; existing Backend methods delegate through a
+  no-op observer and preserve existing behavior. Every upload, default-stream
+  upload-completion query, launch, kernel query and readback is observed before
+  entry/after raw return. An observer failure keeps the adapter poisoned and
+  prevents successors. Default-stream NOT_READY still fails submit without
+  launch/retry; only the kernel query may remain pending.
+- `workload::trace::CallTrace` owns reserved raw calls, injected clock/control
+  captures and sticky first faults. It retains raw status before post-clock
+  capture, including native failure plus missing post-clock. It observes the
+  unchanged original phase/stream/cycle limits where entries are known; the
+  future producer must keep one frozen phase entry across dispatches, supply
+  Input/Check/Hash host stages and preserve actual summary/output evidence.
+  Partial traces alone are not whole-cycle or native qualification.
+- A successful bind transfers the trace and charge into immutable TracedRecord,
+  borrowed directly by the actual worker encoder. Failed nonempty-summary binds
+  retain both raw owners; a pre-reserved boxed error avoids copying a large
+  stack error. Fault and first unmatched return remain separate owned supplemental
+  evidence, not silently serialized as an ordinary matched call. Future exporter
+  must retain them. No new binary, native admission or executed native path.
+- Integration reconciliation: existing CUDA submit performs a required
+  default-stream upload-completion observation before launch. Added its explicit
+  Operation kind and made parent audit require it; prior aggregate trace fixtures
+  omitted this real call. Successful order is now Input/uploads/sentinel/upload
+  completion/launch/kernel queries/readback/check/hash. Numeric policy and old
+  handshake/sampler bytes remain unchanged. Full native producer/host buffers,
+  retained summaries/failure export, admission and Windows composition remain
+  Task 3; this milestone closes the real-adapter per-call tracing seam only.
+
 - Parent report-assessment milestone reviewed and source-bound verified:
   independent Standards axis found zero hard violations/material smells; Spec
   axis found no material defect. The count-completion dimension is separate from

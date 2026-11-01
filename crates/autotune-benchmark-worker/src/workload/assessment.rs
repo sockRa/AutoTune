@@ -280,7 +280,15 @@ impl Audit {
     }
     fn call_order(&self, r: &Record) -> Result<(), Fault> {
         use Operation::*;
-        let prefix = [Input, UploadA, UploadB, UploadX, Sentinel, Launch];
+        let prefix = [
+            Input,
+            UploadA,
+            UploadB,
+            UploadX,
+            Sentinel,
+            UploadCompletion,
+            Launch,
+        ];
         if r.calls.len() < prefix.len() + 4 {
             return Err(Fault::CallTrace);
         }

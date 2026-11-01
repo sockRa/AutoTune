@@ -64,7 +64,17 @@ fn record(j: u32, start: u64) -> Record {
         lanes: 65536,
         steps: 4096,
         calls: [
-            Input, UploadA, UploadB, UploadX, Sentinel, Launch, Query, Readback, Check, Hash,
+            Input,
+            UploadA,
+            UploadB,
+            UploadX,
+            Sentinel,
+            UploadCompletion,
+            Launch,
+            Query,
+            Readback,
+            Check,
+            Hash,
         ]
         .into_iter()
         .enumerate()
@@ -95,7 +105,7 @@ fn warmup(audit: &mut Audit) {
         audit
             .observe(
                 &Message::DispatchRecord(record(j, (j as u64 + 1) * 1_000_000)),
-                Some(a((j as u64 + 1) * 1_000_000 + 200_000)),
+                Some(a((j as u64 + 1) * 1_000_000 + 220_000)),
             )
             .unwrap();
     }
@@ -211,10 +221,10 @@ fn missing_failed_or_reordered_native_calls_and_unchecked_outputs_never_count() 
     r.calls[5].status = Some(-1);
     bad.push(r);
     let mut r = record(0, 1_000_000);
-    r.calls[6].status = None;
+    r.calls[7].status = None;
     bad.push(r);
     let mut r = record(0, 1_000_000);
-    r.calls[6].status = Some(600);
+    r.calls[7].status = Some(600);
     bad.push(r);
     let mut r = record(0, 1_000_000);
     r.calls.swap(5, 7);
@@ -223,7 +233,10 @@ fn missing_failed_or_reordered_native_calls_and_unchecked_outputs_never_count() 
     r.calls.remove(4);
     bad.push(r);
     let mut r = record(0, 1_000_000);
-    r.calls[7].status = None;
+    r.calls.remove(5); // Upload completion must be observed before launch.
+    bad.push(r);
+    let mut r = record(0, 1_000_000);
+    r.calls[8].status = None;
     bad.push(r);
     let mut r = record(0, 1_000_000);
     r.pending = true;
@@ -249,11 +262,11 @@ fn valid_pending_query_observations_precede_single_returned_completion() {
     let m = manifest(&b);
     let binding = binding(&m);
     let mut r = record(0, 1_000_000);
-    let mut pending = r.calls[6].clone();
+    let mut pending = r.calls[7].clone();
     pending.status = Some(600);
-    pending.before = Some(a(1_110_000));
-    pending.after = Some(a(1_115_000));
-    r.calls.insert(6, pending);
+    pending.before = Some(a(1_130_000));
+    pending.after = Some(a(1_135_000));
+    r.calls.insert(7, pending);
     let mut audit = Audit::new(binding, a(0), &b).unwrap();
     assert_eq!(
         audit
@@ -369,14 +382,14 @@ fn stream_and_cycle_deadline_equality_and_fixed_metadata_budget_are_enforced() {
         let mut r = record(0, 1_000_000);
         if kind == 0 {
             let submitted = r.calls[1].before.unwrap().qpc_before;
-            for c in &mut r.calls[6..] {
+            for c in &mut r.calls[7..] {
                 for anchor in [&mut c.before, &mut c.after] {
-                    *anchor = Some(a(anchor.unwrap().qpc_before + 99_890_000));
+                    *anchor = Some(a(anchor.unwrap().qpc_before + 99_870_000));
                 }
             }
-            assert_eq!(r.calls[6].after.unwrap().qpc_after - submitted, 100_000_000);
+            assert_eq!(r.calls[7].after.unwrap().qpc_after - submitted, 100_000_000);
         } else if kind == 1 {
-            r.calls[9].after = Some(a(251_000_000));
+            r.calls[10].after = Some(a(251_000_000));
         } else {
             // Upload/sentinel time belongs to the stream submission window.
             r.calls[1].after = Some(a(101_030_000));

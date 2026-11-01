@@ -3,6 +3,10 @@
 //! fdf313cc10cf5504953ac9fe6a5dc78dc6ec4152. No copied header/sample blocks.
 //! No Toolkit, runtime, NVML, reset, tuning setters or user module/path inputs.
 use crate::worker::{Backend, Fault, Identity, Provenance, Query};
+use crate::workload::{
+    dispatch::Operation,
+    trace::{Observer, Unobserved},
+};
 use autotune_fma_reference::{input::Shape, profile::Profile};
 use libloading::os::windows::Library;
 use std::{
@@ -337,6 +341,27 @@ impl Backend for CudaBackend {
         steps: u32,
         sentinel: &[f32],
     ) -> Result<(), Fault> {
+        self.submit_observed(a, b, x, steps, sentinel, &mut Unobserved)
+    }
+    fn query(&mut self) -> Result<Query, Fault> {
+        self.query_observed(&mut Unobserved)
+    }
+    fn readback(&mut self, output: &mut [f32]) -> Result<usize, Fault> {
+        self.readback_observed(output, &mut Unobserved)
+    }
+}
+impl CudaBackend {
+    /// Raw observations for the existing native submit. No execution authority
+    /// follows from an observer; `open`'s isolation/consent contract still holds.
+    pub fn submit_observed(
+        &mut self,
+        a: &[f32],
+        b: &[f32],
+        x: &[f32],
+        steps: u32,
+        sentinel: &[f32],
+        observer: &mut impl Observer,
+    ) -> Result<(), Fault> {
         if self.state != State::Ready
             || steps != self.shape.steps().value()
             || [a, b, x, sentinel]
@@ -348,21 +373,26 @@ impl Backend for CudaBackend {
         }
         self.state = State::Poisoned;
         unsafe {
-            for (device, host) in self.buffers.iter().zip([a, b, x, sentinel]) {
-                checked(
-                    "cuMemcpyHtoD_v2",
-                    (self.api.upload)(*device, host.as_ptr().cast(), host.len() * 4),
-                )?;
+            for ((device, host), op) in self.buffers.iter().zip([a, b, x, sentinel]).zip([
+                Operation::UploadA,
+                Operation::UploadB,
+                Operation::UploadX,
+                Operation::Sentinel,
+            ]) {
+                observer.before(op)?;
+                let status = (self.api.upload)(*device, host.as_ptr().cast(), host.len() * 4);
+                observer.after(op, status)?;
+                checked("cuMemcpyHtoD_v2", status)?;
             }
             // Pageable synchronous uploads may return after host staging but
             // before device DMA finishes. The nonblocking compute stream must
             // not race that default-stream work. Fail closed unless its idle
             // completion is observed; NOT_READY is uncertainty, not permission
             // to launch or retry this submit.
-            checked(
-                "cuStreamQuery(upload completion)",
-                (self.api.query)(null_mut()),
-            )?;
+            observer.before(Operation::UploadCompletion)?;
+            let status = (self.api.query)(null_mut());
+            observer.after(Operation::UploadCompletion, status)?;
+            checked("cuStreamQuery(upload completion)", status)?;
             let mut n = self.shape.lanes();
             let mut k = steps;
             let mut parameters = [
@@ -373,36 +403,43 @@ impl Backend for CudaBackend {
                 (&mut n as *mut u32).cast(),
                 (&mut k as *mut u32).cast(),
             ];
-            checked(
-                "cuLaunchKernel",
-                (self.api.launch)(
-                    self.function,
-                    n.div_ceil(256),
-                    1,
-                    1,
-                    256,
-                    1,
-                    1,
-                    0,
-                    self.stream,
-                    parameters.as_mut_ptr(),
-                    null_mut(),
-                ),
-            )?;
+            observer.before(Operation::Launch)?;
+            let status = (self.api.launch)(
+                self.function,
+                n.div_ceil(256),
+                1,
+                1,
+                256,
+                1,
+                1,
+                0,
+                self.stream,
+                parameters.as_mut_ptr(),
+                null_mut(),
+            );
+            observer.after(Operation::Launch, status)?;
+            checked("cuLaunchKernel", status)?;
             self.state = State::InFlight;
             Ok(())
         }
     }
-    fn query(&mut self) -> Result<Query, Fault> {
+    pub fn query_observed(&mut self, observer: &mut impl Observer) -> Result<Query, Fault> {
         if self.state != State::InFlight {
             return Err(invalid("query without in-flight launch"));
         }
-        match unsafe { (self.api.query)(self.stream) } {
+        self.state = State::Poisoned;
+        observer.before(Operation::Query)?;
+        let status = unsafe { (self.api.query)(self.stream) };
+        observer.after(Operation::Query, status)?;
+        match status {
             0 => {
                 self.state = State::Complete;
                 Ok(Query::Complete)
             }
-            600 => Ok(Query::Pending),
+            600 => {
+                self.state = State::InFlight;
+                Ok(Query::Pending)
+            }
             status => {
                 self.state = State::Poisoned;
                 Err(Fault {
@@ -412,20 +449,24 @@ impl Backend for CudaBackend {
             }
         }
     }
-    fn readback(&mut self, output: &mut [f32]) -> Result<usize, Fault> {
+    pub fn readback_observed(
+        &mut self,
+        output: &mut [f32],
+        observer: &mut impl Observer,
+    ) -> Result<usize, Fault> {
         if self.state != State::Complete || output.len() != self.shape.lanes() as usize {
             return Err(invalid("readback without idle/shape"));
         }
         self.state = State::Poisoned;
+        observer.before(Operation::Readback)?;
         unsafe {
-            checked(
-                "cuMemcpyDtoH_v2",
-                (self.api.download)(
-                    output.as_mut_ptr().cast(),
-                    self.buffers[3],
-                    output.len() * 4,
-                ),
-            )?;
+            let status = (self.api.download)(
+                output.as_mut_ptr().cast(),
+                self.buffers[3],
+                output.len() * 4,
+            );
+            observer.after(Operation::Readback, status)?;
+            checked("cuMemcpyDtoH_v2", status)?;
         }
         self.state = State::Ready;
         Ok(output.len())
@@ -582,6 +623,158 @@ mod tests {
             driver_path: PathBuf::from("typed-fake-not-a-DLL"),
             driver_version: 12090,
         }
+    }
+    #[derive(Default)]
+    struct Recorded {
+        events: Vec<(Operation, Option<i32>)>,
+        reject_before: Option<Operation>,
+        reject_after: Option<Operation>,
+    }
+    impl Observer for Recorded {
+        fn before(&mut self, op: Operation) -> Result<(), Fault> {
+            self.events.push((op, None));
+            if self.reject_before == Some(op) {
+                return Err(invalid("observer before"));
+            }
+            Ok(())
+        }
+        fn after(&mut self, op: Operation, status: i32) -> Result<(), Fault> {
+            self.events.push((op, Some(status)));
+            if self.reject_after == Some(op) {
+                return Err(invalid("observer after"));
+            }
+            Ok(())
+        }
+    }
+    #[test]
+    fn observed_typed_calls_preserve_upload_fence_query_status_and_readback_order() {
+        let _guard = serial();
+        let mut backend = fixture();
+        let mut observed = Recorded::default();
+        STATUS.store(0, Ordering::SeqCst);
+        backend
+            .submit_observed(
+                &[1.0; 2],
+                &[1.0; 2],
+                &[1.0; 2],
+                4096,
+                &[f32::NAN; 2],
+                &mut observed,
+            )
+            .unwrap();
+        STATUS.store(600, Ordering::SeqCst);
+        assert_eq!(
+            backend.query_observed(&mut observed).unwrap(),
+            crate::worker::Query::Pending
+        );
+        STATUS.store(0, Ordering::SeqCst);
+        assert_eq!(
+            backend.query_observed(&mut observed).unwrap(),
+            crate::worker::Query::Complete
+        );
+        let mut output = [f32::NAN; 2];
+        backend
+            .readback_observed(&mut output, &mut observed)
+            .unwrap();
+        use Operation::*;
+        let expected = [
+            (UploadA, 0),
+            (UploadB, 0),
+            (UploadX, 0),
+            (Sentinel, 0),
+            (UploadCompletion, 0),
+            (Launch, 0),
+            (Query, 600),
+            (Query, 0),
+            (Readback, 0),
+        ];
+        assert_eq!(observed.events.len(), expected.len() * 2);
+        for (pair, (op, status)) in observed.events.as_chunks::<2>().0.iter().zip(expected) {
+            assert_eq!(*pair, [(op, None), (op, Some(status))]);
+        }
+        assert_eq!(output, [0.0; 2]);
+    }
+    #[test]
+    fn observer_failure_closes_actual_adapter_before_any_successor_native_call() {
+        let _guard = serial();
+        STATUS.store(0, Ordering::SeqCst);
+        let mut backend = fixture();
+        let mut observed = Recorded {
+            reject_before: Some(Operation::UploadCompletion),
+            ..Default::default()
+        };
+        assert!(backend
+            .submit_observed(
+                &[1.0; 2],
+                &[1.0; 2],
+                &[1.0; 2],
+                4096,
+                &[f32::NAN; 2],
+                &mut observed
+            )
+            .is_err());
+        assert_eq!(UPLOADS.load(Ordering::SeqCst), 4);
+        assert_eq!(LAUNCHES.load(Ordering::SeqCst), 0);
+        assert!(matches!(backend.state, State::Poisoned));
+        assert!(backend.query_observed(&mut observed).is_err());
+        let mut backend = fixture();
+        let mut observed = Recorded::default();
+        backend
+            .submit_observed(
+                &[1.0; 2],
+                &[1.0; 2],
+                &[1.0; 2],
+                4096,
+                &[f32::NAN; 2],
+                &mut observed,
+            )
+            .unwrap();
+        observed.reject_after = Some(Operation::Query);
+        assert!(backend.query_observed(&mut observed).is_err());
+        assert_eq!(observed.events.last(), Some(&(Operation::Query, Some(0))));
+        let count = observed.events.len();
+        assert!(backend.query_observed(&mut observed).is_err());
+        assert!(backend
+            .readback_observed(&mut [f32::NAN; 2], &mut observed)
+            .is_err());
+        assert_eq!(observed.events.len(), count);
+        assert!(matches!(backend.state, State::Poisoned));
+    }
+    #[test]
+    fn raw_upload_completion_failure_is_observed_without_launch_or_retry() {
+        let _guard = serial();
+        let mut backend = fixture();
+        let mut observed = Recorded::default();
+        // Default-stream pending is not a kernel-query retry permission.
+        let fault = backend
+            .submit_observed(
+                &[1.0; 2],
+                &[1.0; 2],
+                &[1.0; 2],
+                4096,
+                &[f32::NAN; 2],
+                &mut observed,
+            )
+            .unwrap_err();
+        assert_eq!(fault.operation, "cuStreamQuery(upload completion)");
+        assert_eq!(fault.raw_status, 600);
+        assert_eq!(
+            observed.events.last(),
+            Some(&(Operation::UploadCompletion, Some(600)))
+        );
+        assert_eq!(LAUNCHES.load(Ordering::SeqCst), 0);
+        STATUS.store(0, Ordering::SeqCst);
+        assert!(backend
+            .submit_observed(
+                &[1.0; 2],
+                &[1.0; 2],
+                &[1.0; 2],
+                4096,
+                &[f32::NAN; 2],
+                &mut observed
+            )
+            .is_err());
+        assert!(backend.close().is_err());
     }
     #[test]
     fn typed_fake_exports_launch_readback_and_sticky_uncertainty() {
