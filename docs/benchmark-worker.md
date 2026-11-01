@@ -615,7 +615,8 @@ does not erase a later fault. Callers inspect `fault()` separately. Matching
 reports/digests do not replay successful output vectors or prove native execution,
 physical identity, safety, consent, telemetry coverage, orderly teardown, exits
 or baseline usefulness. The actual parent safety/re-entry/required-fact/consent
-path, native producer and Windows/controller composition remain required.
+path and Windows/controller composition remain required; producer source is
+described below.
 
 ## Actual CUDA call tracing
 
@@ -646,11 +647,66 @@ channel is poisoned without consuming the trace. The first fault and an unmatche
 return remain owned supplemental observations; the future exporter must retain
 them separately from the matched-call frame.
 
-The full producer must preserve a continuous clock validator across traces, use
-one frozen actual phase entry and bind real host checking/hashing/output evidence.
-This seam is not that producer, an archive or admission authority. Typed ABI fakes
-exercise actual adapter paths without loading a DLL; portable tests cover the
-owned trace-to-frame/report-audit path. Host-buffer preparation, serial full-plan
-production, failed-vector export, native admission and Windows composition remain
-unfinished. No new binary/default native mode is added and no native call ran in
-this milestone.
+The producer below preserves a continuous clock validator across traces, uses
+one frozen phase entry and binds host checking/hashing/output evidence. The
+tracing seam is no archive or admission authority. Typed ABI fakes exercise
+actual adapter paths without loading a DLL; portable tests cover the owned
+trace-to-frame/report-audit path. Native admission and Windows composition remain
+unfinished. No new binary/default native mode is added by tracing.
+
+## Bound worker producer
+
+`workload::producer::Producer` now composes prepared input/reference bases, fixed
+x/output/sentinel buffers, actual observed Driver methods, full checking/hash
+and the bound worker channel. CudaBackend implements Driver by delegating to its
+observed methods; its existing native setup contract still applies. Metadata
+accessors perform no driver I/O. `prepare` performs CPU preparation and reserves
+owned host storage before allocation; it does not open a context or load a DLL.
+
+`Gate::take_start` transfers a non-cloneable, single-use observation after the
+validated Bootstrap/Ready/Start handshake. Fixture start rejects Native. Native
+start additionally requires NativeAdmission, whose fields are private and which
+currently has no issuer. The actual parent required-fact/safety/re-entry/exact
+consent and supervision path must exist before an issuer can be implemented.
+Existing simulated worker native rejection and executable modes are unchanged.
+
+Each advance submits one dispatch or performs one query/completion/readback/
+check/hash sequence, with no hidden successor dispatch. All fixed 128+256 counts
+and seed/shape/K remain bound. A shared clock validator survives across traces;
+measured PhaseEntered is encoded before measured work and freezes that phase's
+original relative/cumulative ceiling. Completed warm-up does not keep applying
+its old cap to measurement. All output lanes are checked, including warm-up;
+hashes use the existing exact little-endian buffer convention. Successful output
+can be reused only after complete checking/hash/report handoff.
+
+Control supplies the original StopWindow. Child receipt has its own anchor;
+delayed controls cannot renew cooperative/exit grace. New work closes, while an
+already submitted dispatch can drain query/readback/check/hash under the earlier
+original 100 ms stream, 250 ms cycle and phase bounds. Original cooperative
+expiry prevents further drain calls or cleanup. An independent controller must
+still supervise blocked driver, clock or sink calls and original OS handles.
+
+FrameSink must be an immediate bounded queue handoff: success is owned enqueue,
+not peer receipt/durability. Failure returns the exact frame; producer retains it,
+poisons its lane and issues no retry or successor. Raw trace/summary, invalid
+clock/control, readback length and first terminal outcome remain inspectable.
+The first full bad output moves into the separately reserved 4 MiB failure pool,
+transferring its existing charge and preserving exact bits/digest or its absence.
+One export step emits one bounded chunk within original exit/run ceilings.
+Capacity/encode/clock/send failures persist; freeing capacity cannot resume export.
+Handed-off words are separate from complete-export status, including a late guard
+after the last accepted chunk. Missing mandatory export prevents qualification.
+
+Explicit cleanup is one shot after admitted terminal known-idle work. Attempt is
+stored before driver entry and raw return before post-clock capture. No attempted
+cleanup, return status or complete report establishes OS exit, empty job, released
+VRAM or global native quiescence. Owned host accounting excludes opaque driver/
+OS/allocator overhead and does not replace configured commit limits. Exporters
+must retain all raw fault/control/clock/cleanup observations as well as frames.
+
+CPU fixtures cover a complete encoded P1 plan through parent audit, stop-drain,
+stale/partial outputs, native-status fakes, original timeouts, first P3 failure,
+uncertain frames and sticky export limits. Typed ABI fakes cover the actual Driver
+bridge; no native DLL, process or GPU workload ran. Parent admission, Windows
+worker/supervisor and live artifact/session composition remain unfinished. This
+is a software producer milestone, not E3/Gate B or baseline acceptance.

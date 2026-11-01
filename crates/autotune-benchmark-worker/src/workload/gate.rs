@@ -35,6 +35,12 @@ pub struct StopWindow {
     pub cooperative_ns: u64,
     pub exit_ns: u64,
 }
+/// Single-use observation from the validated handshake, not native authority.
+pub struct StartObservation {
+    pub(super) binding: WorkerBinding,
+    pub(super) issued: Anchor,
+    pub(super) receipt: Anchor,
+}
 pub struct Gate {
     binding: WorkerBinding,
     clock: Clock,
@@ -43,6 +49,7 @@ pub struct Gate {
     setup_deadline_ns: Option<u64>,
     fault: Option<Fault>,
     stop_window: Option<StopWindow>,
+    start: Option<StartObservation>,
 }
 impl Gate {
     pub fn new(binding: WorkerBinding) -> Result<Self, Fault> {
@@ -54,6 +61,7 @@ impl Gate {
             setup_deadline_ns: None,
             fault: None,
             stop_window: None,
+            start: None,
         })
     }
     pub fn stopped(&self) -> bool {
@@ -64,6 +72,12 @@ impl Gate {
     }
     pub fn stop_window(&self) -> Option<StopWindow> {
         self.stop_window
+    }
+    pub fn take_start(&mut self) -> Option<StartObservation> {
+        if self.state != State::Started {
+            return None;
+        }
+        self.start.take()
     }
     fn fail<T>(&mut self, f: Fault) -> Result<T, Fault> {
         self.state = State::Stopped;
@@ -187,6 +201,14 @@ impl Gate {
                     return self.fail(Fault::Deadline);
                 }
                 self.state = State::Started;
+                let Message::Start { issued } = message else {
+                    unreachable!("Start arm")
+                };
+                self.start = Some(StartObservation {
+                    binding: self.binding,
+                    issued: *issued,
+                    receipt,
+                });
                 Ok(Action::Start {
                     plan: self.binding.plan,
                     issued_ns,

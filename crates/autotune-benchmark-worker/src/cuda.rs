@@ -129,6 +129,44 @@ pub struct CudaBackend {
     driver_path: PathBuf,
     driver_version: i32,
 }
+impl crate::workload::producer::Driver for CudaBackend {
+    fn provenance(&self) -> Provenance {
+        Provenance::Native
+    }
+    fn identity(&self) -> Identity {
+        self.identity
+    }
+    fn shape(&self) -> Shape {
+        self.shape
+    }
+    fn submit(
+        &mut self,
+        input: crate::workload::producer::Inputs<'_>,
+        observer: &mut impl Observer,
+    ) -> Result<(), Fault> {
+        self.submit_observed(
+            input.a,
+            input.b,
+            input.x,
+            input.steps,
+            input.sentinel,
+            observer,
+        )
+    }
+    fn query(&mut self, observer: &mut impl Observer) -> Result<Query, Fault> {
+        self.query_observed(observer)
+    }
+    fn readback(
+        &mut self,
+        output: &mut [f32],
+        observer: &mut impl Observer,
+    ) -> Result<usize, Fault> {
+        self.readback_observed(output, observer)
+    }
+    fn close(&mut self) -> Result<(), Fault> {
+        CudaBackend::close(self)
+    }
+}
 impl CudaBackend {
     /// Loads the system driver and creates an owned context/module/buffers.
     ///
@@ -623,6 +661,42 @@ mod tests {
             driver_path: PathBuf::from("typed-fake-not-a-DLL"),
             driver_version: 12090,
         }
+    }
+    #[test]
+    fn producer_driver_bridge_uses_the_observed_typed_adapter() {
+        use crate::workload::producer::{Driver, Inputs};
+        let _guard = serial();
+        let mut backend = fixture();
+        let mut observed = Recorded::default();
+        assert_eq!(Driver::provenance(&backend), Provenance::Native);
+        assert_eq!(Driver::shape(&backend), Shape::new(2, 4096).unwrap());
+        STATUS.store(0, Ordering::SeqCst);
+        Driver::submit(
+            &mut backend,
+            Inputs {
+                a: &[1.0; 2],
+                b: &[1.0; 2],
+                x: &[1.0; 2],
+                sentinel: &[f32::NAN; 2],
+                steps: 4096,
+            },
+            &mut observed,
+        )
+        .unwrap();
+        assert_eq!(
+            Driver::query(&mut backend, &mut observed).unwrap(),
+            Query::Complete
+        );
+        let mut output = [f32::NAN; 2];
+        Driver::readback(&mut backend, &mut output, &mut observed).unwrap();
+        assert!(observed
+            .events
+            .contains(&(Operation::UploadCompletion, Some(0))));
+        assert_eq!(
+            observed.events.last(),
+            Some(&(Operation::Readback, Some(0)))
+        );
+        Driver::close(&mut backend).unwrap();
     }
     #[derive(Default)]
     struct Recorded {

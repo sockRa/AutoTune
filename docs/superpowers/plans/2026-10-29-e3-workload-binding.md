@@ -86,6 +86,78 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- Final producer milestone verification: baseline `abc58f8` plus unchanged
+  before/after source inventories passes **274 CPU-only tests** (216 integration,
+  19 probe ABI fakes, 14 feature-library fakes, 25 reference/prepared), scoped
+  all-feature warning-denied Clippy, workspace formatting and full-workspace/
+  all-feature compile/link. Twelve producer tests include full encoded 128+256
+  P1 to parent audit, P3 first failure, drained stop, original control windows,
+  native-admission rejection, clocks, no retry and sticky/late export failures.
+  One new typed ABI-fake library test exercises the actual CudaBackend Driver
+  bridge. Manifest `target/workload-verification/producer-reviewed-manifest.json`,
+  SHA-256 `27ae4e3783fb4762dd180c152420d224de03b56ae51cc593c3c56a4552394a6c`.
+  First Clippy rejected unnecessary_unwrap and was corrected without lint
+  suppression; earlier seven/nine/ten-test draft checks remain historical.
+- Independent final Spec review closed both P2 findings with no remaining
+  material defect; final Standards review found zero hard violations/material
+  smells. Both original matrix image hashes still match. No native DLL, owned
+  fixture process, GPU workload or tuning ran. Tracing `6ef2793` passed Linux and
+  Windows/MSVC in hosted run 41340614086. Actual parent admission, Windows child/
+  supervisor and live export/session composition remain Task 3, not a narrower
+  replacement objective or completed E3/Gate B.
+
+- Producer review: Standards axis found no hard violations/material smells.
+  Spec axis identified two P2 issues: drain completion rebased exit grace, and
+  capacity errors during failure export did not persist. Control now carries the
+  original validated StopWindow (not a newly timed bool); child receipt retains
+  its own raw anchor separately. Terminal/cleanup/export only tighten original
+  stop/fault ceilings; late controls and cooperative expiry never grant native
+  entry. Invalid control windows are retained, and continuous captures poll
+  control even when the trace will reject that time before its callback.
+- Export capacity/encode errors now retain a sticky fault and original output,
+  preventing retry after RAM frees. Handed-off word count is separate from
+  complete-export status; a full final handoff followed by a failed deadline/
+  clock guard cannot report complete export. New regression cases exercise both
+  issues, future control, delayed original stop and the expired cleanup cap.
+  Native admission remains unissued; no hardware execution follows.
+
+- Bound producer continuation scope: implement `workload::producer` using
+  prepared input/reference bases and fixed x/output/sentinel buffers, the actual
+  observed Driver seam (CudaBackend implementation), continuous original-epoch
+  clock/control context and existing worker protocol. One validated handshake
+  yields one non-cloneable StartObservation. Fixture start rejects Native; the
+  separate NativeAdmission type has no issuer until the real parent admission
+  chain exists. No new native executable, DLL loading or execution authority.
+- Each advance submits at most one dispatch or polls one in-flight query and
+  completes full readback/check/hash/reporting. Fixed 128+256 counts, shape/seed/K
+  and phase bounds are preserved; measured entry is encoded before measured work.
+  Completed warm-up transitions to the measurement cumulative boundary without
+  reapplying its expired cap. Frames consume owned bounded RAM and transfer to a
+  bounded sink; uncertain send retains the exact frame, poisons the channel and
+  ends work without retry. Sent counts mean queue handoff, not peer/disk proof.
+- Stop closes new work. In-flight query/readback and CPU checking may drain under
+  unchanged original 100 ms stream/250 ms cycle/phase bounds (earlier than the
+  1 s cooperative window); no successor kernel follows. Independent controller
+  supervision remains mandatory for blocked native/sink calls. First end/fault,
+  raw clocks including cross-dispatch regressions, partial summaries, readback
+  lengths and actual call statuses remain retained. Successful vectors are
+  reused only after full checking/hash; no replayable successful vector archive.
+- First full failed output transfers its existing owned buffer/charge into the
+  separately reserved 4 MiB failure pool, retaining exact bits and hash or its
+  absence. Chunk export is bounded by original exit/run ceilings; clock/digest/
+  transport failure keeps original bytes and an explicit incomplete export.
+  Driver/OS/allocator overhead is not claimed bounded by host-buffer accounting.
+  Explicit cleanup is one shot after admitted terminal known-idle work, records
+  attempted before entry and raw return before post-clock, and never proves OS
+  exit/native global quiescence. Native cleanup cannot bypass missing admission.
+- Initial full-loop CPU fixtures pass seven tests, including full encoded P1 to
+  parent audit, finite stop-drain, stale/partial/faulted outputs, uncertain sends,
+  continuous clock failure and measurement phase entry. New largest-P3 failure,
+  timeout and actual typed ABI bridge tests extend this verification. No fixture
+  process/native driver/GPU execution; actual required-fact/safety/re-entry/
+  exact-consent admission, Windows worker child/supervisor and live export remain
+  Task 3. This is source toward the real pipeline, not E3/Gate B acceptance.
+
 - Final actual-adapter tracing verification binds baseline `ae44192` plus source
   with identical before/after inventories: **261 CPU-only tests** (204 integration,
   19 probe ABI fakes, 13 feature-library fakes, 25 reference/prepared), scoped
