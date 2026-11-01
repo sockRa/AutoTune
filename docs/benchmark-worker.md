@@ -710,3 +710,50 @@ uncertain frames and sticky export limits. Typed ABI fakes cover the actual Driv
 bridge; no native DLL, process or GPU workload ran. Parent admission, Windows
 worker/supervisor and live artifact/session composition remain unfinished. This
 is a software producer milestone, not E3/Gate B or baseline acceptance.
+
+## Per-run current-setting facts
+
+`NvmlSampler::setting` reads one requested current fact on its uniquely selected
+handle: power limit in mW, modern graphics P0 offset in MHz or modern memory P0
+offset in MHz. It uses the existing getter ABI/validation, with no legacy fallback,
+setter lookup/invocation or inferred write qualification. `identity()` borrows
+the selection identity without re-enumeration, runtime or setting queries. The
+existing six telemetry getters and readonly capture formats are unchanged.
+
+`workload::settings::Capture::collect_native` requires exclusive sampler access
+and a separately approved native-read/containment/clock scope. It checks exact
+declared raw identity, then reads each fact once with original before/after clock
+anchors. Stop, invalid clocks, cumulative setup expiry or GPU loss close collection
+without a successor; missing/unentered facts remain null. Raw status is retained
+before post-clock processing, including GPU loss plus missing post-clock evidence.
+Staging, retained model and canonical-codec capacity are reserved before getters;
+finalization transfers existing reservations instead of requesting memory after
+observations have been collected. Native calls can still block and require an
+independent supervisor; this method must not run on the parent control thread.
+
+The immutable artifact includes manifest/run/device/artifact/epoch binding,
+expected and observed raw identity, all three observations and halt reason. Raw
+clock tokens remain explicit even when they conflict with the declared epoch.
+Scalar type, unit, symbol presence, unavailable reason/vendor status/detail and
+missing anchors remain distinguishable; malformed floats are represented as raw
+text, not accepted integer values. `fixture` always marks simulated provenance.
+Canonical bytes have a RawArtifact-domain digest; this binds bytes, not truth or
+authority. Per-capture representation bounds fit inside existing metadata/RAM
+ceilings; the session must still account for all captures against its aggregate
+4 MiB metadata limit. The capture adds no clock/settings freshness policy.
+
+`current()` reports readable values at those recorded observations, not fresh
+values at a later Start. `compare()` covers only these three observed integers
+within the same manifest/session/device/clock/source scope. Neither method proves
+unchanged complete settings, other P-states/V-F curve, ownership, safe operation,
+write support, comparability or native admission. No 215 W/other historical value
+is a baseline default, control target or restoration instruction.
+
+This per-run artifact references an already frozen manifest. It cannot itself be
+the manifest's pre-existing starting-evidence artifact, which would create a
+digest cycle. The parent still needs the separate initial evidence, actual frozen
+relative setup/Start timing, current runtime/environment, required safety/re-entry
+facts, trusted native peers and exact independent human consent. Settings request/
+response integration with the sampler role and live artifact/session composition
+remain unfinished. NativeAdmission has no issuer; no new native-read process,
+default executable mode or hardware qualification follows from this source slice.

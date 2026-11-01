@@ -288,6 +288,12 @@ impl PilotManifest {
     }
 }
 impl BoundRun<'_> {
+    pub fn raw_uuid(&self) -> &str {
+        &self.manifest.draft.raw_uuid
+    }
+    pub fn raw_pci(&self) -> &str {
+        &self.manifest.draft.raw_pci
+    }
     pub fn origin_ns(&self) -> u64 {
         self.origin_ns
     }

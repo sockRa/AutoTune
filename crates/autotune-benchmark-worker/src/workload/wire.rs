@@ -67,7 +67,7 @@ impl WorkerBinding {
     pub(super) fn run_end(self) -> u64 {
         self.origin_ns + self.plan.envelope_ns
     }
-    fn value(self) -> Value {
+    pub(super) fn value(self) -> Value {
         let b = self.monitor;
         object([
             ("session", Value::Text(hex(&b.session))),

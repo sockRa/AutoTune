@@ -155,3 +155,17 @@ Portable fixtures cover all matrix rows without physical hardware. Non-Windows
 live code is a structured unsupported-platform result; running that branch needs
 a non-Windows host. Source-level mutation checks are regression checks, not a
 formal proof against arbitrary future code or compromised dependencies/drivers.
+
+### Selected current-setting API — 2026-11-01
+
+`NvmlSampler::setting` now exposes one current power-limit or modern graphics/
+memory P0-offset getter on the same uniquely selected handle. Its separate
+`SettingMetric` enum does not expand the existing six telemetry requests or
+readonly capture formats. There is no legacy fallback, setter call or implied
+write qualification. The borrowed `identity()` accessor makes no native call.
+
+The [per-run fact capture](benchmark-worker.md#per-run-current-setting-facts)
+retains original clocks, raw values/errors and immutable manifest binding.
+Typed ABI-fake/CPU evidence verifies the source path; no new DLL or hardware
+capture was executed. Native capture requires separate exact read scope and
+supervision. Readable settings alone never authorize compute or writes.

@@ -86,6 +86,56 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- Final current-setting fact-source verification: baseline `8688ab7` plus exact
+  sources, unchanged before/after inventories, **286 CPU-only tests** (222
+  integration, 22 probe ABI fakes, 17 feature-library fakes, 25 reference/prepared),
+  scoped all-feature warning-denied Clippy, formatting and full-workspace/
+  all-feature compile/link pass. Six new artifact/value/clock/identity/owner tests,
+  three collector-engine tests and three actual selected-getter ABI-fake tests
+  cover the new seam. Manifest `target/workload-verification/settings-reviewed-manifest.json`,
+  SHA-256 `b402c29035b42875ca5805dcc48e74eebe517df71b5f9114c59ef6e9bc00c52f`.
+  Both old pinned matrix images still match; no DLL/native/process/GPU run.
+  Producer `2ffba2f` passed Linux and Windows/MSVC in hosted run 41343779427.
+  Settings facts are only part of required parent evidence: initial/runtime/
+  environment facts, freshness/relative setup, safety/re-entry, exact consent,
+  sampler response integration and Windows supervision remain open. Task 3 and
+  the actual full roadmap remain incomplete; NativeAdmission still has no issuer.
+
+- Current-setting review: Standards found zero hard violations/material smells.
+  Spec found P2 post-read finalization-budget loss. Fixed by reserving complete
+  owned model/canonical/codec capacity before the first getter and transferring
+  it at finalization. The regression proves insufficient budget executes zero
+  getters and budget pressure introduced during reads cannot discard their
+  evidence. Final independent Spec review closed P2 with no remaining material
+  issue; final Standards delta likewise passed. No native read or process ran.
+
+- Parent fact-source continuation: add separate selected current-setting getters
+  to the actual NvmlSampler for current power limit, modern graphics P0 offset
+  and modern memory P0 offset. Each invocation uses one requested getter on the
+  uniquely selected handle, no legacy fallback/setter or telemetry substitution.
+  Existing six-metric sampler/readonly manifest/profile/protocol stays unchanged;
+  these reads require a separately scoped workload-native capture path.
+- `workload::settings::Capture` collects the three raw fields sequentially with
+  original per-call anchors and stop/clock/device-loss closure, reserving bounded
+  staging/model/codec storage first. Native collection takes exclusive access to
+  the sampler and checks exact declared raw identity before getters. Explicit
+  fixture construction cannot select native provenance. Observed wrong clock
+  tokens, missing anchors, raw status/unit/symbol/reason and malformed scalar
+  representations remain distinguishable in canonical evidence, not zero-filled.
+- This is a per-run current-settings artifact bound to the already frozen
+  manifest, not the pre-manifest initial starting-evidence artifact (using it
+  there would create a digest cycle). Comparison covers only these three observed
+  values within the same manifest/session/device/clock/source scope. It is no
+  proof of unchanged complete settings, other P-states/V-F curve, writable support
+  or ownership. Captured values are not a freshness lease at Start.
+- Capture guards original clock validity/current-run cumulative setup bounds.
+  The future parent must still enforce its frozen relative setup deadline,
+  actual Start/safety/re-entry freshness, native peer/runtime/environment/initial
+  evidence and independent exact consent. No new numeric freshness policy is
+  invented for settings. NativeAdmission remains unissued; no GPU/native-read
+  process was executed. Actual sampler request/response/export integration and
+  complete parent admission/Windows chain remain Task 3 obligations.
+
 - Final producer milestone verification: baseline `abc58f8` plus unchanged
   before/after source inventories passes **274 CPU-only tests** (216 integration,
   19 probe ABI fakes, 14 feature-library fakes, 25 reference/prepared), scoped

@@ -46,6 +46,27 @@ pub enum SampleMetric {
     GpuUtilization,
     MemoryUtilization,
 }
+/// Current read-only facts for a separately scoped workload admission capture.
+/// These are not telemetry metrics or write/control qualification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingMetric {
+    PowerLimit,
+    GraphicsOffsetP0,
+    MemoryOffsetP0,
+}
+impl SettingMetric {
+    pub const ALL: [Self; 3] = [
+        Self::PowerLimit,
+        Self::GraphicsOffsetP0,
+        Self::MemoryOffsetP0,
+    ];
+    pub fn unit(self) -> &'static str {
+        match self {
+            Self::PowerLimit => "mW",
+            _ => "MHz",
+        }
+    }
+}
 
 impl SampleMetric {
     fn unit(self) -> &'static str {
@@ -77,6 +98,35 @@ pub struct SamplerInfo {
 }
 
 impl NvmlSampler {
+    /// Identity fixed by unique selection; no enumeration/runtime/getter call.
+    pub fn identity(&self) -> Option<(&str, &str)> {
+        #[cfg(windows)]
+        {
+            Some(self.selected.identity())
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
+    /// One requested current-setting getter. Existing readonly sampler modes do
+    /// not invoke this; native execution needs its separately approved scope.
+    pub fn setting(&self, kind: SettingMetric) -> Field {
+        #[cfg(windows)]
+        {
+            self.selected.setting(kind)
+        }
+        #[cfg(not(windows))]
+        {
+            Field::unavailable(
+                kind.unit(),
+                Failure::new(
+                    Reason::UnsupportedPlatform,
+                    "current NVML settings require Windows",
+                ),
+            )
+        }
+    }
     #[cfg(windows)]
     pub fn describe(&self) -> SamplerInfo {
         self.selected.describe()
@@ -281,6 +331,33 @@ mod windows {
     }
 
     impl SelectedSession {
+        pub(super) fn identity(&self) -> (&str, &str) {
+            (&self.raw_uuid, &self.raw_pci)
+        }
+        pub(super) fn setting(&self, kind: SettingMetric) -> Field {
+            match kind {
+                SettingMetric::PowerLimit => self.session.uint(
+                    self.handle,
+                    b"nvmlDeviceGetPowerManagementLimit\0",
+                    kind.unit(),
+                    None,
+                    10_000_000,
+                    true,
+                ),
+                SettingMetric::GraphicsOffsetP0 | SettingMetric::MemoryOffsetP0 => self
+                    .session
+                    .modern_offsets(
+                        self.handle,
+                        if kind == SettingMetric::GraphicsOffsetP0 {
+                            0
+                        } else {
+                            2
+                        },
+                    )
+                    .remove("current")
+                    .expect("fixed current getter"),
+            }
+        }
         pub(super) fn describe(&self) -> SamplerInfo {
             SamplerInfo {
                 raw_uuid: self.raw_uuid.clone(),

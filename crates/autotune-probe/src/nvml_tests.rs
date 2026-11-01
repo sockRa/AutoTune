@@ -208,7 +208,7 @@ macro_rules! uint_stub {
         }
     };
 }
-uint_stub!(limit, "nvmlDeviceGetPowerManagementLimit", 215000);
+unsafe extern "C" fn limit(handle:Handle,out:*mut u32)->i32 {record("nvmlDeviceGetPowerManagementLimit");SCRIPT.with(|s|s.borrow_mut().sampled_handles.push(handle as usize));*out=215000;0}
 uint_stub!(
     default_limit,
     "nvmlDeviceGetPowerManagementDefaultLimit",
@@ -248,10 +248,11 @@ offset_stubs!(
     "nvmlDeviceGetMemClkMinMaxVfOffset"
 );
 
-unsafe extern "C" fn modern_offset(_: Handle, out: *mut ClockOffset) -> i32 {
+unsafe extern "C" fn modern_offset(handle: Handle, out: *mut ClockOffset) -> i32 {
     record("nvmlDeviceGetClockOffsets");
     let (status, mode) = SCRIPT.with(|s| {
         let mut s = s.borrow_mut();
+        s.sampled_handles.push(handle as usize);
         s.offset_queries
             .push(((*out).version, (*out).clock_type, (*out).pstate));
         let domain_status = s.domain_offset_status[usize::from((*out).clock_type == 2)];
@@ -352,6 +353,41 @@ fn sampler(uuid: &str, pci_bus_id: &str) -> Result<NvmlSampler, Failure> {
     Ok(NvmlSampler {
         selected: session()?.select(uuid, pci_bus_id)?,
     })
+}
+#[test]
+fn selective_current_settings_use_one_getter_without_legacy_or_setter_calls() {
+    for (kind,getter,expected,domain) in [
+        (SettingMetric::PowerLimit,"nvmlDeviceGetPowerManagementLimit",215000,None),
+        (SettingMetric::GraphicsOffsetP0,"nvmlDeviceGetClockOffsets",100,Some(0)),
+        (SettingMetric::MemoryOffsetP0,"nvmlDeviceGetClockOffsets",200,Some(2)),
+    ] {
+        reset();let sampler=sampler("fixture","0000:01:00.0").unwrap();
+        SCRIPT.with(|s|{s.borrow_mut().calls.clear();s.borrow_mut().resolutions.clear();});
+        assert_eq!(sampler.identity(),Some(("fixture","0000:01:00.0")));
+        let raw=sampler.setting(kind);assert_eq!(value(&raw),&serde_json::json!(expected));assert_eq!(raw.unit,kind.unit());
+        SCRIPT.with(|s|{let s=s.borrow();assert_eq!(s.calls,[getter]);assert_eq!(s.resolutions,[getter]);assert_eq!(s.offset_queries,domain.map(|d|(CLOCK_OFFSET_VERSION,d,0)).into_iter().collect::<Vec<_>>());});
+    }
+}
+#[test]
+fn selective_p0_failure_preserves_status_without_legacy_fallback() {
+    for status in [3,4,15,999] {
+        reset();let sampler=sampler("fixture","0000:01:00.0").unwrap();
+        SCRIPT.with(|s|{let mut s=s.borrow_mut();s.offset_status=status;s.calls.clear();});
+        let raw=sampler.setting(SettingMetric::GraphicsOffsetP0);assert_eq!(failure(&raw).vendor_status,Some(status));
+        SCRIPT.with(|s|assert_eq!(s.borrow().calls,["nvmlDeviceGetClockOffsets"]));
+    }
+    reset();let sampler=sampler("fixture","0000:01:00.0").unwrap();
+    SCRIPT.with(|s|s.borrow_mut().missing=Some("nvmlDeviceGetClockOffsets"));
+    let raw=sampler.setting(SettingMetric::MemoryOffsetP0);assert_eq!(raw.symbol_presence,SymbolPresence::Absent);assert_eq!(failure(&raw).reason,Reason::SymbolMissing);
+}
+#[test]
+fn current_settings_remain_on_the_unique_nonzero_selected_handle() {
+    for kind in SettingMetric::ALL {
+        reset();SCRIPT.with(|s|{let mut s=s.borrow_mut();s.device_count=2;s.identities=vec![("other","0000:01:00.0"),("chosen","0000:02:00.0")];});
+        let sampler=sampler("chosen","0000:02:00.0").unwrap();
+        SCRIPT.with(|s|{let mut s=s.borrow_mut();s.calls.clear();s.sampled_handles.clear();});
+        let _=sampler.setting(kind);SCRIPT.with(|s|assert_eq!(s.borrow().sampled_handles,[2]));
+    }
 }
 
 #[test]
