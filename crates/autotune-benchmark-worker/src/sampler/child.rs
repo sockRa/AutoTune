@@ -34,6 +34,21 @@ impl NativeAdmission {
     pub fn stopped(&self) -> bool {
         self.0.load(Ordering::Acquire) & 1 != 0
     }
+    /// Marks one cleanup operation pending while preserving the closed getter
+    /// lane. The caller separately enforces its original deadline and operation
+    /// count; this state transition grants no native execution authority.
+    pub fn begin_cleanup(&self) -> Result<(), ChildError> {
+        self.0
+            .compare_exchange(1, 3, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(|state| {
+                if state & 2 != 0 {
+                    ChildError::Pending
+                } else {
+                    ChildError::Protocol
+                }
+            })
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChildError {

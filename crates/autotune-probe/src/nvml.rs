@@ -98,6 +98,19 @@ pub struct SamplerInfo {
 }
 
 impl NvmlSampler {
+    /// One explicit shutdown attempt, returning the actual NVML status. None
+    /// means no call (already closed/unsupported platform), never success.
+    /// Caller must supervise this potentially blocking call independently.
+    pub fn shutdown(&mut self) -> Option<i32> {
+        #[cfg(windows)]
+        {
+            self.selected.shutdown()
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
     /// Identity fixed by unique selection; no enumeration/runtime/getter call.
     pub fn identity(&self) -> Option<(&str, &str)> {
         #[cfg(windows)]
@@ -321,6 +334,7 @@ mod windows {
         library: Symbols,
         path: PathBuf,
         shutdown: Init,
+        closed: bool,
     }
 
     pub(super) struct SelectedSession {
@@ -331,6 +345,9 @@ mod windows {
     }
 
     impl SelectedSession {
+        pub(super) fn shutdown(&mut self) -> Option<i32> {
+            self.session.close()
+        }
         pub(super) fn identity(&self) -> (&str, &str) {
             (&self.raw_uuid, &self.raw_pci)
         }
@@ -518,13 +535,26 @@ mod windows {
                 library,
                 path,
                 shutdown,
+                closed: false,
             })
         }
 
         // SAFETY: callers use only the ABI aliases above and documented getter
         // symbols; returned pointers never outlive the owning Session/library.
         unsafe fn get<T: Copy + 'static>(&self, name: &[u8]) -> Result<T, Failure> {
+            if self.closed {
+                return Err(Failure::new(Reason::QueryFailed, "NVML session is closed"));
+            }
             self.library.get::<T>(name)
+        }
+        fn close(&mut self) -> Option<i32> {
+            if self.closed {
+                return None;
+            }
+            self.closed = true;
+            // SAFETY: initialization resolved this exact ABI before calling init;
+            // the library remains owned, and closed prevents a second attempt.
+            Some(unsafe { (self.shutdown)() })
         }
         fn setter_presence(&self, name: &[u8]) -> SymbolPresence {
             // SAFETY: inspect only an opaque address. It is never transmuted or called.
@@ -1018,7 +1048,9 @@ mod windows {
         fn drop(&mut self) {
             // SAFETY: successful init is paired once, before unloading the library.
             // Shutdown releases NVML client resources; it does not reset the driver.
-            let status = unsafe { (self.shutdown)() };
+            let Some(status) = self.close() else {
+                return;
+            };
             if status != 0 {
                 eprintln!(
                     "{}",

@@ -6,6 +6,25 @@ use autotune_benchmark_worker::{
         wire::Message,
     },
 };
+#[test]
+fn cleanup_pending_preserves_closed_getter_lane_and_never_overlaps_a_query() {
+    use autotune_benchmark_worker::sampler::child::NativeAdmission;
+    let gate = NativeAdmission::default();
+    assert_eq!(gate.begin_cleanup(), Err(ChildError::Protocol));
+    gate.begin().unwrap();
+    gate.stop();
+    assert_eq!(gate.begin_cleanup(), Err(ChildError::Pending));
+    gate.complete();
+    gate.begin_cleanup().unwrap();
+    assert!(gate.stopped());
+    assert!(gate.pending());
+    assert_eq!(gate.begin(), Err(ChildError::Stopped));
+    assert_eq!(gate.begin_cleanup(), Err(ChildError::Pending));
+    gate.complete();
+    assert!(gate.stopped());
+    assert!(!gate.pending());
+    assert_eq!(gate.begin(), Err(ChildError::Stopped));
+}
 fn manifest() -> CaptureManifest {
     CaptureManifest::freeze(Draft {
         session: [1; 16],

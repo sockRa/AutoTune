@@ -3,6 +3,9 @@ pub mod assessment;
 pub mod bootstrap;
 #[cfg(windows)]
 pub mod child_windows;
+pub mod control;
+#[cfg(windows)]
+pub mod control_windows;
 pub mod dispatch;
 pub mod gate;
 pub mod launch;

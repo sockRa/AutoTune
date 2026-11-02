@@ -105,6 +105,22 @@ impl WorkerBinding {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
+    SamplerReady {
+        before: Anchor,
+        after: Anchor,
+        raw_uuid: String,
+        raw_pci: String,
+        sampler_digest: Digest,
+        runtime: String,
+    },
+    NativeFailure {
+        stage: Reason,
+        before: Option<Anchor>,
+        after: Option<Anchor>,
+        reason: autotune_probe::report::Reason,
+        vendor_status: Option<i32>,
+        detail: String,
+    },
     PhaseEntered {
         phase: super::dispatch::Phase,
         anchor: Anchor,
@@ -147,6 +163,8 @@ pub enum Message {
 impl Message {
     fn route(&self) -> (Lane, Direction, &'static str) {
         match self {
+            Self::SamplerReady { .. } => (Lane::Ordinary, Direction::FromWorker, "sampler_ready"),
+            Self::NativeFailure { .. } => (Lane::Control, Direction::FromWorker, "native_failure"),
             Self::PhaseEntered { .. } => (Lane::Ordinary, Direction::FromWorker, "phase_entered"),
             Self::DispatchRecord(_) => (Lane::Ordinary, Direction::FromWorker, "dispatch_record"),
             Self::FailureChunk(_) => (Lane::Ordinary, Direction::FromWorker, "failure_chunk"),
@@ -160,6 +178,13 @@ impl Message {
     }
     fn payload_bytes(&self) -> usize {
         match self {
+            Self::SamplerReady {
+                raw_uuid,
+                raw_pci,
+                runtime,
+                ..
+            } => raw_uuid.capacity() + raw_pci.capacity() + runtime.capacity(),
+            Self::NativeFailure { stage, detail, .. } => stage.as_str().len() + detail.capacity(),
             Self::DispatchRecord(r) => r.allocation_bytes(),
             Self::FailureChunk(c) => c.allocation_bytes(),
             Self::Bootstrap { manifest } => manifest.capacity(),
@@ -169,6 +194,34 @@ impl Message {
     }
     pub(super) fn validate(&self, b: WorkerBinding) -> Result<(), WireError> {
         match self {
+            Self::SamplerReady {
+                before,
+                after,
+                raw_uuid,
+                raw_pci,
+                sampler_digest,
+                runtime,
+            } => {
+                let mut c = Clock::new(b.monitor, b.epoch).map_err(|_| WireError::Binding)?;
+                let start = c.observe(*before).map_err(|_| WireError::Body)?;
+                let end = c.observe(*after).map_err(|_| WireError::Body)?;
+                if before.qpc_after > after.qpc_before
+                    || start < b.origin_ns
+                    || end >= b.setup_boundary()
+                    || *sampler_digest != b.sampler
+                    || raw_uuid.capacity() > 128
+                    || raw_pci.capacity() > 128
+                    || runtime.capacity() > 16384
+                    || !matches!(crate::worker::DiscoveryBinding::parse(raw_uuid,raw_pci),Ok(i) if i.identity==b.monitor.device)
+                {
+                    return Err(WireError::Binding);
+                }
+            }
+            Self::NativeFailure { detail, .. } => {
+                if detail.capacity() > 1024 {
+                    return Err(WireError::Capacity);
+                }
+            }
             Self::PhaseEntered { anchor, .. } => {
                 if anchor.clock_token != b.monitor.clock_token {
                     return Err(WireError::Binding);
@@ -248,6 +301,54 @@ impl Message {
     }
     fn body(&self) -> Value {
         match self {
+            Self::SamplerReady {
+                before,
+                after,
+                raw_uuid,
+                raw_pci,
+                sampler_digest,
+                runtime,
+            } => object([
+                ("before", super::settings::raw_anchor(*before)),
+                ("after", super::settings::raw_anchor(*after)),
+                ("raw_uuid", Value::Text(raw_uuid.clone())),
+                ("raw_pci", Value::Text(raw_pci.clone())),
+                ("sampler_digest", Value::Text(sampler_digest.to_hex())),
+                ("runtime", Value::Text(runtime.clone())),
+            ]),
+            Self::NativeFailure {
+                stage,
+                before,
+                after,
+                reason,
+                vendor_status,
+                detail,
+            } => object([
+                ("stage", Value::Text(stage.as_str().into())),
+                (
+                    "before",
+                    before.map_or(Value::Null, super::settings::raw_anchor),
+                ),
+                (
+                    "after",
+                    after.map_or(Value::Null, super::settings::raw_anchor),
+                ),
+                (
+                    "reason",
+                    Value::Text(
+                        serde_json::to_value(reason)
+                            .expect("closed reason")
+                            .as_str()
+                            .expect("reason text")
+                            .into(),
+                    ),
+                ),
+                (
+                    "vendor_status",
+                    vendor_status.map_or(Value::Null, |n| Value::I64(n.into())),
+                ),
+                ("detail", Value::Text(detail.clone())),
+            ]),
             Self::PhaseEntered { phase, anchor } => object([
                 ("phase", Value::Text(phase.name().into())),
                 ("anchor", anchor_value(*anchor)),
@@ -311,6 +412,61 @@ impl Message {
             i32::try_from(v.as_i64().map_err(|_| WireError::Body)?).map_err(|_| WireError::Body)
         };
         let message = match kind {
+            "sampler_ready" => {
+                let o = exact(
+                    v,
+                    &[
+                        "before",
+                        "after",
+                        "raw_uuid",
+                        "raw_pci",
+                        "sampler_digest",
+                        "runtime",
+                    ],
+                )?;
+                Self::SamplerReady {
+                    before: super::settings::parse_anchor(get(o, "before"))
+                        .map_err(|_| WireError::Body)?
+                        .ok_or(WireError::Body)?,
+                    after: super::settings::parse_anchor(get(o, "after"))
+                        .map_err(|_| WireError::Body)?
+                        .ok_or(WireError::Body)?,
+                    raw_uuid: string(get(o, "raw_uuid"))?.into(),
+                    raw_pci: string(get(o, "raw_pci"))?.into(),
+                    sampler_digest: Digest::parse(string(get(o, "sampler_digest"))?)
+                        .map_err(|_| WireError::Body)?,
+                    runtime: string(get(o, "runtime"))?.into(),
+                }
+            }
+            "native_failure" => {
+                let o = exact(
+                    v,
+                    &[
+                        "stage",
+                        "before",
+                        "after",
+                        "reason",
+                        "vendor_status",
+                        "detail",
+                    ],
+                )?;
+                Self::NativeFailure {
+                    stage: Reason::new(string(get(o, "stage"))?).map_err(|_| WireError::Body)?,
+                    before: super::settings::parse_anchor(get(o, "before"))
+                        .map_err(|_| WireError::Body)?,
+                    after: super::settings::parse_anchor(get(o, "after"))
+                        .map_err(|_| WireError::Body)?,
+                    reason: serde_json::from_value(serde_json::Value::String(
+                        string(get(o, "reason"))?.into(),
+                    ))
+                    .map_err(|_| WireError::Body)?,
+                    vendor_status: match get(o, "vendor_status") {
+                        Value::Null => None,
+                        n => Some(i32_value(n)?),
+                    },
+                    detail: string(get(o, "detail"))?.into(),
+                }
+            }
             "phase_entered" => {
                 let o = exact(v, &["phase", "anchor"])?;
                 Self::PhaseEntered {
@@ -426,8 +582,43 @@ pub struct Channel {
     poisoned: bool,
     budget: Budget,
     _metadata: Reservation,
+    sampler: bool,
 }
 impl Channel {
+    pub fn sampler(
+        binding: WorkerBinding,
+        lane: Lane,
+        direction: Direction,
+        budget: Budget,
+    ) -> Result<Self, WireError> {
+        let mut result = Self::new(binding, lane, direction, budget)?;
+        result.sampler = true;
+        Ok(result)
+    }
+    fn role(&self) -> &'static str {
+        if self.sampler {
+            "pilot_sampler"
+        } else {
+            "worker"
+        }
+    }
+    fn role_message(&self, m: &Message) -> Result<(), WireError> {
+        let shared = matches!(
+            m,
+            Message::Stop { .. }
+                | Message::StopAck { .. }
+                | Message::RoleFinished { .. }
+                | Message::NativeFailure { .. }
+        );
+        if shared
+            || (self.sampler && matches!(m, Message::SamplerReady { .. }))
+            || (!self.sampler && !matches!(m, Message::SamplerReady { .. }))
+        {
+            Ok(())
+        } else {
+            Err(WireError::Binding)
+        }
+    }
     pub(super) fn lane(&self) -> Lane {
         self.lane
     }
@@ -453,6 +644,7 @@ impl Channel {
     ) -> Result<Self, WireError> {
         let metadata = budget.reserve(4096).map_err(|_| WireError::Capacity)?;
         Ok(Self {
+            sampler: false,
             binding,
             lane,
             direction,
@@ -492,6 +684,7 @@ impl Channel {
         self.finish(result)
     }
     fn encode_inner(&self, message: &Message) -> Result<EncodedFrame, WireError> {
+        self.role_message(message)?;
         let (lane, direction, kind) = message.route();
         if lane != self.lane || direction != self.direction {
             return Err(WireError::Lane);
@@ -508,7 +701,7 @@ impl Channel {
             .map_err(|_| WireError::Capacity)?;
         let value = object([
             ("version", Value::Text("1".into())),
-            ("role", Value::Text("worker".into())),
+            ("role", Value::Text(self.role().into())),
             ("lane", Value::Text(lane_name(lane).into())),
             ("direction", Value::Text(direction.name().into())),
             ("sequence", Value::U64(self.next)),
@@ -573,7 +766,7 @@ impl Channel {
             ],
         )?;
         if string(get(o, "version"))? != "1"
-            || string(get(o, "role"))? != "worker"
+            || string(get(o, "role"))? != self.role()
             || get(o, "binding").to_canonical() != self.binding.value().to_canonical()
         {
             return Err(WireError::Binding);
@@ -587,6 +780,7 @@ impl Channel {
             return Err(WireError::Sequence);
         }
         let message = Message::parse(string(get(o, "kind"))?, get(o, "body"), self.binding)?;
+        self.role_message(&message)?;
         let (lane, direction, _) = message.route();
         if lane != self.lane || direction != self.direction {
             return Err(WireError::Lane);

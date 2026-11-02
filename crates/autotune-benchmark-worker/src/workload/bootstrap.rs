@@ -28,6 +28,7 @@ pub struct EntryClock {
     clock: Clock,
     last: Anchor,
     raw: Vec<Anchor>,
+    capacity: usize,
     overflow: Option<Anchor>,
     missing: bool,
     fault: Option<Error>,
@@ -41,18 +42,45 @@ impl EntryClock {
         first: Anchor,
         budget: &Budget,
     ) -> Result<Self, Error> {
+        Self::with_capacity(
+            frequency,
+            epoch,
+            first,
+            CAP / std::mem::size_of::<Anchor>(),
+            budget,
+        )
+    }
+    pub(crate) fn with_capacity(
+        frequency: u64,
+        epoch: Anchor,
+        first: Anchor,
+        capacity: usize,
+        budget: &Budget,
+    ) -> Result<Self, Error> {
+        let bytes = capacity
+            .checked_mul(std::mem::size_of::<Anchor>())
+            .ok_or(Error::Capacity)?;
+        if capacity == 0
+            || bytes
+                > autotune_fma_reference::profile::Profile::approved_design()
+                    .limits
+                    .metadata_bytes as usize
+        {
+            return Err(Error::Capacity);
+        }
         let allocation = budget
-            .reserve(CAP + std::mem::size_of::<Self>())
+            .reserve(bytes + std::mem::size_of::<Self>())
             .map_err(|_| Error::Capacity)?;
         let clock =
             Clock::temporal(frequency, epoch.clock_token, epoch).map_err(|_| Error::Clock)?;
         let mut raw = Vec::new();
-        raw.try_reserve_exact(CAP / std::mem::size_of::<Anchor>())
+        raw.try_reserve_exact(capacity)
             .map_err(|_| Error::Capacity)?;
         let mut result = Self {
             clock,
             last: epoch,
             raw,
+            capacity,
             overflow: None,
             missing: false,
             fault: None,
@@ -71,7 +99,7 @@ impl EntryClock {
                 self.missing = true;
                 return Err(Error::Clock);
             };
-            if self.raw.len() == CAP / std::mem::size_of::<Anchor>() {
+            if self.raw.len() == self.capacity {
                 self.overflow = Some(a);
                 return Err(Error::Capacity);
             }

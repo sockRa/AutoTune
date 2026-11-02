@@ -73,6 +73,9 @@ pub(crate) struct ControlPort {
     write_fault: Arc<FaultSlot<Frame>>,
 }
 impl ControlPort {
+    pub(crate) fn budget(&self) -> Budget {
+        self.budget.clone()
+    }
     pub(super) fn codec_reservation(&self) -> io::Result<Reservation> {
         self.budget
             .reserve(codec_bytes())

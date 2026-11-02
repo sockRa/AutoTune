@@ -171,6 +171,10 @@ impl Queue for WindowsControlQueue<'_> {
     }
 }
 impl ControlTransport {
+    /// Encode/decode as well as queue copies use the reserved control pool.
+    pub fn budget(&self) -> Budget {
+        self.port.budget()
+    }
     pub fn sender(
         &self,
         binding: WorkerBinding,

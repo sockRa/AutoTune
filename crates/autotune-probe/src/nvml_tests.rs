@@ -10,6 +10,7 @@ struct Script {
     missing: Option<&'static str>,
     power_status: i32,
     init_status: i32,
+    shutdown_status: i32,
     text_mode: u8,
     util: (u32, u32),
     offset_queries: Vec<(u32, u32, u32)>,
@@ -55,7 +56,7 @@ unsafe extern "C" fn init() -> i32 {
 }
 unsafe extern "C" fn shutdown() -> i32 {
     record("nvmlShutdown");
-    0
+    SCRIPT.with(|s| s.borrow().shutdown_status)
 }
 unsafe extern "C" fn count(out: *mut u32) -> i32 {
     record("nvmlDeviceGetCount_v2");
@@ -353,6 +354,21 @@ fn sampler(uuid: &str, pci_bus_id: &str) -> Result<NvmlSampler, Failure> {
     Ok(NvmlSampler {
         selected: session()?.select(uuid, pci_bus_id)?,
     })
+}
+#[test]
+fn explicit_shutdown_retains_raw_status_once_and_blocks_successor_native_getters() {
+    for status in [0, 4, 999] {
+        reset();
+        let mut sampler=sampler("fixture","0000:01:00.0").unwrap();
+        SCRIPT.with(|s| {let mut s=s.borrow_mut();s.calls.clear();s.resolutions.clear();s.shutdown_status=status;});
+        assert_eq!(sampler.shutdown(),Some(status));
+        assert_eq!(sampler.shutdown(),None);
+        let raw=sampler.setting(SettingMetric::PowerLimit);
+        assert_eq!(failure(&raw).reason,Reason::QueryFailed);
+        assert_eq!(failure(&raw).vendor_status,None);
+        drop(sampler);
+        SCRIPT.with(|s| {let s=s.borrow();assert_eq!(s.calls,["nvmlShutdown"]);assert!(s.resolutions.is_empty());});
+    }
 }
 #[test]
 fn selective_current_settings_use_one_getter_without_legacy_or_setter_calls() {

@@ -1009,3 +1009,68 @@ only in this slice. No executable main or native admission issuer is added. Fixe
 child mains, independent control-loop startup, actual telemetry/driver/producer
 composition, complete parent admission and live session export remain unfinished;
 this context is no Ready, executed pilot, native qualification or baseline verdict.
+
+## Independent pilot control source
+
+`workload::control` now provides a bounded child stop state for both pilot roles.
+The shared atomic gate closes before any control packet is decoded, including
+malformed input. Parent trigger times, local triggers and the inherited stop event
+merge into the earliest original cooperative/exit windows. Repeated messages or
+delayed receipt cannot renew the one-second cooperative or three-second exit
+reserve; equality expires. Acknowledgement records whether a native operation
+was pending. Completing that operation never reopens the getter lane.
+
+The state retains four complete received owners, the first overflow owner, and
+returns any later owner to its caller. Its charged clock history has an explicit
+limit derived from twice the run's tick count plus a fixed allowance. The default
+bootstrap clock history retains its original 64 KiB limit. Missing, foreign,
+regressing or excessive clock observations close admission without manufacturing
+timestamps. A complete run with two observations per tick fits the reserved
+history; overflow remains invalid rather than evicting earlier evidence.
+
+`workload::control_windows::Handle` composes the split control pipe owner, stop
+event and Windows clock on a separate thread, with no CUDA/NVML calls or blocking
+join. Both codecs and queue copies use the already reserved control pool.
+Readiness follows successful clock/sender initialization. The thread retains
+native failure messages, unsent frames, unencoded messages, typed codec/send/
+clock/OS failures and the bounded command receiver, including sends racing thread
+exit. The report's mailbox still owns unprocessed commands. Callers must collect
+and export these owners; dropping a handle closes admission but does not prove
+exit, flush output, export a report or cancel a native call. The report can only
+be joined after the thread has finished. Parent containment/exit observation
+remains a separate required integration.
+
+The new `pilot_sampler` wire role admits readiness and control facts, and rejects
+worker bootstrap/start/dispatch messages. Its readiness carries real before/after
+anchors, selected raw identity, sampler digest and runtime description. This is
+transported child evidence, not trusted identity or native authority: the parent
+must still compare the exact raw UUID/PCI pair and required runtime fields with
+the manifest and observations. Normalized identity alone does not compare every
+raw PCI component. Native-failure messages preserve absent/foreign raw anchors,
+typed probe reason and signed vendor status without reclassifying them as valid
+success clocks. Existing worker and readonly sampler frame bytes are unchanged.
+
+`NvmlSampler::shutdown` exposes one actual shutdown attempt and its raw signed
+status. `None` means no attempt, never success. The session is marked closed
+before entering the call; subsequent selective getters fail without resolving or
+calling a native getter, and Drop cannot issue a second shutdown, even after a
+nonzero status. It remains potentially blocking and must be independently
+supervised. The stopped gate has a separate cleanup-pending transition; callers
+still enforce the operation count and original stop deadline themselves. Neither
+shutdown return nor a child finished message proves physical GPU quiescence.
+
+This is E3.1/E3.2 integration source with CPU-only state/codec/ABI-fake evidence;
+the Windows thread is compiled/linked, not executed. Fixed executable mains,
+actual pilot telemetry/producer composition, the complete parent fact/safety/
+consent chain and aggregate live export remain unfinished. Workload native
+admission still has no issuer. E3 remains partial and Gate B unmet.
+
+Final source-bound verification at baseline `a31d9ca` plus the unchanged source
+inventory passes 336 CPU-only tests (269 integration, 23 probe ABI fakes, 19 worker
+feature-library fakes/static and 25 reference/prepared), formatting, scoped
+all-feature warning-denied Clippy and full-workspace/all-feature compile/link.
+The 14 additional tests cover original windows, raw ownership, clock loss, role
+boundaries, reserved control memory, full tick history and cleanup/ABI shutdown.
+Local manifest: `target/workload-verification/pilot-control-verified-manifest.json`,
+SHA-256 `a0eb93ca0474001c6c0a7df57d84a9232af463c25e89e8a789ac80f19e5bfc8b`.
+No independent-agent review or executed Windows control/native proof is claimed.
