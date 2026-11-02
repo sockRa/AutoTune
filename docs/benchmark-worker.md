@@ -853,3 +853,47 @@ scope/direction mismatch, partial reads, clock loss and settings receipt rejecti
 The concrete Windows pipe adapter is compile/link checked; process acceptance has
 not run. Fixed worker launch/entry, actual pilot sampler dispatch, full parent facts/
 safety/re-entry/consent admission and aggregate live session export remain incomplete.
+
+## Selected sampler settings dispatch
+
+`workload::sampler_dispatch::Dispatch` composes the delivered pilot settings request
+reader, actual selected NVML collector, response encoder and Windows queue sender.
+Its Windows `poll_native` consumes the inherited transport's real receive result,
+including the post-poll anchor/OS fault, and invokes collection on the sampler's
+serial lane. This may block in NVML; it must not execute on the parent or control
+thread. The caller must keep independent split control and its shared atomic
+`sampler::child::NativeAdmission` stop gate active, and retain every returned Poll.
+That sampler gate linearizes stop against collection; it is unrelated to the
+unissued workload-compute NativeAdmission token and grants no consent.
+
+The dispatcher freezes the child's first setup deadline, capped by original run
+origin, and lets the parsed request tighten it. Receipt must follow issue on the
+original clock. Collection's lower clock bound is now the child's receipt; its
+upper bound is the earlier child/request deadline. Final getter clocks continue
+into subsequent idle polls, so a backwards post-collection clock cannot be hidden
+by restarting validation at receipt. No Start/settings freshness policy is added.
+
+The first raw request (even partial/malformed), its receipt, parsed request,
+complete bound Capture and any unsent response stay owned and charged together.
+A second packet is returned with its exact original owner instead of overwriting
+the first or accumulating unbounded rejections. Request-validation/preallocation
+failure executes no getter. Collection acquires the existing atomic serial gate;
+each getter checks its sticky stop state, and return clears only pending. A racing
+stop cannot be reopened by successful completion. Native loading/description and
+shutdown are outside this borrowed already-selected sampler and still need their
+own supervised setup/cleanup observations.
+
+Capture ownership is stored before response encoding or queue handoff. Missing or
+failed facts can still be exported as a response whose raw artifact blocks readable
+values; response queued is independent of fault(). Encoding/send failure retains
+the capture, exact unsent frame if one exists, and typed queue/OS failure. No retry
+can replace them. The explicit fixture entry always marks simulated provenance and
+rejects a readable fixture that would conceal receipt/deadline contradictions.
+
+CPU byte-stream fixtures cover parent request -> dispatch -> response queue ->
+strict parent receipt, malformed/late/foreign/replayed requests, first-fault/raw
+retention, original relative setup caps, backwards clocks and failed facts. The
+actual Windows/NVML path is compile/link checked only. This is source composition,
+not a runnable/qualified pilot sampler: fixed process entry/launch, independent
+control-loop startup, telemetry scheduling, runtime/image/peer/environment/initial
+facts, complete parent admission and bounded live session export remain open.

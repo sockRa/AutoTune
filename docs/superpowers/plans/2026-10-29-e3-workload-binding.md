@@ -86,6 +86,35 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 selected sampler settings dispatch: actual inherited-pipe poll now
+  composes strict one-shot request parsing, child receipt/setup chronology,
+  selected NVML collection under the independent shared stop gate, immutable
+  Capture retention and response queueing. The first raw request remains owned;
+  a duplicate returns its original owner. Capture/unsent frame/typed send reason
+  remain retained after encoding/handoff failure, with no successor retry. The
+  fixture path stays simulated; failed facts can be sent as supplemental raw
+  evidence and cannot become readable current values. Child and parent setup
+  ceilings only tighten. A red regression reproduced post-collection clock
+  validation incorrectly restarting at receipt; final code carries the last
+  getter clock into subsequent polls. Shared admission also closes on pending or
+  replay failures, including direct native dispatch calls. Baseline `3394325`
+  plus unchanged before/after source inventories passes **308 CPU-only tests**
+  (242 integration, 22 probe ABI fakes, 19 worker library, 25 reference/prepared),
+  scoped all-feature warning-denied Clippy, formatting and full-workspace/
+  all-feature compile/link. Manifest `target/workload-verification/sampler-dispatch-verified-manifest.json`,
+  SHA-256 `e092d280beaeb9204ad87fc43833a09b21e7b51151ba1767d94eba185b3bd871`.
+  Six new dispatch/retention/chronology regressions pass, including the real red
+  clock case after correction. Earlier pass manifests remain historical and
+  do not bind the final source. Local source/contract inspection completed;
+  no independent-agent review is claimed. Concrete Windows/NVML dispatch is
+  compile/link only; both pinned matrix image hashes remain unchanged. Prior
+  pipe bridge `943fb42` passed hosted run 41406262526 on Linux and Windows/MSVC.
+  Publication receipt belongs in ROADMAP.md.
+  No runtime loading, default native mode, fixed process entry/launch, compute
+  admission issuer or executed native/process/GPU evidence is added. Full pilot
+  telemetry/control startup, parent facts/safety/re-entry/consent and aggregate
+  live session export remain Task 3 obligations.
+
 - 2026-11-02 actual Windows pipe bridge continuation: connect encoded worker and
   settings frames to the existing bounded synchronous pipe workers. Sender is
   the producer's actual FrameSink; full binding/lane/direction metadata remains

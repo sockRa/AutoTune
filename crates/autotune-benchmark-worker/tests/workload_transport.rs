@@ -4,6 +4,7 @@ use autotune_benchmark_worker::{
     sampler::budget::Budget,
     workload::{
         manifest::{Artifacts, PilotDraft, PilotManifest},
+        sampler_dispatch::Dispatch,
         settings::{Block, Capture, Draft, Observation},
         settings_transport::{Child, Parent},
     },
@@ -331,4 +332,318 @@ fn destination_capacity_is_reserved_before_copy_and_released_on_drop() {
     assert_eq!(b.used(), 0);
     assert!(QueuedBytes::copy(&vec![0; 65537], &b).is_err());
     assert_eq!(b.used(), 0);
+}
+
+fn request_packet(b: &Budget, bytes: &[u8], receipt: Option<Anchor>) -> RawReceived {
+    RawReceived::new(
+        Lane::Ordinary,
+        Framer::new(b.clone()).unwrap().read(&mut Bytes(bytes)),
+        receipt,
+    )
+}
+#[test]
+fn selected_dispatch_retains_the_request_capture_and_full_parent_response_chain() {
+    let b = Budget::new(8 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let run = m.bind_run(0, 0).unwrap();
+    let binding = WorkerBinding::new(&run, 1_000_000_000, a(0)).unwrap();
+    let baseline = b.used();
+    {
+        let frames = Rc::new(RefCell::new(Vec::new()));
+        let mut sender = Sender::new(
+            MemoryQueue {
+                b: b.clone(),
+                frames: frames.clone(),
+                reject_ordinary: false,
+            },
+            binding,
+            Direction::FromWorker,
+            &b,
+        )
+        .unwrap();
+        let mut parent = Parent::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+        let request = parent.issue(a(500)).unwrap();
+        let mut dispatch = Dispatch::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+        assert!(dispatch
+            .fixture(
+                &run,
+                request_packet(&b, request.as_bytes(), Some(a(800))),
+                &draft(),
+                &mut sender
+            )
+            .is_ok());
+        assert_eq!(dispatch.fault(), None);
+        assert!(dispatch.response_queued());
+        assert_eq!(dispatch.raw().unwrap().packet().bytes(), request.as_bytes());
+        assert_eq!(dispatch.raw().unwrap().receipt(), Some(a(800)));
+        assert_eq!(
+            dispatch.capture().unwrap().source(),
+            autotune_benchmark_worker::workload::settings::Source::SimulatedFixture
+        );
+        let (lane, response) = frames.borrow_mut().pop().unwrap();
+        let received = RawReceived::new(
+            lane,
+            Framer::new(b.clone())
+                .unwrap()
+                .read(&mut Bytes(response.bytes())),
+            Some(a(2000)),
+        )
+        .decode_settings(&mut parent, &run);
+        assert_eq!(received.result().unwrap().fault(), None);
+        assert_eq!(
+            received.result().unwrap().capture().digest(),
+            dispatch.capture().unwrap().digest()
+        );
+        let duplicate = request_packet(&b, request.as_bytes(), Some(a(3000)));
+        let pointer = duplicate.packet().bytes().as_ptr();
+        let rejected = dispatch
+            .fixture(&run, duplicate, &draft(), &mut sender)
+            .err()
+            .unwrap();
+        assert_eq!(rejected.packet().bytes().as_ptr(), pointer);
+        assert_eq!(dispatch.raw().unwrap().receipt(), Some(a(800)));
+        assert_eq!(dispatch.fault(), Some(Block::Scope));
+        assert!(frames.borrow().is_empty());
+    }
+    assert_eq!(b.used(), baseline);
+}
+#[test]
+fn dispatcher_rejects_bad_request_timing_scope_and_partial_bytes_before_collection() {
+    let b = Budget::new(8 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let run = m.bind_run(0, 0).unwrap();
+    let binding = WorkerBinding::new(&run, 1_000_000_000, a(0)).unwrap();
+    for case in 0..5 {
+        let frames = Rc::new(RefCell::new(Vec::new()));
+        let mut sender = Sender::new(
+            MemoryQueue {
+                b: b.clone(),
+                frames: frames.clone(),
+                reject_ordinary: false,
+            },
+            binding,
+            Direction::FromWorker,
+            &b,
+        )
+        .unwrap();
+        let mut parent = Parent::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+        let request = parent.issue(a(500)).unwrap();
+        let mut dispatch = Dispatch::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+        let raw = request_packet(
+            &b,
+            if case == 0 {
+                &request.as_bytes()[..20]
+            } else {
+                request.as_bytes()
+            },
+            match case {
+                1 => None,
+                2 => Some(a(400)),
+                3 => Some(a(10_000_000_000)),
+                _ => Some(a(800)),
+            },
+        );
+        let other = m.bind_run(1, 0).unwrap();
+        assert!(dispatch
+            .fixture(
+                if case == 4 { &other } else { &run },
+                raw,
+                &draft(),
+                &mut sender
+            )
+            .is_ok());
+        assert!(dispatch.raw().is_some());
+        assert!(dispatch.capture().is_none());
+        assert!(dispatch.fault().is_some());
+        assert!(!dispatch.response_queued());
+        assert!(frames.borrow().is_empty());
+    }
+}
+#[test]
+fn dispatch_failure_preserves_capture_original_frame_and_exact_send_reason() {
+    let b = Budget::new(8 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let run = m.bind_run(0, 0).unwrap();
+    let binding = WorkerBinding::new(&run, 1_000_000_000, a(0)).unwrap();
+    let frames = Rc::new(RefCell::new(Vec::new()));
+    let mut sender = Sender::new(
+        MemoryQueue {
+            b: b.clone(),
+            frames: frames.clone(),
+            reject_ordinary: true,
+        },
+        binding,
+        Direction::FromWorker,
+        &b,
+    )
+    .unwrap();
+    let mut parent = Parent::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+    let request = parent.issue(a(500)).unwrap();
+    let mut dispatch = Dispatch::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+    assert!(dispatch
+        .fixture(
+            &run,
+            request_packet(&b, request.as_bytes(), Some(a(800))),
+            &draft(),
+            &mut sender
+        )
+        .is_ok());
+    assert_eq!(dispatch.send_failure(), Some(SendFailure::Queue));
+    assert_eq!(dispatch.fault(), Some(Block::Stopped));
+    assert!(dispatch.capture().unwrap().current().is_ok());
+    let digest = dispatch.capture().unwrap().digest();
+    let retained = dispatch.unsent().unwrap().as_bytes().as_ptr();
+    assert!(dispatch
+        .fixture(
+            &run,
+            request_packet(&b, request.as_bytes(), Some(a(2000))),
+            &draft(),
+            &mut sender
+        )
+        .is_err());
+    assert_eq!(dispatch.capture().unwrap().digest(), digest);
+    assert_eq!(dispatch.unsent().unwrap().as_bytes().as_ptr(), retained);
+    assert!(frames.borrow().is_empty());
+    assert!(!dispatch.response_queued());
+}
+#[test]
+fn child_setup_window_and_receipt_cannot_be_rebased_by_a_later_parent_request() {
+    let b = Budget::new(8 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let run = m.bind_run(0, 0).unwrap();
+    let binding = WorkerBinding::new(&run, 1_000_000_000, a(0)).unwrap();
+    for case in 0..3 {
+        let frames = Rc::new(RefCell::new(Vec::new()));
+        let mut sender = Sender::new(
+            MemoryQueue {
+                b: b.clone(),
+                frames: frames.clone(),
+                reject_ordinary: false,
+            },
+            binding,
+            Direction::FromWorker,
+            &b,
+        )
+        .unwrap();
+        let mut parent =
+            Parent::new(&run, 1_000_000_000, a(0), a(1_000_000_000), b.clone()).unwrap();
+        let request = parent.issue(a(1_000_000_000)).unwrap();
+        let mut dispatch = Dispatch::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+        let mut d = draft();
+        let observed = if case == 0 {
+            10_000_000_000
+        } else if case == 1 {
+            1_000_000_000
+        } else {
+            2_000_000_000
+        };
+        for o in &mut d.observations {
+            o.before = Some(a(observed));
+            o.after = Some(a(observed));
+        }
+        if case == 2 {
+            assert_eq!(dispatch.tick(None), Err(Block::Clock));
+        }
+        assert!(dispatch
+            .fixture(
+                &run,
+                request_packet(&b, request.as_bytes(), Some(a(1_000_001_000))),
+                &d,
+                &mut sender
+            )
+            .is_ok());
+        assert!(dispatch.fault().is_some());
+        assert_eq!(dispatch.deadline_ns(), 10_000_000_000);
+        assert!(!dispatch.response_queued());
+        assert!(frames.borrow().is_empty());
+        if case != 2 {
+            assert!(dispatch.capture().is_some());
+        }
+    }
+}
+#[test]
+fn failed_raw_facts_still_reach_parent_without_becoming_readable_values() {
+    use autotune_probe::report::{Failure, Reason};
+    let b = Budget::new(8 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let run = m.bind_run(0, 0).unwrap();
+    let binding = WorkerBinding::new(&run, 1_000_000_000, a(0)).unwrap();
+    let frames = Rc::new(RefCell::new(Vec::new()));
+    let mut sender = Sender::new(
+        MemoryQueue {
+            b: b.clone(),
+            frames: frames.clone(),
+            reject_ordinary: false,
+        },
+        binding,
+        Direction::FromWorker,
+        &b,
+    )
+    .unwrap();
+    let mut parent = Parent::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+    let request = parent.issue(a(500)).unwrap();
+    let mut dispatch = Dispatch::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+    let mut d = draft();
+    d.halt = Some(Block::GpuLost);
+    d.observations[0].raw = Some(Field::unavailable(
+        "mW",
+        Failure {
+            reason: Reason::GpuLost,
+            vendor_status: Some(15),
+            detail: "original getter fault".into(),
+        },
+    ));
+    assert!(dispatch
+        .fixture(
+            &run,
+            request_packet(&b, request.as_bytes(), Some(a(800))),
+            &d,
+            &mut sender
+        )
+        .is_ok());
+    assert_eq!(dispatch.fault(), Some(Block::GpuLost));
+    assert!(dispatch.response_queued());
+    let (_, response) = frames.borrow_mut().pop().unwrap();
+    let received = parent.receive(&run, response.bytes(), a(2000)).unwrap();
+    assert_eq!(received.fault(), Some(Block::GpuLost));
+    assert!(received
+        .capture()
+        .canonical()
+        .contains("original getter fault"));
+}
+
+#[test]
+fn polling_after_collection_keeps_the_last_getter_clock_instead_of_receipt() {
+    let b = Budget::new(8 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let run = m.bind_run(0, 0).unwrap();
+    let binding = WorkerBinding::new(&run, 1_000_000_000, a(0)).unwrap();
+    let frames = Rc::new(RefCell::new(Vec::new()));
+    let mut sender = Sender::new(
+        MemoryQueue {
+            b: b.clone(),
+            frames,
+            reject_ordinary: false,
+        },
+        binding,
+        Direction::FromWorker,
+        &b,
+    )
+    .unwrap();
+    let mut parent = Parent::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+    let request = parent.issue(a(500)).unwrap();
+    let mut dispatch = Dispatch::new(&run, 1_000_000_000, a(0), a(0), b.clone()).unwrap();
+    assert!(dispatch
+        .fixture(
+            &run,
+            request_packet(&b, request.as_bytes(), Some(a(800))),
+            &draft(),
+            &mut sender
+        )
+        .is_ok());
+    assert_eq!(dispatch.fault(), None);
+    assert_eq!(dispatch.tick(Some(a(900))), Err(Block::Clock));
+    assert_eq!(dispatch.tick(Some(a(2000))), Err(Block::Clock));
+    assert!(dispatch.capture().unwrap().current().is_ok());
+    assert_eq!(dispatch.raw().unwrap().receipt(), Some(a(800)));
 }

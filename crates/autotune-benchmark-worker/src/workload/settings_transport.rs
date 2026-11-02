@@ -182,6 +182,36 @@ impl Request {
     pub fn issued(&self) -> Anchor {
         self.issued
     }
+    pub fn deadline_ns(&self) -> u64 {
+        self.deadline_ns
+    }
+    pub(super) fn collect_native_after(
+        &mut self,
+        run: &BoundRun<'_>,
+        sampler: &mut autotune_probe::nvml::NvmlSampler,
+        window: (Anchor, u64),
+        callbacks: (impl FnMut() -> Option<Anchor>, impl FnMut() -> bool),
+    ) -> Result<Capture, Block> {
+        if self.collected || self.responded {
+            return Err(Block::Stopped);
+        }
+        self.collected = true;
+        if WorkerBinding::new(run, self.binding.monitor.qpc_frequency, self.binding.epoch)
+            .map_err(|_| Block::Clock)?
+            != self.binding
+        {
+            return Err(Block::Scope);
+        }
+        let mut clock =
+            Clock::new(self.binding.monitor, self.binding.epoch).map_err(|_| Block::Clock)?;
+        let mut last = self.binding.epoch;
+        observe(&mut clock, &mut last, self.issued)?;
+        observe(&mut clock, &mut last, window.0)?;
+        if window.1 > self.deadline_ns {
+            return Err(Block::Phase);
+        }
+        Capture::collect_native_scoped(run, self.binding, sampler, window, callbacks, &self.budget)
+    }
     /// Actual selected collector seam for a separately authorized, contained
     /// sampler. At most one collection attempt per accepted request. This API
     /// neither loads the runtime nor authorizes a native capture by itself.

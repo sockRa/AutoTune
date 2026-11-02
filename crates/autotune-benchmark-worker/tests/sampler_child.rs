@@ -124,15 +124,19 @@ fn cleanup_message_follows_one_sticky_stop_ack_and_never_claims_exit() {
 fn independent_stop_wins_before_admission_and_completion_cannot_reopen_it() {
     use autotune_benchmark_worker::sampler::child::NativeAdmission;
     let stopped = NativeAdmission::default();
+    assert!(!stopped.stopped());
     stopped.stop();
+    assert!(stopped.stopped());
     assert_eq!(stopped.begin(), Err(ChildError::Stopped));
     assert!(!stopped.pending());
     let inflight = NativeAdmission::default();
     inflight.begin().unwrap();
     assert_eq!(inflight.begin(), Err(ChildError::Pending));
     inflight.stop();
+    assert!(inflight.stopped());
     assert!(inflight.pending());
     inflight.complete();
+    assert!(inflight.stopped());
     assert!(!inflight.pending());
     assert_eq!(inflight.begin(), Err(ChildError::Stopped));
 }

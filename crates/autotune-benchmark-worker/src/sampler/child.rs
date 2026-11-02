@@ -31,6 +31,9 @@ impl NativeAdmission {
     pub fn pending(&self) -> bool {
         self.0.load(Ordering::Acquire) & 2 != 0
     }
+    pub fn stopped(&self) -> bool {
+        self.0.load(Ordering::Acquire) & 1 != 0
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChildError {
