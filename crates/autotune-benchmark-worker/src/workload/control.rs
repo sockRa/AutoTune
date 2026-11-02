@@ -14,7 +14,7 @@ use crate::{
 };
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, OnceLock,
 };
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
@@ -28,16 +28,101 @@ pub enum Fault {
 pub struct Shared {
     admission: Arc<NativeAdmission>,
     cooperative_raw: AtomicU64,
+    scope: OnceLock<WorkerBinding>,
+    setup_deadline_raw: AtomicU64,
+    setup_completed_raw: AtomicU64,
 }
 impl Default for Shared {
     fn default() -> Self {
         Self {
             admission: Arc::new(NativeAdmission::default()),
             cooperative_raw: AtomicU64::new(u64::MAX),
+            scope: OnceLock::new(),
+            setup_deadline_raw: AtomicU64::new(u64::MAX),
+            setup_completed_raw: AtomicU64::new(u64::MAX),
         }
     }
 }
 impl Shared {
+    pub fn setup_observations(&self) -> (Option<u64>, Option<u64>) {
+        let d = self.setup_deadline_raw.load(Ordering::Acquire);
+        let c = self.setup_completed_raw.load(Ordering::Acquire);
+        ((d != u64::MAX).then_some(d), (c != u64::MAX).then_some(c))
+    }
+    /// Freeze once before native startup. Only this control state's full binding
+    /// can publish the original bootstrap setup deadline; it cannot be renewed.
+    pub fn configure_setup(&self, binding: WorkerBinding, deadline_ns: u64) -> Result<(), Fault> {
+        let raw = binding
+            .epoch
+            .interrupt_100ns
+            .checked_add(deadline_ns / 100)
+            .filter(|r| *r != u64::MAX);
+        if self.scope.get() != Some(&binding)
+            || deadline_ns <= binding.origin_ns
+            || deadline_ns > binding.setup_boundary()
+            || raw.is_none()
+            || self
+                .setup_deadline_raw
+                .compare_exchange(
+                    u64::MAX,
+                    raw.unwrap_or(0),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+        {
+            self.close_at(binding, None);
+            return Err(Fault::Protocol);
+        }
+        Ok(())
+    }
+    /// Receipt of queued Ready/current facts, not peer acknowledgement or consent.
+    pub fn complete_setup(&self, binding: WorkerBinding, receipt: Anchor) -> Result<(), Fault> {
+        let deadline = self.setup_deadline_raw.load(Ordering::Acquire);
+        if self.scope.get() != Some(&binding)
+            || binding.elapsed(receipt).is_err()
+            || deadline == u64::MAX
+        {
+            self.close_at(binding, None);
+            return Err(Fault::Protocol);
+        }
+        if receipt.interrupt_100ns >= deadline {
+            self.close();
+            let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+            let cap = deadline
+                .checked_add(p.cooperative_stop_ns / 100)
+                .zip(
+                    binding
+                        .epoch
+                        .interrupt_100ns
+                        .checked_add(binding.run_end() / 100),
+                )
+                .map(|(a, b)| a.min(b))
+                .unwrap_or(0);
+            self.cooperative_raw.fetch_min(cap, Ordering::AcqRel);
+            return Err(Fault::Deadline);
+        }
+        if self.admission.stopped() {
+            if self.cooperative_raw() == u64::MAX {
+                self.cooperative_raw.fetch_min(0, Ordering::AcqRel);
+            }
+            return Err(Fault::Deadline);
+        }
+        if self
+            .setup_completed_raw
+            .compare_exchange(
+                u64::MAX,
+                receipt.interrupt_100ns,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            self.close_at(binding, None);
+            return Err(Fault::Protocol);
+        }
+        Ok(())
+    }
     pub fn admission(&self) -> &NativeAdmission {
         &self.admission
     }
@@ -82,6 +167,10 @@ impl State {
         shared: Arc<Shared>,
         budget: &Budget,
     ) -> Result<Self, Fault> {
+        if shared.scope.get_or_init(|| binding) != &binding {
+            shared.close();
+            return Err(Fault::Protocol);
+        }
         let p = autotune_fma_reference::profile::Profile::approved_design().limits;
         let capacity = (binding.plan.envelope_ns / p.controller_tick_ns * 2 + 16) as usize;
         let clock = EntryClock::with_capacity(
@@ -288,6 +377,25 @@ impl State {
     }
     fn within_window(&mut self, n: u64) -> bool {
         let raw = self.binding.epoch.interrupt_100ns.checked_add(n / 100);
+        if let (Some(deadline), None) = self.shared.setup_observations() {
+            if raw.is_none_or(|r| r >= deadline) {
+                let trigger_ns = deadline
+                    .saturating_sub(self.binding.epoch.interrupt_100ns)
+                    .saturating_mul(100);
+                let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+                self.stop(StopWindow {
+                    trigger_ns,
+                    cooperative_ns: trigger_ns
+                        .saturating_add(p.cooperative_stop_ns)
+                        .min(self.binding.run_end()),
+                    exit_ns: trigger_ns
+                        .saturating_add(p.exit_observation_ns)
+                        .min(self.binding.run_end()),
+                });
+                self.fail(Fault::Deadline);
+                return false;
+            }
+        }
         if n >= self.binding.run_end()
             || self.window.is_some_and(|w| n >= w.cooperative_ns)
             || raw.is_none_or(|r| r >= self.shared.cooperative_raw())

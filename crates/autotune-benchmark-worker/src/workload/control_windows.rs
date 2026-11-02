@@ -40,6 +40,7 @@ pub struct Report {
     pub event_error: Option<u32>,
     pub transport_error: Option<i32>,
     pub clock_error: Option<crate::monitor::windows_clock::CaptureError>,
+    pub observed_frequency: Option<u64>,
     _metadata: Reservation,
 }
 #[allow(clippy::large_enum_variant)] // Four inline slots, prepaid in report metadata.
@@ -128,19 +129,23 @@ impl Handle {
                     event_error: None,
                     transport_error: None,
                     clock_error: None,
+                    observed_frequency: None,
                     _metadata: metadata,
                 };
                 let mut rx = rx;
                 let mut tx = tx;
                 let mut work = || {
                     let clock = match WindowsClock::new(binding.monitor().clock_token) {
-                        Ok(c) if c.qpc_frequency() == binding.monitor().qpc_frequency => c,
+                        Ok(c) => {
+                            report.observed_frequency = Some(c.qpc_frequency());
+                            if c.qpc_frequency() != binding.monitor().qpc_frequency {
+                                report.state.fail(Fault::Clock);
+                                return;
+                            }
+                            c
+                        }
                         Err(e) => {
                             report.clock_error = Some(e);
-                            report.state.fail(Fault::Clock);
-                            return;
-                        }
-                        _ => {
                             report.state.fail(Fault::Clock);
                             return;
                         }

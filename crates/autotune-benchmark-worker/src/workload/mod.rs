@@ -12,6 +12,9 @@ pub mod launch;
 pub mod manifest;
 pub mod producer;
 pub mod sampler_dispatch;
+#[cfg(windows)]
+pub mod sampler_entry;
+pub mod sampler_runtime;
 pub mod settings;
 pub mod settings_transport;
 pub mod telemetry;

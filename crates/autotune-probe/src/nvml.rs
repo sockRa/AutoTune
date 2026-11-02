@@ -87,6 +87,35 @@ pub struct NvmlSampler {
     #[cfg(windows)]
     selected: windows::SelectedSession,
 }
+/// Failed startup with any initialized session still owned. Callers supervise
+/// explicit shutdown on the original native lane; Drop may otherwise call it.
+pub struct SamplerOpenFailure {
+    pub failure: Failure,
+    #[cfg(windows)]
+    session: Option<windows::Session>,
+}
+impl SamplerOpenFailure {
+    pub fn shutdown(&mut self) -> Option<i32> {
+        #[cfg(windows)]
+        {
+            self.session.as_mut().and_then(|s| s.close())
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
+    pub fn initialized(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.session.is_some()
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
+}
 
 /// Fresh runtime evidence and the exact identity retained at unique selection.
 /// Describing does not re-enumerate, select another device or read controls.
@@ -98,6 +127,35 @@ pub struct SamplerInfo {
 }
 
 impl NvmlSampler {
+    /// Preserve initialized-session ownership on selection failure. No shutdown
+    /// is hidden inside this failure return; cleanup remains independently timed.
+    #[allow(clippy::result_large_err)]
+    pub fn open_retained(uuid: &str, pci_bus_id: &str) -> Result<Self, SamplerOpenFailure> {
+        #[cfg(windows)]
+        {
+            let session = windows::Session::open().map_err(|failure| SamplerOpenFailure {
+                failure,
+                session: None,
+            })?;
+            match session.select_retained(uuid, pci_bus_id) {
+                Ok(selected) => Ok(Self { selected }),
+                Err((session, failure)) => Err(SamplerOpenFailure {
+                    failure,
+                    session: Some(session),
+                }),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (uuid, pci_bus_id);
+            Err(SamplerOpenFailure {
+                failure: Failure::new(
+                    Reason::UnsupportedPlatform,
+                    "live NVML sampling requires Windows",
+                ),
+            })
+        }
+    }
     /// One explicit shutdown attempt, returning the actual NVML status. None
     /// means no call (already closed/unsupported platform), never success.
     /// Caller must supervise this potentially blocking call independently.
@@ -547,7 +605,7 @@ mod windows {
             }
             self.library.get::<T>(name)
         }
-        fn close(&mut self) -> Option<i32> {
+        pub(super) fn close(&mut self) -> Option<i32> {
             if self.closed {
                 return None;
             }
@@ -625,6 +683,26 @@ mod windows {
             uuid: &str,
             pci_bus_id: &str,
         ) -> Result<SelectedSession, Failure> {
+            self.select_retained(uuid, pci_bus_id)
+                .map_err(|(_session, failure)| failure)
+        }
+        #[allow(clippy::result_large_err)] // Failure retains the original session.
+        pub(super) fn select_retained(
+            self,
+            uuid: &str,
+            pci_bus_id: &str,
+        ) -> Result<SelectedSession, (Self, Failure)> {
+            match self.find(uuid, pci_bus_id) {
+                Ok((handle, raw_uuid, raw_pci)) => Ok(SelectedSession {
+                    session: self,
+                    handle,
+                    raw_uuid,
+                    raw_pci,
+                }),
+                Err(failure) => Err((self, failure)),
+            }
+        }
+        fn find(&self, uuid: &str, pci_bus_id: &str) -> Result<(Handle, String, String), Failure> {
             if uuid.is_empty() || pci_bus_id.is_empty() {
                 return Err(invalid("empty NVML selection identity"));
             }
@@ -655,12 +733,7 @@ mod windows {
             }
             let (handle, raw_uuid, raw_pci) =
                 selected.ok_or_else(|| invalid("NVML UUID and PCI identity not found"))?;
-            Ok(SelectedSession {
-                session: self,
-                handle,
-                raw_uuid,
-                raw_pci,
-            })
+            Ok((handle, raw_uuid, raw_pci))
         }
         fn device_text(&self, handle: Handle, name: &[u8]) -> Field {
             field(

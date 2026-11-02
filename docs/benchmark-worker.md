@@ -1136,3 +1136,72 @@ the worker native-admission issuer and aggregate live export remain unfinished.
 Parent monitor timing across runs must preserve the original epoch and session
 ceiling. E3 remains partial and Gate B unmet; this is not a useful baseline or an
 automatic optimization delivery.
+
+## Fixed pilot sampler entry
+
+`autotune-pilot-sampler` now has a fixed quiet Windows entry that composes the
+common inherited context, independent control thread, selected NVML startup,
+Ready, current-setting dispatcher and pilot telemetry collector. The entry's
+unsafe contract requires one exclusive inherited-endpoint adoption from the
+fixed launcher. Strict bounded arguments and bootstrap/image validation precede
+control startup; successful control readiness precedes NVML initialization.
+The entry returns its context/trace/owners, including a successfully built
+context if later trace construction fails. It introduces no worker executable,
+driver/compute initialization, human-consent authority or native-admission issuer.
+
+One sampler output channel owns Ready and all telemetry record sequence numbers.
+A bounded canonical role selector only routes an ordinary packet to the existing
+strict settings or sampler parser; it cannot authorize it. Telemetry may support
+re-entry while the original settings/setup exchange remains pending. Replay,
+wrong role/binding, packet rejection or transport loss stops the session and
+retains the rejected owner or raw error. Source initialization, descriptor,
+metric and setting returns remain owned before their post-call clock checks.
+
+The original bootstrap setup deadline is now frozen in the control state's full
+binding before native startup. Its independent tick can close a blocked startup
+lane at that deadline and derive grace from the deadline itself, rather than a
+later return or poll. Queued Ready/current facts may complete this setup watch
+once, before expiry; completion neither acknowledges peer receipt nor grants
+compute. Late publication synchronously tightens the original cooperative cap.
+An expired stop never reopens after a native return or late setup completion.
+The parent still owes its independent phase/session/process supervision.
+
+`NvmlSampler::open_retained` preserves an initialized session when exact selection
+fails. The original failure and a later shutdown result remain separate. Existing
+`open` behavior stays compatible. The entry holds selected/failed sessions in
+manual-drop owners, so unwind or a missed cleanup window cannot silently call
+NVML shutdown. An explicit attempt requires the stopped idle native lane and
+remaining original grace. Its raw status is stored before closed-library release
+and post-clock validation. Otherwise the initialized owner remains retained;
+process containment/exit and native quiescence remain independent unresolved facts.
+Control cannot interrupt an in-flight native startup/helper or shutdown operation.
+
+The common trace retains logical open/describe/cleanup brackets, failed/missing
+clocks, original stop trigger, setup completion and drain receipt. Duplicate
+attempts/results cannot overwrite the first evidence. Descriptor return at the
+original setup equality fails even inside the later cumulative boundary. Control
+clock initialization also retains its actual observed frequency, including a
+mismatch. Cleanup completion, control-thread completion and output drain are
+separate observations. Drain polls precede receipt capture and stop at the
+original cooperative cap; no unbounded thread join occurs. Exit code zero denotes
+only observed orderly child completion, never qualification, peer receipt,
+durability, direct-process exit or a GPU fence. A parent still must validate all
+required facts and export the complete bounded live evidence.
+
+Final source-bound verification at baseline `4880469` plus unchanged inventories
+passes 368 CPU-only tests (300 integration, 24 probe ABI fakes, 19 feature-library
+fakes/static, 25 reference/prepared), scoped all-feature warning-denied Clippy,
+formatting and full-workspace/all-feature compile/link. Seventeen added tests
+cover original setup/cleanup/drain equality, blocked-lane deadline processing,
+non-renewal, sticky stops/failures, raw status/clock ownership, role routing,
+full-run trace capacity and retained failed-selection cleanup. Manifest
+`target/workload-verification/sampler-entry-final-manifest.json`, SHA-256
+`b2a69bb5640b209f96b26e16fadc2d7da140ce5ee0286d503cadac3ba7952f97`.
+No independent-agent review is claimed. The new binary and actual Windows/NVML
+composition were compiled/linked only, never executed or driver-loaded.
+
+Complete parent pre-manifest facts/runtime/environment/image/peer observations,
+fresh safety/re-entry/Start/consent admission, the worker entry/driver composition,
+aggregate metadata/session budgets and live export remain unfinished. The child
+trace's ownership is not a completed artifact export. No sampler/native/hardware
+qualification, useful baseline, E3 completion or Gate B follows from this slice.

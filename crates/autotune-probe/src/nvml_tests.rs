@@ -356,6 +356,23 @@ fn sampler(uuid: &str, pci_bus_id: &str) -> Result<NvmlSampler, Failure> {
     })
 }
 #[test]
+fn retained_selection_failure_keeps_initialized_owner_until_one_explicit_shutdown() {
+    for mode in 0..4 {for status in [0,999] {
+        reset();let session=session().unwrap();
+        SCRIPT.with(|s| {
+            let mut s=s.borrow_mut();s.calls.clear();s.shutdown_status=status;
+            if mode==2 {s.count_status=4;}
+            if mode==3 {s.device_count=2;}
+        });
+        let uuid=if mode==0 {""} else if mode==1 {"not-found"} else {"fixture"};
+        let (session,failure)=match session.select_retained(uuid,"0000:01:00.0") {Err(e)=>e,Ok(_)=>panic!("fixture must fail selection")};
+        SCRIPT.with(|s|assert!(!s.borrow().calls.contains(&"nvmlShutdown")));
+        let mut retained=super::super::SamplerOpenFailure{failure,session:Some(session)};
+        assert!(retained.initialized());assert_eq!(retained.shutdown(),Some(status));assert_eq!(retained.shutdown(),None);drop(retained);
+        SCRIPT.with(|s|assert_eq!(s.borrow().calls.iter().filter(|c|**c=="nvmlShutdown").count(),1));
+    }}
+}
+#[test]
 fn explicit_shutdown_retains_raw_status_once_and_blocks_successor_native_getters() {
     for status in [0, 4, 999] {
         reset();

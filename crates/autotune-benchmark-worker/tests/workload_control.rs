@@ -341,3 +341,49 @@ fn control_rejects_a_foreign_full_manifest_even_if_monitor_identity_matches() {
     assert!(shared.admission().stopped());
     assert_eq!(state.raw()[0].raw().packet().bytes(), frame.as_bytes());
 }
+#[test]
+fn setup_deadline_closes_a_blocked_native_lane_independently_and_keeps_original_grace() {
+    let (_, binding, shared, mut state) = setup();
+    shared.configure_setup(binding, 10_000_000_000).unwrap();
+    shared.admission().begin().unwrap();
+    assert!(state.tick(Some(a(9_990_000_000))));
+    assert!(!state.tick(Some(a(10_010_000_000))));
+    assert!(shared.admission().stopped());
+    assert!(shared.admission().pending());
+    assert_eq!(state.window().unwrap().trigger_ns, 10_000_000_000);
+    assert_eq!(shared.cooperative_raw(), 110_000_000);
+    shared.admission().complete();
+    assert!(shared.complete_setup(binding, a(9_999_000_000)).is_err());
+    assert_eq!(shared.cooperative_raw(), 110_000_000);
+    assert_eq!(state.fault(), Some(Fault::Deadline));
+}
+#[test]
+fn timely_setup_completion_removes_only_setup_watch_and_never_renews_it() {
+    let (_, binding, shared, mut state) = setup();
+    shared.configure_setup(binding, 10_000_000_000).unwrap();
+    shared.complete_setup(binding, a(9_000_000_000)).unwrap();
+    assert_eq!(
+        shared.setup_observations(),
+        (Some(100_000_000), Some(90_000_000))
+    );
+    assert!(state.tick(Some(a(10_010_000_000))));
+    assert!(shared.configure_setup(binding, 11_000_000_000).is_err());
+    assert!(shared.admission().stopped());
+    assert_eq!(
+        shared.setup_observations(),
+        (Some(100_000_000), Some(90_000_000))
+    );
+}
+#[test]
+fn late_setup_completion_publishes_original_deadline_before_another_control_tick() {
+    let (_, binding, shared, mut state) = setup();
+    shared.configure_setup(binding, 10_000_000_000).unwrap();
+    assert_eq!(
+        shared.complete_setup(binding, a(10_500_000_000)),
+        Err(Fault::Deadline)
+    );
+    assert_eq!(shared.cooperative_raw(), 110_000_000);
+    assert_eq!(shared.setup_observations(), (Some(100_000_000), None));
+    assert!(!state.tick(Some(a(10_510_000_000))));
+    assert_eq!(state.window().unwrap().trigger_ns, 10_000_000_000);
+}
