@@ -1407,3 +1407,58 @@ compile/link. Manifest `target/workload-verification/starting-context-final-mani
 SHA-256 `be0402447220a940775ca2a10a9b4060f4ca2985d08d3039f09c252ecfe85cd4`.
 Old matrix images remain byte-identical. No owned process/native/GPU execution
 or independent-agent review is claimed; actual context adoption is compile-only.
+
+### Independent starting read control — 2026-11-02
+
+`starting_control` supplies a distinct immutable scope/epoch-bound temporal state
+and shared serial-read gate. It uses no pilot manifest/run/WorkerBinding. Work
+closes at the original 10 s preflight boundary. First stop freezes 1 s cooperative
+and 3 s exit-observation windows under the original session ceiling; delayed
+deadline detection uses the original boundary rather than now plus grace. These
+windows permit separately supervised cleanup/exit observation, never extra reads
+or an extended preflight. Stop during a pending call remains stopped after its
+return. Cleanup eligibility checks the original raw deadline, valid clocks and
+absence of a pending call; callers still owe exact read scope and separately
+bounded native entry. There is no workload NativeAdmission issuer.
+
+Completion preserves initialized-session, cleanup-attempt and raw shutdown status
+as distinct reported facts. Initialized sessions require attempted cleanup with
+returned status zero for an orderly child report. Pending calls, missing/future/
+late clocks, contradictory cleanup and a previous fault cannot become success.
+The first command/actual receipt remains immutable. Reported completion is not
+observed process exit, released resources or a GPU fence.
+
+`starting_control_windows::Handle` composes the actual split control port, stop
+event, Windows clock/frequency and bounded one-slot completion mailbox on an
+independent thread with no NVML/CUDA calls. Readiness follows its first actual
+event/clock tick; main must also check its fresh native-entry clock/gate. Every
+poll's clock precedes and is retained separately from completion receipt. This
+starting mode uses the stop event only: incoming control packets are terminal
+rejections retained verbatim, including pilot-role Stop/Start packets. No wire
+ack/final response or executable mode routing is supplied in this slice.
+
+Raw event status/error, available frequency/clock/transport failures, rejected
+packet and pending completion racing thread exit stay owned in the report.
+Shared state and the extractable mailbox retain their own RAM reservations.
+Report retrieval joins only a thread already observed finished; Drop closes the
+read gate without a blocking join or implicit native cleanup. Process/job
+termination and aggregate resource observations remain the parent's obligations.
+
+Eleven new CPU/static cases cover blocked calls, no renewal, exact stop/cleanup
+boundaries, immutable completion facts, initialized/pending/future/late failures,
+epoch/overflow, full 13 s history under ordinary budget exhaustion, overflow/
+capacity/shared-owner lifetime and actual Windows API compilation. They do not
+start the watcher, load a driver or execute a getter. The native read/cleanup
+entry, bound parent response, executable routing and integrated qualification
+remain unfinished; E3/Gate B stay open.
+
+Final source-bound verification at baseline `0483735469fbf777f812f188bd3eeb47a5b4efe0`
+plus unchanged inventories passes 418 CPU-only tests (345 integration, 24 probe
+ABI fakes, 24 worker feature-library fakes/static, 25 reference/prepared), formatting,
+scoped all-feature warning-denied Clippy and full-workspace/all-target/all-feature
+compile/link. Manifest `target/workload-verification/starting-control-closed-manifest.json`,
+SHA-256 `ebf122baf2f9719c9dc13534c845b5f500aebefa57e0f309858ff511f35adf24`.
+Earlier checks preceded the final poll-clock retention fix and remain historical.
+Source review also closed readiness, shared reservation lifetime and initialized
+cleanup-fact gaps; no independent-agent review or actual watcher/process/native/
+GPU execution is claimed. Both pinned old matrix images remain unchanged.

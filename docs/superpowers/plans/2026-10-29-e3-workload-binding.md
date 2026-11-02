@@ -86,6 +86,35 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 independent starting control: a separate scope-bound temporal state
+  and actual Windows event/control-lane watcher now close serial read admission
+  independently of NVML. No WorkerBinding/run is invented. Work expires at the
+  original 10 s preflight boundary; first stop owns 1 s cooperative/3 s observation
+  windows, clipped to the original session ceiling. Delayed detection uses the
+  original boundary, and late/duplicate stops or native returns cannot renew it.
+  Cleanup eligibility checks the original raw deadline and pending state but
+  grants no execution authority. Completion keeps initialized/attempted/raw
+  shutdown status separately, rejects initialized-without-successful-cleanup,
+  pending/future/late commands, and retains first command/actual receipt.
+  The watcher owns the split control port/event, real clock/frequency and bounded
+  one-slot completion mailbox; event-only starting mode rejects/retains foreign
+  control packets rather than interpreting pilot Stop/Start frames. No wire ack
+  or final response is claimed yet. Readiness follows the first actual event/
+  clock tick; each poll clock is retained before a separate completion receipt.
+  Raw event/OS/clock/transport errors, rejected packets and pending race mailbox
+  remain owned. Report retrieval joins only an already finished thread; Drop
+  closes the gate without joining. Shared/mailbox reservations survive their
+  independently retained owners. Eleven added CPU/static tests cover original
+  deadlines, delayed/blocked returns, first facts, cleanup/pending/clock errors,
+  epoch/overflow, full 13 s history under ordinary exhaustion, capacity ownership
+  and actual Windows API compilation without starting the watcher. Review closed
+  readiness, shared-accounting, poll-retention and completion-fact gaps before
+  final checks. No independent-agent review or process/native/GPU execution.
+  Starting context bc6ab35a15bfaec095abf4471f2e1d08ee54a3b6 passes hosted Linux/MSVC
+  run 41465032149. Final source-bound evidence/publication: ROADMAP.md. Actual
+  native-open/read/cleanup entry, bound response, executable routing, complete
+  parent facts/consent, aggregate export and qualification remain open.
+
 - 2026-11-02 starting child inherited-context continuation: actual Windows
   `Context` now shares endpoint/clock/image/pipe preparation through a private
   two-mode argument vocabulary, with pilot Bound remaining the default. A

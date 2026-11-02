@@ -20,6 +20,9 @@ pub mod settings;
 pub mod settings_transport;
 pub mod starting;
 pub mod starting_bootstrap;
+pub mod starting_control;
+#[cfg(windows)]
+pub mod starting_control_windows;
 pub mod telemetry;
 pub mod trace;
 pub mod transport;
