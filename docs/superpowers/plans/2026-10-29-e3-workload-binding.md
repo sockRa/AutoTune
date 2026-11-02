@@ -86,6 +86,25 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 starting child inherited-context continuation: actual Windows
+  `Context` now shares endpoint/clock/image/pipe preparation through a private
+  two-mode argument vocabulary, with pilot Bound remaining the default. A
+  distinct starting context accepts only the starting bootstrap and fixed sampler
+  image; it does not fabricate a manifest/run/WorkerBinding. Before any first
+  packet, actual child entry must be within the original-epoch 10 s preflight
+  ceiling; idle polls and final receipt cannot renew it. Epoch offset, invalid
+  clocks and absolute interrupt-time overflow are checked. All existing raw
+  packet, typed clock/frequency/OS errors, image lock/digest and transport shutdown
+  failure owners remain shared. No native calls occur in context creation.
+  Three added CPU/static cases cover these bounds and the typed actual Windows
+  entry/parts APIs without invoking them. Existing pilot bootstrap cases pass.
+  Independently supervised starting control/read/cleanup/response and executable
+  routing remain unfinished; no native-admission issuer is added. Source-bound
+  final verification/publication receipts are in ROADMAP.md. No process/native/
+  GPU execution or independent-agent review is claimed. Previous starting-launch
+  source c1e9588622813127c1bf6ea2a0cb762322888d52 now passes hosted Linux/MSVC run
+  41463915362. Full Task 3, E3 and Gate B remain open.
+
 - 2026-11-02 pre-manifest starting bootstrap/launch continuation: the separate
   immutable starting scope now has a fixed sampler launch declaration, bounded
   14-token argument mode and canonical first frame. No pilot run/manifest or

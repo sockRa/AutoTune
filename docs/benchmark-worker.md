@@ -1370,3 +1370,40 @@ all-feature compile/link. Manifest
 `7b58f64a3bc5bb2e725a9772db71e0c7d85cbee9d5d8638495ba015b8e43263b`.
 Both pinned old matrix images remain unchanged. No independent-agent review,
 owned-process execution, native loading or GPU execution occurred.
+
+### Starting child inherited context — 2026-11-02
+
+`child_windows::Context<starting_bootstrap::Bound>::from_starting_inherited`
+composes the actual starting-scope reader with the existing Windows inherited
+endpoint adoption, real clock/frequency capture, own-image file lock/hash and
+nonblocking first-packet polling. A private argument vocabulary shares this OS
+path with the existing pilot context; pilot types and entry API remain the
+default. Starting mode selects only the fixed sampler image, validates its exact
+scope-bound digest, and creates no pilot manifest or run identity. The unsafe
+entry requires exclusive inherited-handle ownership and exact separate execution
+scope; numeric tokens and a matching hash do not establish that scope.
+
+`Arguments::preflight_end_100ns` validates actual first entry against the original
+epoch and rejects entry at or after 10 seconds. The raw interrupt-time end is
+computed with checked arithmetic from that epoch, rather than child entry or
+receipt. Both idle polling and first-packet receipt use this original end, while
+the strict bootstrap reader checks the complete parent/child/receipt chronology.
+No native loading/collection occurs in this context. Startup rejection keeps the
+existing raw first packet, available raw clocks/frequency, typed clock/OS errors,
+locked image facts and transport cancellation observations in the failure owner.
+
+Three new CPU/static tests cover original and nonzero epochs, deadline equality,
+late entry, bad clocks, raw end overflow and typed Windows entry/parts API
+compilation. They do not execute inherited-handle adoption. Separate starting
+control/read/cleanup/response composition and executable routing remain open,
+along with complete actual parent facts/consent, native admission, live export
+and qualification. This advances E3's measurement chain without closing Gate B.
+
+Final source-bound checks at baseline `d9f0030b385a5f0bc04b5383c0c470ffe25ed885`
+plus unchanged inventories pass 407 CPU-only tests (334 integration, 24 probe ABI
+fakes, 24 worker feature-library fakes/static, 25 reference/prepared), formatting,
+scoped all-feature warning-denied Clippy and full-workspace/all-target/all-feature
+compile/link. Manifest `target/workload-verification/starting-context-final-manifest.json`,
+SHA-256 `be0402447220a940775ca2a10a9b4060f4ca2985d08d3039f09c252ecfe85cd4`.
+Old matrix images remain byte-identical. No owned process/native/GPU execution
+or independent-agent review is claimed; actual context adoption is compile-only.

@@ -3,6 +3,7 @@
 use super::{
     bootstrap::{Bound, EntryClock, Error as BootstrapError},
     launch::{Arguments, Role},
+    starting_bootstrap,
     transport::RawReceived,
     windows_transport::{InheritedTransport, Receive},
 };
@@ -43,6 +44,7 @@ pub enum Fault {
     Stopped,
     Transport,
     Bootstrap(BootstrapError),
+    StartingBootstrap(starting_bootstrap::Error),
     Deadline,
 }
 pub struct Failure {
@@ -111,8 +113,8 @@ impl Failure {
         }
     }
 }
-pub struct Context {
-    bootstrap: Bound,
+pub struct Context<B = Bound> {
+    bootstrap: B,
     raw: RawReceived,
     transport: InheritedTransport,
     stop: OwnedHandle,
@@ -125,8 +127,8 @@ pub struct Context {
     budget: Budget,
     _metadata: Reservation,
 }
-impl Context {
-    pub fn bootstrap(&self) -> &Bound {
+impl<B> Context<B> {
+    pub fn bootstrap(&self) -> &B {
         &self.bootstrap
     }
     pub fn raw(&self) -> &RawReceived {
@@ -146,7 +148,7 @@ impl Context {
     pub fn parts(
         &mut self,
     ) -> (
-        &Bound,
+        &B,
         &mut InheritedTransport,
         &WindowsClock,
         &OwnedHandle,
@@ -160,14 +162,9 @@ impl Context {
             &self.budget,
         )
     }
-    /// # Safety
-    /// Call exactly once at process entry. The five validated argument handles
-    /// must be exclusively transferred inherited endpoints, not handles already
-    /// owned elsewhere in this process. Numeric validation cannot prove ownership.
-    /// Caller still owes exact execution scope and native/control admission.
     #[allow(clippy::result_large_err)]
-    pub unsafe fn from_inherited(
-        args: &Arguments,
+    unsafe fn from_arguments<A: StartupArguments<Bound = B>>(
+        args: &A,
         expected_role: Role,
         budget: Budget,
     ) -> Result<Self, Failure> {
@@ -222,12 +219,7 @@ impl Context {
                     .map_err(Fault::Bootstrap)?,
             );
             let p = autotune_fma_reference::profile::Profile::approved_design();
-            // Before the manifest is known, use a first-actual-entry local cap.
-            // A forged/stale argument epoch can never extend this finite wait.
-            let local_end = first
-                .interrupt_100ns
-                .checked_add(p.pilot[0].phase_caps_ns[1] / 100)
-                .ok_or(Fault::Deadline)?;
+            let local_end = args.wait_end(first)?;
             failure.transport = Some(
                 InheritedTransport::new([r0, r1], [w0, w1], budget.clone()).map_err(|e| {
                     failure.code = e.raw_os_error().map(|n| n as u32);
@@ -312,20 +304,14 @@ impl Context {
                         if receipt.interrupt_100ns >= local_end {
                             return Err(Fault::Deadline);
                         }
-                        let bootstrap = Bound::parse(
-                            args,
+                        let bootstrap = args.parse_bootstrap(
                             expected_role,
                             raw.packet().bytes(),
                             first,
                             receipt,
                             &budget,
-                        )
-                        .map_err(Fault::Bootstrap)?;
-                        let run = bootstrap.run();
-                        let expected = match expected_role {
-                            Role::Worker => run.worker_digest(),
-                            Role::Sampler => run.sampler_digest(),
-                        };
+                        )?;
+                        let expected = A::expected_image(&bootstrap, expected_role);
                         if expected.as_bytes() != &image_digest {
                             return Err(Fault::Image);
                         }
@@ -381,5 +367,131 @@ impl Context {
                 Err(failure)
             }
         }
+    }
+}
+
+// This private vocabulary shares only actual endpoint/clock/image preparation.
+// It cannot be extended by callers to adopt arbitrary argument/identity modes.
+trait StartupArguments {
+    type Bound;
+    fn role(&self) -> Role;
+    fn handles(&self) -> [usize; 5];
+    fn epoch(&self) -> Anchor;
+    fn frequency(&self) -> u64;
+    fn wait_end(&self, first: Anchor) -> Result<u64, Fault>;
+    fn parse_bootstrap(
+        &self,
+        role: Role,
+        bytes: &[u8],
+        first: Anchor,
+        receipt: Anchor,
+        budget: &Budget,
+    ) -> Result<Self::Bound, Fault>;
+    fn expected_image(bound: &Self::Bound, role: Role) -> crate::evidence::Digest;
+}
+impl StartupArguments for Arguments {
+    type Bound = Bound;
+    fn role(&self) -> Role {
+        self.role()
+    }
+    fn handles(&self) -> [usize; 5] {
+        self.handles()
+    }
+    fn epoch(&self) -> Anchor {
+        self.epoch()
+    }
+    fn frequency(&self) -> u64 {
+        self.frequency()
+    }
+    fn wait_end(&self, first: Anchor) -> Result<u64, Fault> {
+        let p = autotune_fma_reference::profile::Profile::approved_design();
+        // Existing pilot bootstrap has a finite local cap before its manifest
+        // is known, followed by the original parent/run deadline validation.
+        first
+            .interrupt_100ns
+            .checked_add(p.pilot[0].phase_caps_ns[1] / 100)
+            .ok_or(Fault::Deadline)
+    }
+    fn parse_bootstrap(
+        &self,
+        role: Role,
+        bytes: &[u8],
+        first: Anchor,
+        receipt: Anchor,
+        budget: &Budget,
+    ) -> Result<Bound, Fault> {
+        Bound::parse(self, role, bytes, first, receipt, budget).map_err(Fault::Bootstrap)
+    }
+    fn expected_image(bound: &Bound, role: Role) -> crate::evidence::Digest {
+        let run = bound.run();
+        match role {
+            Role::Worker => run.worker_digest(),
+            Role::Sampler => run.sampler_digest(),
+        }
+    }
+}
+impl StartupArguments for starting_bootstrap::Arguments {
+    type Bound = starting_bootstrap::Bound;
+    fn role(&self) -> Role {
+        Role::Sampler
+    }
+    fn handles(&self) -> [usize; 5] {
+        self.handles()
+    }
+    fn epoch(&self) -> Anchor {
+        self.epoch()
+    }
+    fn frequency(&self) -> u64 {
+        self.frequency()
+    }
+    fn wait_end(&self, first: Anchor) -> Result<u64, Fault> {
+        self.preflight_end_100ns(first)
+            .map_err(Fault::StartingBootstrap)
+    }
+    fn parse_bootstrap(
+        &self,
+        role: Role,
+        bytes: &[u8],
+        first: Anchor,
+        receipt: Anchor,
+        budget: &Budget,
+    ) -> Result<Self::Bound, Fault> {
+        if role != Role::Sampler {
+            return Err(Fault::Role);
+        }
+        starting_bootstrap::Bound::parse(self, bytes, first, receipt, budget)
+            .map_err(Fault::StartingBootstrap)
+    }
+    fn expected_image(bound: &Self::Bound, _: Role) -> crate::evidence::Digest {
+        bound.declaration().image_digest()
+    }
+}
+impl Context<Bound> {
+    /// # Safety
+    /// Call exactly once at process entry. The five validated argument handles
+    /// must be exclusively transferred inherited endpoints, not handles already
+    /// owned elsewhere in this process. Numeric validation cannot prove ownership.
+    /// Caller still owes exact execution scope and native/control admission.
+    #[allow(clippy::result_large_err)]
+    pub unsafe fn from_inherited(
+        args: &Arguments,
+        expected_role: Role,
+        budget: Budget,
+    ) -> Result<Self, Failure> {
+        Self::from_arguments(args, expected_role, budget)
+    }
+}
+impl Context<starting_bootstrap::Bound> {
+    /// Pre-manifest sampler context; no native loading/collection is performed.
+    /// # Safety
+    /// Same exclusive inherited-handle ownership requirement as from_inherited.
+    /// Invoke exactly once at process entry, with separate exact read execution
+    /// approval. The returned scope/image checks do not supply that approval.
+    #[allow(clippy::result_large_err)]
+    pub unsafe fn from_starting_inherited(
+        args: &starting_bootstrap::Arguments,
+        budget: Budget,
+    ) -> Result<Self, Failure> {
+        Self::from_arguments(args, Role::Sampler, budget)
     }
 }

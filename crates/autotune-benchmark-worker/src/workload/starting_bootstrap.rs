@@ -151,6 +151,22 @@ impl Arguments {
     pub fn epoch(&self) -> Anchor {
         self.epoch
     }
+    /// Bound the pre-bootstrap wait by the ORIGINAL session epoch, even before
+    /// the request arrives. This validates actual first entry without a run ID.
+    pub fn preflight_end_100ns(&self, first: Anchor) -> Result<u64, Error> {
+        let mut clock = Clock::temporal(self.frequency, self.epoch.clock_token, self.epoch)
+            .map_err(|_| Error::Clock)?;
+        if first.qpc_before < self.epoch.qpc_after {
+            return Err(Error::Clock);
+        }
+        if clock.observe(first).map_err(|_| Error::Clock)? >= deadline_ns() {
+            return Err(Error::Deadline);
+        }
+        self.epoch
+            .interrupt_100ns
+            .checked_add(deadline_ns() / 100)
+            .ok_or(Error::Deadline)
+    }
 }
 pub struct Frame {
     bytes: Vec<u8>,

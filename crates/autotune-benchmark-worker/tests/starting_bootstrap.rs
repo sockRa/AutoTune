@@ -63,6 +63,74 @@ fn fixed_windows_starting_process_api_links_without_launching() {
     let _resources = Process::<Declaration>::resources;
     let _terminate = Process::<Declaration>::request_termination;
 }
+#[cfg(windows)]
+#[test]
+fn starting_child_context_has_separate_typed_entry_without_adopting_any_handles() {
+    use autotune_benchmark_worker::workload::child_windows::{Context, Failure};
+    type StartingContext = Context<Bound>;
+    type Entry = unsafe fn(&Arguments, Budget) -> Result<StartingContext, Failure>;
+    let _entry: Entry = StartingContext::from_starting_inherited;
+    let _scope = StartingContext::bootstrap;
+    let _raw = StartingContext::raw;
+    let _image = StartingContext::image;
+    let _parts = StartingContext::parts;
+}
+#[test]
+fn child_wait_before_first_packet_uses_original_preflight_deadline() {
+    let b = budget();
+    let s = scope(&b);
+    let d = declaration(&s, &b);
+    let args = arguments(&d);
+    assert_eq!(args.preflight_end_100ns(a(1000)).unwrap(), 100_000_000);
+    assert_eq!(
+        args.preflight_end_100ns(a(9_999_999_900)).unwrap(),
+        100_000_000
+    );
+    assert_eq!(
+        args.preflight_end_100ns(a(10_000_000_000)),
+        Err(Error::Deadline)
+    );
+    assert_eq!(
+        args.preflight_end_100ns(a(11_000_000_000)),
+        Err(Error::Deadline)
+    );
+    let mut bad = a(1000);
+    bad.clock_token = [99; 16];
+    assert_eq!(args.preflight_end_100ns(bad), Err(Error::Clock));
+    let mut bad = a(1000);
+    bad.qpc_after = 0;
+    assert_eq!(args.preflight_end_100ns(bad), Err(Error::Clock));
+}
+#[test]
+fn original_nonzero_epoch_and_absolute_prebootstrap_overflow_are_checked() {
+    let b = budget();
+    let s = scope(&b);
+    let mut draft = s.draft().clone();
+    draft.epoch = a(7_000_000_000);
+    let s = Scope::freeze(draft, &b).unwrap();
+    let d = Declaration::new(&s, a(7_000_001_000), &b).unwrap();
+    let args = arguments(&d);
+    assert_eq!(
+        args.preflight_end_100ns(a(16_999_999_900)).unwrap(),
+        170_000_000
+    );
+    assert_eq!(
+        args.preflight_end_100ns(a(17_000_000_000)),
+        Err(Error::Deadline)
+    );
+    assert_eq!(
+        args.preflight_end_100ns(a(6_999_999_900)),
+        Err(Error::Clock)
+    );
+    let mut tokens = d.arguments([1, 2, 3, 4, 5]).unwrap();
+    tokens[11] = (u64::MAX - 1).to_string();
+    tokens[12] = tokens[11].clone();
+    let args = Arguments::parse(&tokens).unwrap();
+    let mut first = a(7_000_000_000);
+    first.interrupt_100ns = u64::MAX - 1;
+    first.unbiased_100ns = u64::MAX - 1;
+    assert_eq!(args.preflight_end_100ns(first), Err(Error::Deadline));
+}
 fn declaration(s: &Scope, b: &Budget) -> Declaration {
     Declaration::new(s, a(1000), b).unwrap()
 }
