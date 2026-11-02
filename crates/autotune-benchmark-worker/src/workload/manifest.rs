@@ -49,7 +49,7 @@ pub enum Error {
     Plan,
     Clock,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Artifacts {
     pub source_tree: Digest,
     pub lockfile: Digest,
@@ -156,16 +156,7 @@ impl PilotManifest {
                 .map(|(plan, run)| run_value(*plan, Some(run)))
                 .collect()
         };
-        let profile_text = object([
-            ("id", text(&profile.id)),
-            ("scope", text("benchmark_pilot")),
-            ("limits", crate::sampler::manifest::limits_value()),
-            (
-                "plans",
-                Value::Array(profile.pilot.iter().map(|p| run_value(*p, None)).collect()),
-            ),
-        ])
-        .to_canonical();
+        let profile_text = pilot_profile_canonical();
         let profile_digest = Digest::of(Domain::Profile, profile_text.as_bytes());
         let canonical = object([
             ("version", text("1")),
@@ -294,6 +285,9 @@ impl BoundRun<'_> {
     pub fn raw_uuid(&self) -> &str {
         &self.manifest.draft.raw_uuid
     }
+    pub(super) fn manifest_draft(&self) -> &PilotDraft {
+        &self.manifest.draft
+    }
     pub fn raw_pci(&self) -> &str {
         &self.manifest.draft.raw_pci
     }
@@ -343,6 +337,19 @@ fn frame_bytes() -> usize {
 }
 fn text(s: &str) -> Value {
     Value::Text(s.into())
+}
+pub(super) fn pilot_profile_canonical() -> String {
+    let profile = Profile::approved_design();
+    object([
+        ("id", text(&profile.id)),
+        ("scope", text("benchmark_pilot")),
+        ("limits", crate::sampler::manifest::limits_value()),
+        (
+            "plans",
+            Value::Array(profile.pilot.iter().map(|p| run_value(*p, None)).collect()),
+        ),
+    ])
+    .to_canonical()
 }
 fn object(fields: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
     let mut o = Object::new();

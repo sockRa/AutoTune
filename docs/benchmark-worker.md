@@ -1269,3 +1269,60 @@ No independent-agent review, process/native/GPU execution or qualification is
 claimed. Complete pre-manifest/environment/peer/image/consent facts, worker entry,
 native admission, aggregate live export and executed qualification still remain;
 E3 stays partial and Gate B unmet.
+
+## Starting settings before a pilot manifest
+
+`workload::starting` introduces a separate starting-readout scope and immutable
+raw artifact. The request binds session/capture nonce, original clock token/
+frequency/epoch, exact selected UUID/PCI, source/artifact/profile digests and a
+read-scope reference. It contains no invented run ID or placeholder pilot
+manifest. Read approval references and later compute references remain separate
+declarations; a string or digest establishes neither human approval nor truth.
+
+The readout retains entry, every before/after anchor, original scalar fields and
+typed halt. It uses the original ten-second preflight ceiling and temporal clock
+checks without manufacturing a session/run/device monitor binding. The selected
+NVML collector runs only on an already independently supervised serial lane.
+It reads each of the three existing current-setting getters at most once and
+closes that read lane on return, preserving a stop observed during a native
+return. Raw results precede post-call clock checks. Cleanup remains a separate
+supervised operation, and no native execution occurs while creating a scope or
+parsing/validating the artifact.
+
+Scope cloning, raw storage and finalization scratch are reserved before getters.
+Completing a readout requires no later budget reservation, including when other
+ordinary allocations consume the remaining root pool. A failed reservation or
+identity check cannot enter a getter. The explicit fixture producer keeps
+simulated provenance. The strict parent reader checks digest, exact request,
+canonical schema, source tag and raw clock/scalar encodings, retaining contradictions for a
+separate readability decision. Missing clocks, raw vendor failures and fractional
+or mismatched-unit values are not repaired or replaced with defaults.
+
+The reported artifact can validate a pilot declaration's starting reference,
+selected identity, session, original epoch/frequency, source and all seven
+artifact hashes. It rejects reuse of the capture nonce as a pilot run ID and
+checks that capture completion precedes a bound run origin. The parent sampler
+can retain this exact check and compare all three later reported current values;
+a duplicate attempt cannot replace the first result. These operations bind
+reported facts only. They authenticate no peer, native read, environment or
+consent and cannot construct workload `NativeAdmission`. Equality concerns only
+the three captured values, not factory settings or the complete operating state.
+
+Existing settings readability validation and pilot-profile canonical encoding
+are shared without changing their wire/profile bytes. Final source-bound checks
+at baseline `60197df` plus unchanged inventories pass 396 CPU-only tests (323
+integration, 24 probe ABI fakes, 24 feature-library fakes/static, 25 reference/
+prepared), scoped all-feature warning-denied Clippy, formatting and full-workspace/
+all-feature compile/link. Fourteen added cases cover scope/reference/clock binding,
+strict parsing, raw failure retention, one serial readout, stop/clock failures,
+pre-reserved finalization under pressure and the parent's first immutable check.
+Native-source claims used in tests are explicitly fabricated inputs, not proof
+of a native capture. Manifest
+`target/workload-verification/starting-evidence-final-manifest.json`, SHA-256
+`edd78fa59be4b94835e1ad88239378026ead12343e208a17c54a7bf6a2087ef7`.
+No independent-agent review is claimed; no owned sampler/worker, native runtime
+or GPU execution occurred. A dedicated pre-manifest bootstrap/entry/transport and
+supervision path still must compose this collector before any real capture.
+Complete environment/peer/image/consent facts, worker/native admission, aggregate
+live export and executed qualification remain unfinished. E3 remains partial and
+Gate B unmet; the automatic benchmark/search/validation goal is unchanged.

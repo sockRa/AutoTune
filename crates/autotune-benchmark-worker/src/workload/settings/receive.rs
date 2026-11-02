@@ -123,7 +123,7 @@ fn bounded_text(v: &Value, limit: usize) -> Result<String, Block> {
     }
     Ok(s.into())
 }
-fn observation(v: &Value) -> Result<Observation, Block> {
+pub(in crate::workload) fn observation(v: &Value) -> Result<Observation, Block> {
     let o = exact(v, &["kind", "before", "after", "raw"]).map_err(|_| Block::Scope)?;
     let kind = SettingMetric::ALL
         .into_iter()

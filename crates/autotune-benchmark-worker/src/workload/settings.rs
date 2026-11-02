@@ -15,6 +15,7 @@ use autotune_probe::{
     report::{Field, Reading, Reason, SymbolPresence},
 };
 pub(super) use receive::field as parse_field;
+pub(super) use receive::observation as parse_observation;
 pub(super) use receive::parse_anchor;
 pub use receive::ReportedCapture;
 const CAP: usize = 64 * 1024;
@@ -352,58 +353,14 @@ impl Capture {
     /// Readable values at the retained observations. This does not recapture
     /// them, assess age at Start, or grant safety/ownership/consent admission.
     pub fn current(&self) -> Result<Current, Block> {
-        if let Some(halt) = self.draft.halt {
-            return Err(halt);
-        }
-        if self.draft.raw_uuid != self.expected_uuid
-            || self.draft.raw_pci != self.expected_pci
-            || DiscoveryBinding::parse(&self.draft.raw_uuid, &self.draft.raw_pci).is_err()
-        {
-            return Err(Block::Identity);
-        }
-        let mut clock =
-            Clock::new(self.binding.monitor, self.binding.epoch).map_err(|_| Block::Clock)?;
-        let mut last = self.binding.epoch;
-        let mut values = [0i64; 3];
-        for (i, o) in self.draft.observations.iter().enumerate() {
-            if o.kind != SettingMetric::ALL[i] {
-                return Err(Block::Scope);
-            }
-            let before = checked_anchor(&mut clock, &mut last, o.before)?;
-            let after = checked_anchor(&mut clock, &mut last, o.after)?;
-            if before < self.binding.origin_ns || after >= self.binding.setup_boundary() {
-                return Err(Block::Phase);
-            }
-            let field = o.raw.as_ref().ok_or(Block::Missing)?;
-            if field.unit != o.kind.unit() {
-                return Err(Block::Unit);
-            }
-            if field.symbol_presence != SymbolPresence::Present {
-                return Err(Block::Symbol);
-            }
-            let Reading::Available { value } = &field.reading else {
-                return Err(
-                    if matches!(&field.reading,Reading::Unavailable {failure} if failure.reason==Reason::GpuLost)
-                    {
-                        Block::GpuLost
-                    } else {
-                        Block::Missing
-                    },
-                );
-            };
-            let value = value.as_i64().ok_or(Block::Value)?;
-            if (i == 0 && !(1..=10_000_000).contains(&value))
-                || (i > 0 && !(-100_000..=100_000).contains(&value))
-            {
-                return Err(Block::Value);
-            }
-            values[i] = value;
-        }
-        Ok(Current {
-            power_limit_mw: values[0] as u32,
-            graphics_offset_p0_mhz: values[1] as i32,
-            memory_offset_p0_mhz: values[2] as i32,
-        })
+        current_draft(
+            &self.draft,
+            (&self.expected_uuid, &self.expected_pci),
+            Clock::new(self.binding.monitor, self.binding.epoch).map_err(|_| Block::Clock)?,
+            self.binding.epoch,
+            self.binding.origin_ns,
+            self.binding.setup_boundary(),
+        )
     }
     /// Equality of these three observed values only. Not unchanged-complete
     /// settings, write qualification, ownership or baseline comparability.
@@ -442,7 +399,11 @@ pub(super) fn raw_anchor(a: Anchor) -> Value {
         ("unbiased_100ns", Value::U64(a.unbiased_100ns)),
     ])
 }
-fn checked_anchor(clock: &mut Clock, last: &mut Anchor, raw: Option<Anchor>) -> Result<u64, Block> {
+pub(super) fn checked_anchor(
+    clock: &mut Clock,
+    last: &mut Anchor,
+    raw: Option<Anchor>,
+) -> Result<u64, Block> {
     let raw = raw.ok_or(Block::Clock)?;
     if raw.qpc_before < last.qpc_after {
         return Err(Block::Clock);
@@ -524,14 +485,14 @@ pub(super) fn raw_value(f: &Field) -> Value {
         ("reading", reading),
     ])
 }
-fn kind_name(k: SettingMetric) -> &'static str {
+pub(super) fn kind_name(k: SettingMetric) -> &'static str {
     match k {
         SettingMetric::PowerLimit => "power_limit",
         SettingMetric::GraphicsOffsetP0 => "graphics_offset_p0",
         SettingMetric::MemoryOffsetP0 => "memory_offset_p0",
     }
 }
-fn block_name(b: Block) -> &'static str {
+pub(super) fn block_name(b: Block) -> &'static str {
     match b {
         Block::Capacity => "capacity",
         Block::Identity => "identity",
@@ -546,6 +507,66 @@ fn block_name(b: Block) -> &'static str {
         Block::Scope => "scope",
     }
 }
+pub(super) fn current_draft(
+    draft: &Draft,
+    expected: (&str, &str),
+    mut clock: Clock,
+    mut last: Anchor,
+    lower_ns: u64,
+    upper_ns: u64,
+) -> Result<Current, Block> {
+    if let Some(halt) = draft.halt {
+        return Err(halt);
+    }
+    if draft.raw_uuid != expected.0
+        || draft.raw_pci != expected.1
+        || DiscoveryBinding::parse(&draft.raw_uuid, &draft.raw_pci).is_err()
+    {
+        return Err(Block::Identity);
+    }
+
+    let mut values = [0i64; 3];
+    for (i, o) in draft.observations.iter().enumerate() {
+        if o.kind != SettingMetric::ALL[i] {
+            return Err(Block::Scope);
+        }
+        let before = checked_anchor(&mut clock, &mut last, o.before)?;
+        let after = checked_anchor(&mut clock, &mut last, o.after)?;
+        if before < lower_ns || after >= upper_ns {
+            return Err(Block::Phase);
+        }
+        let field = o.raw.as_ref().ok_or(Block::Missing)?;
+        if field.unit != o.kind.unit() {
+            return Err(Block::Unit);
+        }
+        if field.symbol_presence != SymbolPresence::Present {
+            return Err(Block::Symbol);
+        }
+        let Reading::Available { value } = &field.reading else {
+            return Err(
+                if matches!(&field.reading,Reading::Unavailable {failure} if failure.reason==Reason::GpuLost)
+                {
+                    Block::GpuLost
+                } else {
+                    Block::Missing
+                },
+            );
+        };
+        let value = value.as_i64().ok_or(Block::Value)?;
+        if (i == 0 && !(1..=10_000_000).contains(&value))
+            || (i > 0 && !(-100_000..=100_000).contains(&value))
+        {
+            return Err(Block::Value);
+        }
+        values[i] = value;
+    }
+    Ok(Current {
+        power_limit_mw: values[0] as u32,
+        graphics_offset_p0_mhz: values[1] as i32,
+        memory_offset_p0_mhz: values[2] as i32,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

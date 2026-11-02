@@ -118,10 +118,30 @@ struct Harness {
 }
 impl Harness {
     fn new(index: usize, origin: u64, delay: u64, fail: bool) -> Self {
+        Self::with_starting(index, origin, delay, fail, None)
+    }
+    fn with_starting(
+        index: usize,
+        origin: u64,
+        delay: u64,
+        fail: bool,
+        starting: Option<Digest>,
+    ) -> Self {
         let b = Budget::new(32 * 1024 * 1024).unwrap();
         let reserved = b.reserve(12 * 1024 * 1024).unwrap();
         let control = b.partition(2 * 1024 * 1024).unwrap();
         let m = manifest(&b);
+        let m = if let Some(starting) = starting {
+            PilotManifest::parse(
+                m.canonical()
+                    .replace(&digest(13).to_hex(), &starting.to_hex())
+                    .as_bytes(),
+                &b,
+            )
+            .unwrap()
+        } else {
+            m
+        };
         let run = m.bind_run(index, origin).unwrap();
         let binding = WorkerBinding::new(&run, 1_000_000_000, a(0)).unwrap();
         let parent = ParentSampler::new(
@@ -532,4 +552,90 @@ fn a_missed_reentry_slot_clears_the_old_four_pairs_before_a_new_pair_completes()
     assert_eq!(h.parent.fault(), None);
     assert_eq!(h.parent.reentry().consecutive(), 0);
     assert!(!h.parent.reported_screen(Some(a(1_250_000_100))));
+}
+#[test]
+fn parent_retains_exact_starting_reference_and_compares_later_reported_settings_without_permission()
+{
+    use autotune_benchmark_worker::workload::starting::{
+        ReportedSnapshot, Scope, ScopeDraft, Snapshot,
+    };
+    let b = Budget::new(8 * 1024 * 1024).unwrap();
+    let scope = Scope::freeze(
+        ScopeDraft {
+            session: [1; 16],
+            capture_nonce: [77; 16],
+            clock_token: [5; 16],
+            frequency: 1_000_000_000,
+            epoch: a(0),
+            raw_uuid: "GPU-03030303-0303-0303-0303-030303030303".into(),
+            raw_pci: "0000:01:02.0".into(),
+            source_commit: "a".repeat(40),
+            artifacts: Artifacts {
+                source_tree: digest(6),
+                lockfile: digest(7),
+                controller: digest(8),
+                worker: digest(9),
+                sampler: digest(10),
+                ptx: digest(11),
+                protocol: digest(12),
+            },
+            read_approval_ref: "fabricated read scope; no native execution".into(),
+        },
+        &b,
+    )
+    .unwrap();
+    let draft = Draft {
+        raw_uuid: scope.draft().raw_uuid.clone(),
+        raw_pci: scope.draft().raw_pci.clone(),
+        observations: SettingMetric::ALL.map(|kind| Observation {
+            kind,
+            before: Some(a(2000 + kind as u64 * 2000)),
+            after: Some(a(3000 + kind as u64 * 2000)),
+            raw: Some(Field::available(
+                kind.unit(),
+                if kind == SettingMetric::PowerLimit {
+                    215000
+                } else {
+                    0
+                },
+            )),
+        }),
+        halt: None,
+    };
+    let snapshot = Snapshot::fixture(&scope, a(1000), &draft, &b).unwrap();
+    let bytes = snapshot
+        .canonical()
+        .replace("simulated_fixture", "native_getter_path");
+    let reported = ReportedSnapshot::parse(
+        &scope,
+        bytes.as_bytes(),
+        Digest::of(Domain::RawArtifact, bytes.as_bytes()),
+        &b,
+    )
+    .unwrap();
+    let mut h = Harness::with_starting(
+        0,
+        1_000_000_000,
+        100,
+        false,
+        Some(reported.snapshot().digest()),
+    );
+    h.ready();
+    h.settings(true);
+    let run = h.m.bind_run(0, h.origin).unwrap();
+    assert_eq!(
+        h.parent
+            .check_starting(&reported, &run, a(0))
+            .unwrap()
+            .power_limit_mw,
+        215000
+    );
+    let first = h.parent.starting_check();
+    assert!(first.unwrap().1.is_ok());
+    assert!(!h.parent.native_admission_available());
+    assert_eq!(
+        h.parent.check_starting(&reported, &run, a(0)),
+        Err(Fault::Protocol)
+    );
+    assert_eq!(h.parent.starting_check(), first);
 }

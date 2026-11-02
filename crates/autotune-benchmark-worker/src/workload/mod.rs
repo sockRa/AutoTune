@@ -18,6 +18,7 @@ pub mod sampler_entry;
 pub mod sampler_runtime;
 pub mod settings;
 pub mod settings_transport;
+pub mod starting;
 pub mod telemetry;
 pub mod trace;
 pub mod transport;

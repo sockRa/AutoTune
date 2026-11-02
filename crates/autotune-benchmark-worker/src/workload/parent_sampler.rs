@@ -151,10 +151,56 @@ pub struct ParentSampler {
     finishing: bool,
     reported_finished: bool,
     miss_count: usize,
+    starting_check: Option<(crate::evidence::Digest, Result<settings::Current, Fault>)>,
     budget: Budget,
     _metadata: Reservation,
 }
 impl ParentSampler {
+    pub fn starting_check(
+        &self,
+    ) -> Option<(crate::evidence::Digest, Result<settings::Current, Fault>)> {
+        self.starting_check
+    }
+    /// A reference/equality check of reported artifacts, not a native permit.
+    /// The caller retains the complete starting artifact and peer/consent proof.
+    pub fn check_starting(
+        &mut self,
+        starting: &super::starting::ReportedSnapshot,
+        run: &BoundRun<'_>,
+        epoch: Anchor,
+    ) -> Result<settings::Current, Fault> {
+        if self.starting_check.is_some() {
+            self.fail(Fault::Protocol, self.now_ns);
+            return Err(Fault::Protocol);
+        }
+        let result = (|| {
+            if WorkerBinding::new(run, self.binding.monitor.qpc_frequency, epoch).ok()
+                != Some(self.binding)
+            {
+                return Err(Fault::Binding);
+            }
+            let expected = starting
+                .check_run(run, self.binding.monitor.qpc_frequency, epoch)
+                .map_err(|_| Fault::Binding)?;
+            let current = self
+                .current
+                .as_ref()
+                .and_then(|r| r.result().ok())
+                .ok_or(Fault::Settings)?
+                .capture()
+                .current()
+                .map_err(|_| Fault::Settings)?;
+            if expected != current {
+                return Err(Fault::Settings);
+            }
+            Ok(current)
+        })();
+        self.starting_check = Some((starting.snapshot().digest(), result));
+        if let Err(e) = result {
+            self.fail(e, self.now_ns);
+        }
+        result
+    }
     pub fn ready(&self) -> Option<&WorkerReceived> {
         self.ready.as_ref()
     }
@@ -316,6 +362,7 @@ impl ParentSampler {
             finishing: false,
             reported_finished: false,
             miss_count: 0,
+            starting_check: None,
             budget,
             _metadata: metadata,
         };
