@@ -1326,3 +1326,47 @@ supervision path still must compose this collector before any real capture.
 Complete environment/peer/image/consent facts, worker/native admission, aggregate
 live export and executed qualification remain unfinished. E3 remains partial and
 Gate B unmet; the automatic benchmark/search/validation goal is unchanged.
+
+### Pre-manifest starting bootstrap and fixed launch — 2026-11-02
+
+`workload::starting_bootstrap` adds a separate `--pilot-starting-v1` argument
+vocabulary and canonical first-frame request for the existing fixed sampler
+image. Its immutable declaration binds the starting scope and original parent
+entry. Five unique nonzero inherited-handle tokens, scope digest, frequency,
+epoch and declaration digest are parsed without adopting handles. The strict
+reader checks the exact request, original epoch, parent/child/receipt chronology
+and original-epoch 10 s preflight ceiling; a late child cannot renew that budget.
+No pilot manifest or run identity is fabricated. Canonical wrapper re-encoding
+and byte/frame/codec reservations precede allocation.
+
+The distinct one-shot bootstrap sender returns the exact unsent frame on failure,
+retains its first typed error and cannot retry after failure or successful queue
+handoff. Queue handoff is not pipe completion or child receipt. Shared
+`CancelQueue` closes an already-created ordinary sender after cancellation.
+
+The actual Windows `Launch`/`Process` implementation now uses a sealed declaration
+parameter with the existing pilot declaration as its default. The only additional
+implementation is the starting declaration, which selects the same measured
+sampler image, sampler job limits and exact child-only empty environment. Shared
+image hashing/lock, private suspended-process/job startup, allowlisted handles,
+retained failures and original process/resource/exit observation paths remain
+the same. A starting process exposes only its separate bootstrap sender; it
+cannot acquire a pilot worker/settings sender. This is compiled source, not an
+executed process or aggregate session-resource qualification.
+
+Eight added CPU/static tests cover roundtrip/scope, distinct modes and handle
+tokens, original deadlines and clock faults, foreign/tampered/truncated frames,
+one-shot exact-owner failures, capacity, cancellation and Windows API compilation.
+The executable still needs the starting child context, control/entry and response
+composition. Binding bytes or declaring a read approval reference grants no
+native read/compute permission. E3 and Gate B remain open.
+
+Source-bound verification at baseline `76f85a5b0f2383a6b30192caf9a1a3e013016218`
+plus unchanged source inventories passes 404 CPU-only tests (331 integration,
+24 probe ABI fakes, 24 worker feature-library fakes/static, 25 reference/prepared),
+formatting, scoped all-feature warning-denied Clippy and full-workspace/all-target/
+all-feature compile/link. Manifest
+`target/workload-verification/starting-bootstrap-release-manifest.json`, SHA-256
+`7b58f64a3bc5bb2e725a9772db71e0c7d85cbee9d5d8638495ba015b8e43263b`.
+Both pinned old matrix images remain unchanged. No independent-agent review,
+owned-process execution, native loading or GPU execution occurred.

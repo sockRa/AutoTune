@@ -4,10 +4,57 @@ pub use super::FailedLaunch as RetainedFailure;
 use super::*;
 use crate::workload::{
     launch::{CancelQueue, Declaration, Role},
+    starting_bootstrap,
     transport::{Queue, SendFailure, Sender},
     windows_transport::{InheritedTransport, Receive},
     wire::Direction,
 };
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for crate::workload::launch::Declaration {}
+    impl Sealed for crate::workload::starting_bootstrap::Declaration {}
+}
+/// Closed vocabulary: only the two fixed, measured pilot declarations can use
+/// this process core. Pre-manifest startup never invents a WorkerBinding.
+pub trait FixedDeclaration: sealed::Sealed + Send + 'static {
+    type Binding: Copy;
+    fn launch_role(&self) -> Role;
+    fn launch_binding(&self) -> Self::Binding;
+    fn launch_image(&self) -> crate::evidence::Digest;
+    fn launch_arguments(&self, handles: [usize; 5]) -> io::Result<Vec<String>>;
+}
+impl FixedDeclaration for Declaration {
+    type Binding = crate::workload::wire::WorkerBinding;
+    fn launch_role(&self) -> Role {
+        self.role()
+    }
+    fn launch_binding(&self) -> Self::Binding {
+        self.binding()
+    }
+    fn launch_image(&self) -> crate::evidence::Digest {
+        self.image_digest()
+    }
+    fn launch_arguments(&self, handles: [usize; 5]) -> io::Result<Vec<String>> {
+        self.arguments(handles)
+            .map_err(|_| io::Error::other("pilot launch arguments"))
+    }
+}
+impl FixedDeclaration for starting_bootstrap::Declaration {
+    type Binding = crate::evidence::Digest;
+    fn launch_role(&self) -> Role {
+        Role::Sampler
+    }
+    fn launch_binding(&self) -> Self::Binding {
+        self.scope_digest()
+    }
+    fn launch_image(&self) -> crate::evidence::Digest {
+        self.image_digest()
+    }
+    fn launch_arguments(&self, handles: [usize; 5]) -> io::Result<Vec<String>> {
+        self.arguments(handles)
+            .map_err(|_| io::Error::other("starting launch arguments"))
+    }
+}
 fn check(shared: &SharedLaunch) -> io::Result<()> {
     if shared.cancelled.load(Ordering::Acquire) {
         Err(io::Error::from_raw_os_error(ERROR_OPERATION_ABORTED as i32))
@@ -16,8 +63,8 @@ fn check(shared: &SharedLaunch) -> io::Result<()> {
     }
 }
 
-pub struct Process {
-    declaration: Declaration,
+pub struct Process<D: FixedDeclaration = Declaration> {
+    declaration: D,
     process: OwnedHandle,
     shared: SharedLaunch,
     _image: File,
@@ -29,27 +76,28 @@ pub struct Process {
     sender_taken: AtomicBool,
     _metadata: super::super::budget::Reservation,
 }
-pub struct ProcessQueue<'a> {
-    process: &'a Process,
+pub struct ProcessQueue<'a, D: FixedDeclaration = Declaration> {
+    process: &'a Process<D>,
 }
-impl Queue for ProcessQueue<'_> {
+impl<D: FixedDeclaration> Queue for ProcessQueue<'_, D> {
     fn try_send(&mut self, lane: Lane, bytes: &[u8]) -> Result<(), SendFailure> {
         self.process.transport.queue_copy(lane, bytes)
     }
 }
-impl Process {
+impl<D: FixedDeclaration> Process<D> {
     pub fn reserved_control_budget(&self) -> Budget {
         self.transport.reserved_control_budget()
     }
-    fn launch(declaration: Declaration, budget: Budget, shared: SharedLaunch) -> io::Result<Self> {
+    fn launch(declaration: D, budget: Budget, shared: SharedLaunch) -> io::Result<Self> {
         check(&shared)?;
         // Same bounded hashing/UTF-16/attribute-list allowance as the existing
         // sampler launcher, acquired before file/path/pipe/thread construction.
         let metadata = budget
             .reserve(1024 * 1024)
             .map_err(|_| io::Error::other("pilot launch metadata capacity"))?;
-        let (path, image, digest) = measure_path(sibling_path(declaration.role().image_name())?)?;
-        if &digest != declaration.image_digest().as_bytes() {
+        let (path, image, digest) =
+            measure_path(sibling_path(declaration.launch_role().image_name())?)?;
+        if &digest != declaration.launch_image().as_bytes() {
             return Err(io::Error::other("pilot image digest mismatch"));
         }
         let (parent_tx0, child_rx0) = pipe(true)?;
@@ -63,11 +111,9 @@ impl Process {
             child_tx1.as_raw_handle(),
             shared.stop.as_raw_handle(),
         ];
-        let arguments = declaration
-            .arguments(handles.map(|h| h as usize))
-            .map_err(|_| io::Error::other("pilot launch arguments"))?;
+        let arguments = declaration.launch_arguments(handles.map(|h| h as usize))?;
         let command = format!("\"{}\" {}", path.display(), arguments.join(" "));
-        let environment = declaration.role().environment();
+        let environment = declaration.launch_role().environment();
         let transport =
             InheritedTransport::new([parent_rx0, parent_rx1], [parent_tx0, parent_tx1], budget)?;
         check(&shared)?;
@@ -144,7 +190,7 @@ impl Process {
             _metadata: metadata,
         })
     }
-    pub fn declaration(&self) -> &Declaration {
+    pub fn declaration(&self) -> &D {
         &self.declaration
     }
     pub fn image(&self) -> (&std::path::Path, [u8; 32]) {
@@ -166,6 +212,8 @@ impl Process {
         self.termination = Some(result.as_ref().map(|_| ()).map_err(raw_code));
         result
     }
+}
+impl Process<Declaration> {
     /// Parent outgoing frames bind this exact declaration; stop closes ordinary
     /// queue admission even for a sender created before the cancellation race.
     pub fn sender(
@@ -185,6 +233,30 @@ impl Process {
             budget,
         )
     }
+}
+impl Process<starting_bootstrap::Declaration> {
+    pub fn starting_sender(
+        &self,
+        budget: &Budget,
+    ) -> Result<
+        starting_bootstrap::Sender<CancelQueue<ProcessQueue<'_, starting_bootstrap::Declaration>>>,
+        SendFailure,
+    > {
+        if self.sender_taken.swap(true, Ordering::AcqRel) {
+            return Err(SendFailure::Closed);
+        }
+        starting_bootstrap::Sender::new(
+            CancelQueue::new(
+                ProcessQueue { process: self },
+                self.shared.cancelled.clone(),
+            ),
+            &self.declaration,
+            budget,
+        )
+        .map_err(|_| SendFailure::Capacity)
+    }
+}
+impl<D: FixedDeclaration> Process<D> {
     pub fn receive(&self, clock: impl FnMut() -> Option<crate::monitor::Anchor>) -> Receive {
         self.transport.receive(clock)
     }
@@ -209,7 +281,7 @@ impl Process {
         self.transport.shutdown()
     }
 }
-impl Drop for Process {
+impl<D: FixedDeclaration> Drop for Process<D> {
     fn drop(&mut self) {
         // The launch observer may still hold the shared job handle. Do not
         // depend on its eventual Drop to request containment after owner loss.
@@ -222,24 +294,24 @@ impl Drop for Process {
 /// Bounded background startup; file hashing and process creation never run on
 /// the controller's deadline path. Callers must already have exact scoped
 /// process/native approval; declaration hashes are not that approval.
-pub struct Launch {
+pub struct Launch<D: FixedDeclaration = Declaration> {
     role: Role,
-    binding: crate::workload::wire::WorkerBinding,
+    binding: D::Binding,
     shared: SharedLaunch,
-    result: Receiver<io::Result<Process>>,
+    result: Receiver<io::Result<Process<D>>>,
     thread: JoinHandle<()>,
     transferred: bool,
     observed: bool,
     _metadata: super::super::budget::Reservation,
 }
-impl Launch {
-    pub fn start(declaration: Declaration, budget: Budget) -> io::Result<Self> {
-        let role = declaration.role();
-        let binding = declaration.binding();
+impl<D: FixedDeclaration> Launch<D> {
+    pub fn start(declaration: D, budget: Budget) -> io::Result<Self> {
+        let role = declaration.launch_role();
+        let binding = declaration.launch_binding();
         let metadata = budget
             .reserve(std::mem::size_of::<Self>() + 4096)
             .map_err(|_| io::Error::other("pilot launch capacity"))?;
-        let (commit, cpu_ns) = declaration.role().limits();
+        let (commit, cpu_ns) = role.limits();
         let shared = SharedLaunch::with_job(job_limits(commit, cpu_ns)?)?;
         let background = shared.clone();
         let (send, result) = mpsc::sync_channel(1);
@@ -267,7 +339,7 @@ impl Launch {
     pub fn role(&self) -> Role {
         self.role
     }
-    pub fn binding(&self) -> crate::workload::wire::WorkerBinding {
+    pub fn binding(&self) -> D::Binding {
         self.binding
     }
     pub fn request_stop(&self) -> io::Result<()> {
@@ -281,7 +353,7 @@ impl Launch {
     /// A late cancelled result is still returned as its original observable
     /// process owner. It stays cancelled, requests termination and cannot send
     /// ordinary work; never discard a live handle to turn it into a plain error.
-    pub fn poll(&mut self) -> Option<io::Result<Process>> {
+    pub fn poll(&mut self) -> Option<io::Result<Process<D>>> {
         if self.observed {
             return None;
         }
@@ -307,7 +379,7 @@ impl Launch {
         self.thread.is_finished()
     }
 }
-impl Drop for Launch {
+impl<D: FixedDeclaration> Drop for Launch<D> {
     fn drop(&mut self) {
         if !self.transferred {
             let _ = self.request_termination();

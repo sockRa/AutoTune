@@ -86,6 +86,27 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 pre-manifest starting bootstrap/launch continuation: the separate
+  immutable starting scope now has a fixed sampler launch declaration, bounded
+  14-token argument mode and canonical first frame. No pilot run/manifest or
+  WorkerBinding placeholder is used. Original parent entry is hashed into the
+  declaration; child reading validates scope/epoch/frequency, entry/first/receipt
+  chronology and the absolute original-epoch 10 s preflight ceiling. Strict
+  re-encoding rejects alternate wrapper bytes. A distinct one-shot sender keeps
+  exact unsent owners and first typed faults, and honors cancellation even when
+  constructed before stop. The actual Windows launch core is shared through a
+  sealed two-declaration vocabulary, preserving image lock/hash, suspended
+  creation/job assignment, retained failures/process owners, resource/exit
+  observations and cancellation. Starting declarations can only use the fixed
+  sampler image and sampler limits/environment; pilot defaults remain intact.
+  Child inherited-context/entry/control/readout-response composition is still
+  unfinished, and the new flag is not yet routed by the executable. Per-process
+  limits are not an aggregate session CPU proof. No native-admission issuer,
+  process/native/GPU execution or independent-agent review is claimed.
+  Final verification and publication receipt are recorded in ROADMAP.md. Initial
+  compile-test errors (explicit impl-Trait generic argument, then Clippy type
+  complexity) were corrected with a typed function alias before final checks.
+
 - 2026-11-02 common actual child bootstrap: first pilot frame now binds role,
   declaration, parent setup entry and canonical manifest through the existing
   bounded sender/pipe path. Concrete Windows context composes exclusive inherited

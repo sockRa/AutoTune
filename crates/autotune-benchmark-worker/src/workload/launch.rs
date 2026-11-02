@@ -242,7 +242,7 @@ impl Arguments {
         Err(Error::Binding)
     }
 }
-fn valid_handles(handles: [usize; 5]) -> Result<(), Error> {
+pub(super) fn valid_handles(handles: [usize; 5]) -> Result<(), Error> {
     for (i, h) in handles.iter().enumerate() {
         if *h == 0 || *h == usize::MAX || handles[..i].contains(h) {
             return Err(Error::Arguments);
@@ -250,7 +250,7 @@ fn valid_handles(handles: [usize; 5]) -> Result<(), Error> {
     }
     Ok(())
 }
-fn decimal(s: &str) -> Result<u64, Error> {
+pub(super) fn decimal(s: &str) -> Result<u64, Error> {
     if s.is_empty() || (s.len() > 1 && s.starts_with('0')) || !s.bytes().all(|b| b.is_ascii_digit())
     {
         return Err(Error::Arguments);
