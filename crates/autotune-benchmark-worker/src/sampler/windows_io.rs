@@ -26,14 +26,14 @@ use windows_sys::Win32::{
     System::IO::CancelSynchronousIo,
 };
 
-pub(super) struct Frame {
+pub(crate) struct Frame {
     pub bytes: Vec<u8>,
     _reservation: Option<Reservation>,
     pub rejection: Option<Rejection>,
     completion: Option<Arc<AtomicUsize>>,
 }
 impl Frame {
-    pub(super) fn into_packet(mut self) -> super::framing::Packet {
+    pub(crate) fn into_packet(mut self) -> super::framing::Packet {
         super::framing::Packet::from_parts(
             std::mem::take(&mut self.bytes),
             self._reservation.take().expect("frame charge"),
@@ -48,7 +48,7 @@ impl Drop for Frame {
         }
     }
 }
-pub(super) struct Transport {
+pub(crate) struct Transport {
     incoming: [Receiver<Frame>; 2],
     outgoing: [SyncSender<Frame>; 2],
     threads: Vec<JoinHandle<()>>,
@@ -61,7 +61,7 @@ pub(super) struct Transport {
     faults: [Arc<FaultSlot<Frame>>; 4],
     readers_done: [Arc<AtomicBool>; 2],
 }
-pub(super) struct ControlPort {
+pub(crate) struct ControlPort {
     incoming: Receiver<Frame>,
     outgoing: SyncSender<Frame>,
     budget: Budget,
@@ -78,7 +78,7 @@ impl ControlPort {
             .reserve(codec_bytes())
             .map_err(|_| io::Error::other("control codec capacity"))
     }
-    pub(super) fn receive(&self) -> io::Result<Option<Frame>> {
+    pub(crate) fn receive(&self) -> io::Result<Option<Frame>> {
         if let Ok(Some(frame)) = self.fault.take() {
             return Ok(Some(frame));
         }
@@ -114,6 +114,32 @@ impl ControlPort {
                 completion: Some(self.outstanding.clone()),
             })
             .map_err(|_| io::Error::other("control queue full/closed"))
+    }
+    pub(crate) fn send_borrowed(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(), crate::workload::transport::SendFailure> {
+        use crate::workload::transport::{QueuedBytes, SendFailure};
+        let code = self.error.load(Ordering::Acquire);
+        if code != 0 {
+            return Err(SendFailure::Os(code));
+        }
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SendFailure::Closed);
+        }
+        let (bytes, reservation) = QueuedBytes::copy(bytes, &self.budget)?.into_parts();
+        self.outstanding.fetch_add(1, Ordering::AcqRel);
+        self.outgoing
+            .try_send(Frame {
+                bytes,
+                _reservation: Some(reservation),
+                rejection: None,
+                completion: Some(self.outstanding.clone()),
+            })
+            .map_err(|failed| match failed {
+                mpsc::TrySendError::Full(_) => SendFailure::Queue,
+                mpsc::TrySendError::Disconnected(_) => SendFailure::Closed,
+            })
     }
 }
 fn index(lane: Lane) -> usize {
@@ -199,7 +225,7 @@ impl Sink for PipeWrite<'_> {
     }
 }
 impl Transport {
-    pub(super) fn take_control(&mut self) -> ControlPort {
+    pub(crate) fn take_control(&mut self) -> ControlPort {
         let (_, empty) = mpsc::channel();
         ControlPort {
             incoming: std::mem::replace(&mut self.incoming[1], empty),
@@ -213,7 +239,7 @@ impl Transport {
             write_fault: self.faults[3].clone(),
         }
     }
-    pub(super) fn new(
+    pub(crate) fn new(
         read: [OwnedHandle; 2],
         write: [OwnedHandle; 2],
         budget: Budget,
@@ -395,6 +421,36 @@ impl Transport {
             })
             .map_err(|_| io::Error::other("outgoing queue closed/full"))
     }
+    /// The workload producer retains its original encoded frame until this
+    /// charged copy enters the queue. All later write faults retain the copy.
+    pub(crate) fn send_borrowed(
+        &self,
+        lane: Lane,
+        bytes: &[u8],
+    ) -> Result<(), crate::workload::transport::SendFailure> {
+        use crate::workload::transport::{QueuedBytes, SendFailure};
+        let code = self.error.load(Ordering::Acquire);
+        if code != 0 {
+            return Err(SendFailure::Os(code));
+        }
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SendFailure::Closed);
+        }
+        let copy = QueuedBytes::copy(bytes, self.lane_budget(lane))?;
+        let (bytes, reservation) = copy.into_parts();
+        self.outstanding[index(lane)].fetch_add(1, Ordering::AcqRel);
+        self.outgoing[index(lane)]
+            .try_send(Frame {
+                bytes,
+                _reservation: Some(reservation),
+                rejection: None,
+                completion: Some(self.outstanding[index(lane)].clone()),
+            })
+            .map_err(|failed| match failed {
+                mpsc::TrySendError::Full(_) => SendFailure::Queue,
+                mpsc::TrySendError::Disconnected(_) => SendFailure::Closed,
+            })
+    }
     pub(super) fn codec_reservation(&self, lane: Lane) -> io::Result<Reservation> {
         self.lane_budget(lane)
             .reserve(codec_bytes())
@@ -406,7 +462,24 @@ impl Transport {
             Lane::Control => &self.control_budget,
         }
     }
-    pub(super) fn receive(&self) -> io::Result<Option<(Lane, Frame)>> {
+    pub(crate) fn receive_ordinary(&self) -> io::Result<Option<(Lane, Frame)>> {
+        // Once control ownership is split, the producer must never steal a
+        // control rejection/Stop from the independent control thread.
+        for i in [0, 2] {
+            if let Ok(Some(frame)) = self.faults[i].take() {
+                return Ok(Some((Lane::Ordinary, frame)));
+            }
+        }
+        if let Ok(frame) = self.incoming[0].try_recv() {
+            return Ok(Some((Lane::Ordinary, frame)));
+        }
+        let failure = self.error.load(Ordering::Acquire);
+        if failure != 0 {
+            return Err(io::Error::from_raw_os_error(failure as i32));
+        }
+        Ok(None)
+    }
+    pub(crate) fn receive(&self) -> io::Result<Option<(Lane, Frame)>> {
         // Already received raw evidence precedes transport-loss notification.
         for i in [1, 3, 0, 2] {
             if let Ok(Some(frame)) = self.faults[i].take() {
@@ -433,7 +506,7 @@ impl Transport {
         }
         Ok(None)
     }
-    pub(super) fn output_drained(&self) -> bool {
+    pub(crate) fn output_drained(&self) -> bool {
         self.outstanding
             .iter()
             .all(|n| n.load(Ordering::Acquire) == 0)
@@ -441,7 +514,7 @@ impl Transport {
     }
     /// Check BEFORE a receive that returns empty. Once true, the readers can
     /// enqueue no further packets; that ordering prevents a false drained race.
-    pub(super) fn inputs_finished(&self) -> bool {
+    pub(crate) fn inputs_finished(&self) -> bool {
         self.readers_done
             .iter()
             .all(|done| done.load(Ordering::Acquire))
@@ -455,7 +528,7 @@ impl Transport {
     }
     /// Each result retains cancellation status and observed thread completion;
     /// false remains unresolved. No wait/join, and no TerminateThread.
-    pub(super) fn shutdown(&self) -> [super::runtime::IoObservation; 4] {
+    pub(crate) fn shutdown(&self) -> [super::runtime::IoObservation; 4] {
         let results = cancel(&self.closed, &self.threads);
         std::array::from_fn(|i| super::runtime::IoObservation {
             lane: if i % 2 == 0 {

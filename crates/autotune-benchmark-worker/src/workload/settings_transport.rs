@@ -17,6 +17,8 @@ const CAP: usize = 64 * 1024;
 
 pub struct Frame {
     bytes: Vec<u8>,
+    pub(super) binding: Digest,
+    pub(super) response: bool,
     _allocation: Reservation,
 }
 impl Frame {
@@ -24,7 +26,12 @@ impl Frame {
         &self.bytes
     }
 }
-fn encode(budget: &Budget, value: impl FnOnce() -> Value) -> Result<Frame, Block> {
+fn encode(
+    budget: &Budget,
+    binding: WorkerBinding,
+    response: bool,
+    value: impl FnOnce() -> Value,
+) -> Result<Frame, Block> {
     let _codec = budget.reserve(CAP * 16).map_err(|_| Block::Capacity)?;
     let allocation = budget
         .reserve(CAP + std::mem::size_of::<Frame>())
@@ -40,6 +47,8 @@ fn encode(budget: &Budget, value: impl FnOnce() -> Value) -> Result<Frame, Block
     bytes.extend_from_slice(text.as_bytes());
     Ok(Frame {
         bytes,
+        binding: binding.transport_digest(),
+        response,
         _allocation: allocation,
     })
 }
@@ -212,7 +221,7 @@ impl Request {
         if capture.binding != self.binding {
             return Err(Block::Scope);
         }
-        encode(&self.budget, || {
+        encode(&self.budget, self.binding, true, || {
             header(
                 self.binding,
                 "response",
@@ -309,6 +318,10 @@ impl Parent {
     pub fn stop(&mut self) {
         self.fault.get_or_insert(Block::Stopped);
     }
+    pub(super) fn reject_transport(&mut self, fault: Block) {
+        self.received = true;
+        self.fault.get_or_insert(fault);
+    }
     /// Independent parent supervision. Does not wait for an NVML return.
     pub fn tick(&mut self, anchor: Anchor) -> Result<(), Block> {
         let result = observe(&mut self.clock, &mut self.last, anchor).and_then(|n| {
@@ -330,7 +343,7 @@ impl Parent {
         }
         self.issued = true;
         self.tick(issued)?;
-        match encode(&self.budget, || {
+        match encode(&self.budget, self.binding, false, || {
             header(
                 self.binding,
                 "request",
@@ -435,6 +448,8 @@ impl Parent {
             capture,
             frame: Frame {
                 bytes: bytes.to_vec(),
+                binding: self.binding.transport_digest(),
+                response: true,
                 _allocation: allocation,
             },
             fault: self.fault,

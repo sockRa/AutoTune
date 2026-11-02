@@ -28,7 +28,7 @@ pub mod supervisor;
 #[cfg(windows)]
 pub mod windows;
 #[cfg(windows)]
-mod windows_io;
+pub(crate) mod windows_io;
 pub mod wire;
 pub(crate) mod wire_model;
 pub mod writer;

@@ -311,6 +311,91 @@ fn complete_prepared_plan_flows_through_actual_codec_and_parent_audit() {
     );
 }
 #[test]
+fn producer_uses_windows_handoff_path_and_retains_frame_on_queue_failure() {
+    use autotune_benchmark_worker::{
+        sampler::framing::{Framer, ReadStep, Source},
+        workload::transport::{Queue, QueuedBytes, RawReceived, SendFailure, Sender},
+    };
+    use std::{cell::RefCell, rc::Rc};
+    struct QueueFixture {
+        b: Budget,
+        copy: Rc<RefCell<Option<QueuedBytes>>>,
+        reject: Arc<AtomicBool>,
+    }
+    impl Queue for QueueFixture {
+        fn try_send(&mut self, _: Lane, bytes: &[u8]) -> Result<(), SendFailure> {
+            if self.reject.load(Ordering::SeqCst) {
+                return Err(SendFailure::Queue);
+            }
+            *self.copy.borrow_mut() = Some(QueuedBytes::copy(bytes, &self.b)?);
+            Ok(())
+        }
+    }
+    struct Bytes<'a>(&'a [u8]);
+    impl Source for Bytes<'_> {
+        fn read(&mut self, out: &mut [u8]) -> ReadStep {
+            let n = out.len().min(self.0.len());
+            out[..n].copy_from_slice(&self.0[..n]);
+            self.0 = &self.0[n..];
+            ReadStep {
+                reported: n,
+                error: None,
+            }
+        }
+    }
+    let b = Budget::new(16 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let mut f = fixture(&b, &m, 0);
+    let copy = Rc::new(RefCell::new(None));
+    let reject = Arc::new(AtomicBool::new(false));
+    let mut sink = Sender::new(
+        QueueFixture {
+            b: b.clone(),
+            copy: copy.clone(),
+            reject: reject.clone(),
+        },
+        f.binding,
+        Direction::FromWorker,
+        &b,
+    )
+    .unwrap();
+    f.producer.start_fixture(start(&m, f.binding)).unwrap();
+    f.producer.advance(&mut sink);
+    f.producer.advance(&mut sink);
+    let copied = copy.borrow_mut().take().unwrap();
+    let packet = Framer::new(b.clone())
+        .unwrap()
+        .read(&mut Bytes(copied.bytes()));
+    let mut rx = Channel::new(f.binding, Lane::Ordinary, Direction::FromWorker, b.clone()).unwrap();
+    let received = RawReceived::new(
+        Lane::Ordinary,
+        packet,
+        Some(a(f.time.load(Ordering::SeqCst))),
+    )
+    .decode_worker(&mut rx);
+    let mut audit = Audit::new(f.binding, a(2000), &b).unwrap();
+    assert_eq!(
+        audit
+            .observe(received.message().unwrap(), received.raw().receipt())
+            .unwrap()
+            .warmup,
+        1
+    );
+    reject.store(true, Ordering::SeqCst);
+    f.producer.advance(&mut sink);
+    f.producer.advance(&mut sink);
+    assert_eq!(f.producer.end(), Some(End::Fault(Fault::Transport)));
+    assert_eq!(sink.fault(Lane::Ordinary), Some(SendFailure::Queue));
+    let retained = f.producer.failed_frame().unwrap().as_bytes().as_ptr();
+    f.producer.advance(&mut sink);
+    assert_eq!(
+        f.producer.failed_frame().unwrap().as_bytes().as_ptr(),
+        retained
+    );
+    assert_eq!(f.stats.submits.load(Ordering::SeqCst), 2);
+    assert!(copy.borrow().is_none());
+}
+#[test]
 fn stop_during_inflight_drains_original_dispatch_without_a_successor() {
     let b = Budget::new(16 * 1024 * 1024).unwrap();
     let m = manifest(&b);

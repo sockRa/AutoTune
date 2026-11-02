@@ -55,6 +55,10 @@ impl WorkerBinding {
     pub fn monitor(self) -> Binding {
         self.monitor
     }
+    // Call only while holding codec storage: the canonical binding is allocated.
+    pub(super) fn transport_digest(self) -> Digest {
+        Digest::of(Domain::RawArtifact, self.value().to_canonical().as_bytes())
+    }
     pub(super) fn elapsed(self, a: Anchor) -> Result<u64, WireError> {
         Clock::new(self.monitor, self.epoch)
             .map_err(|_| WireError::Binding)?
@@ -395,6 +399,9 @@ impl Message {
 }
 pub struct EncodedFrame {
     bytes: Vec<u8>,
+    pub(super) binding: Digest,
+    pub(super) lane: Lane,
+    pub(super) direction: Direction,
     _allocation: Reservation,
 }
 impl EncodedFrame {
@@ -421,6 +428,9 @@ pub struct Channel {
     _metadata: Reservation,
 }
 impl Channel {
+    pub(super) fn lane(&self) -> Lane {
+        self.lane
+    }
     /// Encode an owned observed trace only on its original execution binding.
     pub fn encode_traced(
         &mut self,
@@ -492,7 +502,10 @@ impl Channel {
             .budget
             .reserve(cap * 16)
             .map_err(|_| WireError::Capacity)?;
-        let mut allocation = self.budget.reserve(cap).map_err(|_| WireError::Capacity)?;
+        let mut allocation = self
+            .budget
+            .reserve(cap + std::mem::size_of::<EncodedFrame>())
+            .map_err(|_| WireError::Capacity)?;
         let value = object([
             ("version", Value::Text("1".into())),
             ("role", Value::Text("worker".into())),
@@ -513,10 +526,13 @@ impl Channel {
         bytes.extend_from_slice(&(len as u32).to_le_bytes());
         bytes.extend_from_slice(encoded.as_bytes());
         allocation
-            .shrink_to(bytes.capacity())
+            .shrink_to(bytes.capacity() + std::mem::size_of::<EncodedFrame>())
             .map_err(|_| WireError::Capacity)?;
         Ok(EncodedFrame {
             bytes,
+            binding: self.binding.transport_digest(),
+            lane: self.lane,
+            direction: self.direction,
             _allocation: allocation,
         })
     }

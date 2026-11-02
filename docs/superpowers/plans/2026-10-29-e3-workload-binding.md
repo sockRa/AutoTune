@@ -86,6 +86,31 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 actual Windows pipe bridge continuation: connect encoded worker and
+  settings frames to the existing bounded synchronous pipe workers. Sender is
+  the producer's actual FrameSink; full binding/lane/direction metadata remains
+  immutable without changing canonical wire bytes. Reserve the destination copy
+  before allocation, return the exact original owner on failed handoff, and retain
+  queued copies on partial OS writes. A one-shot Windows sender prevents reset;
+  optional control ownership splits before sender creation to keep independent
+  control polling off a blocking driver thread. Ordinary polling never consumes
+  the split control receiver or its fault slots. Raw packet/clock/rejection and
+  decoded result stay owned together through worker/settings parent decoding.
+  Readonly sampler behavior and executable modes remain unchanged. Baseline
+  `a433a3d` plus unchanged source inventories passes **302 CPU-only tests**
+  (236 integration, 22 probe ABI fakes, 19 worker library, 25 reference/prepared),
+  scoped all-feature warning-denied Clippy, formatting and full-workspace/
+  all-feature compile/link. Manifest `target/workload-verification/windows-bridge-final-manifest.json`,
+  SHA-256 `38e5d6292f0fc18e743ec098032fb847a4b2750d82c3c6dfbb18b45f9acca36f`.
+  Six new handoff/ingress tests, one producer integration and one compile-time
+  Send assertion cover this seam. Local source/contract inspection completed;
+  no independent-agent review is claimed. Pinned old matrix images still match.
+  Concrete Windows pipe behavior is compiled, not executed; no native/process/
+  GPU run. Prior exchange `2ebad35` passed hosted run 41404479033 on both platforms.
+  Fixed worker launch/entry, actual pilot-sampler dispatch, full parent facts/
+  safety/re-entry/consent admission and aggregate live session export remain open;
+  NativeAdmission still has no issuer. Publication receipt belongs in ROADMAP.md.
+
 - 2026-11-02 settings exchange continuation: separate bounded
   `pilot_settings_sampler` request/response framing connects the selected
   current-setting collector and strict parent ReportedCapture reader. One

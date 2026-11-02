@@ -803,3 +803,53 @@ CPU tests cover encoded end-to-end exchange, raw scalar/error/clock round trips,
 binding/schema/digest tampering, replay, stop/late receipt, original relative and
 cumulative setup boundaries, pre/post-getter window closure and capacity failure.
 No native getter, process fixture or GPU workload executes in these tests.
+
+## Workload Windows pipe bridge
+
+`workload::windows_transport::InheritedTransport` connects worker and pilot-settings
+frames to the existing Windows synchronous pipe workers, bounded queues, reserved
+control pool, partial-I/O fault retention and cancellation accounting. It adopts
+four unique live pipe endpoints after checking their handle validity/type. It does
+not create a process, authenticate a peer, select/load a DLL or issue native work.
+The fixed launcher still owes image/creation/job/handle-allowlist/consent checks.
+No executable/native-mode behavior or readonly sampler bytes change here.
+
+`workload::transport::Sender` implements the actual producer's FrameSink. Immutable
+frame metadata binds the original complete WorkerBinding digest, lane and direction
+without altering wire bytes. A foreign frame never enters the pipe queue. Destination
+storage is reserved before copying; success transfers the charged copy into the
+queue before releasing the original. A failed handoff returns the exact original
+frame owner and freezes that sender lane's fault. Ordinary failure leaves the
+reserved control path available for Stop. Later pipe-write failures retain their
+queued copy plus raw status/count/rejection in the existing fault slot. Queue
+acceptance, output-drained state or a successful write is no peer/disk/exit proof.
+
+Each Windows transport owner permits only one sender construction attempt, so a
+caller cannot obtain a fresh sender to clear a failed attempt. Before constructing
+it, `split_control` may transfer the control receiver/writer ownership to a Send
+control owner for a separate thread. After splitting, ordinary receive cannot steal
+control packets or control fault slots, and its sender cannot write control frames.
+The independent owner uses the same bounded sender with a control-only queue.
+Application stop/deadline processing must still be composed on that thread; creating
+the transport is not evidence that it was responsive during a blocked native call.
+
+Receive polls capture the supplied receipt clock after the queue operation. Packet,
+Idle and transport Fault retain that anchor or explicit missing-clock state. Owned
+`RawReceived`/`WorkerReceived`/`SettingsReceived` keep original packet bytes, framing/
+write rejection, lane, receipt and reservations alongside any decoded result.
+Malformed/partial/foreign/capacity-rejected data therefore remains exportable.
+Worker decode poisons on framing/lane/codec failure or missing receipt clock; a
+structurally valid message can still be retained with a missing clock and must fail
+parent timing/admission. Settings transport rejection closes the corresponding
+parent receive attempt, so later bytes cannot turn the rejected exchange into success.
+
+Explicit shutdown requests cancellation and reports the four I/O workers separately,
+without joining or extending deadlines. The parent must retain these observations,
+actual direct-process/job/resource facts and all raw receipts under aggregate session
+metadata/RAM/disk budgets. A lost raw export or unresolved I/O shutdown cannot become
+qualified completion. Source tests cover producer-to-queue-to-framer-to-parent audit,
+exact original-frame return/no successor after queue failure, control availability,
+scope/direction mismatch, partial reads, clock loss and settings receipt rejection.
+The concrete Windows pipe adapter is compile/link checked; process acceptance has
+not run. Fixed worker launch/entry, actual pilot sampler dispatch, full parent facts/
+safety/re-entry/consent admission and aggregate live session export remain incomplete.
