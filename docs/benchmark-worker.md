@@ -1462,3 +1462,54 @@ Earlier checks preceded the final poll-clock retention fix and remain historical
 Source review also closed readiness, shared reservation lifetime and initialized
 cleanup-fact gaps; no independent-agent review or actual watcher/process/native/
 GPU execution is claimed. Both pinned old matrix images remain unchanged.
+
+### Starting serial native entry source — 2026-11-02
+
+`starting_runtime::Trace` and `starting_entry::execute` compose the actual
+starting child context, independent event/clock watcher, retained NVML open and
+description, existing three-setting `Snapshot` collector and explicit cleanup.
+The trace binds the starting scope directly, reserves raw history/metadata before
+native entry and records each logical operation at most once. A returned native
+result is owned before its post-call clock. Failed clocks/late returns remain
+raw evidence, stop later groups and cannot be repaired by cleanup or drain.
+The Snapshot collector owns its own per-getter brackets and serial gate pairing;
+the outer Read operation denotes that collector invocation, not an extra getter.
+
+Cleanup can enter only on a stopped, nonpending lane inside the first original
+cooperative window. Its signed status is retained before releasing the closed
+owner. Selected and initialized failed sessions share the extracted
+`sampler_native::NativeOwner` with the existing pilot entry; the owner methods'
+behavior is unchanged, and implicit native cleanup remains suppressed on
+unwind/drop. Clock/control failure can leave an initialized owner retained for
+parent containment rather than inventing successful cleanup.
+
+The returned outcome owns raw native open failure, runtime description, Snapshot
+or typed read error, call/clock/drain history, event-clone/clock/control errors,
+failed original completion and available control report. It provides no final
+wire response, artifact export, executable mode routing or success exit code.
+An in-memory result is not delivered evidence, parent receipt or process exit.
+The unsafe function invokes NVML if called; exact separate native execution
+scope and independent parent process supervision remain caller prerequisites.
+
+Open/Describe currently denote **logical probe API groups**, not individual
+ABI-call boundaries. Internal selection/runtime helpers perform multiple native
+calls. Their per-call stop/deadline barriers must be audited and implemented
+before executable routing and live qualification; group brackets do not prove
+that no internal successor call occurred after a stop. This limitation also
+applies to the reused probe group APIs in the existing pilot entry. No runtime
+qualification is inferred from composition or compile-only entry signatures.
+
+Seven new CPU/static cases cover operation ordering, one-shot raw retention,
+late/stopped group returns, cleanup/deadline/drain, clock loss, foreign scope,
+capacity/exhaustion and actual Windows entry API compilation. No native entry,
+watcher, owned process, driver or GPU execution occurs in these tests.
+
+Final source-bound checks at baseline `ba1debbc312b86ad4eeb855be59adc0f25310f3d`
+plus unchanged inventories pass 425 CPU-only tests (352 integration, 24 probe ABI
+fakes, 24 worker feature-library fakes/static, 25 reference/prepared), formatting,
+scoped all-feature warning-denied Clippy and full-workspace/all-target/all-feature
+compile/link. Manifest `target/workload-verification/starting-entry-final-manifest.json`,
+SHA-256 `289a5578061c2315d2fd6c058a1aec8e7f2eefef7097059575c9f73e7144ae8f`.
+Both pinned old matrix images remain byte-identical. No independent-agent review
+or process/native execution is claimed; this is source composition, not E3/Gate B
+acceptance or qualification of the internal native-call groups.

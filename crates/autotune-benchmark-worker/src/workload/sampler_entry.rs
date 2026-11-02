@@ -1,5 +1,6 @@
 //! Fixed sampler entry composition. Execution scope/consent remain external;
 //! bootstrap/readiness neither grant worker compute nor qualify a baseline.
+use super::sampler_native::NativeOwner;
 use super::{
     child_windows::{Context, Failure},
     control_windows::{Handle, Report},
@@ -20,56 +21,10 @@ use crate::{
     sampler::{budget::Budget, wire::Lane},
 };
 use autotune_probe::{
-    nvml::{NvmlSampler, SamplerInfo, SamplerOpenFailure},
+    nvml::{NvmlSampler, SamplerInfo},
     report::Failure as NativeFailure,
 };
 use std::{mem::ManuallyDrop, thread, time::Duration};
-/// Suppress implicit native cleanup during unwind/drop. Explicit supervised
-/// cleanup releases closed owners; otherwise process containment remains needed.
-enum NativeOwner {
-    Selected(ManuallyDrop<NvmlSampler>),
-    Failed(ManuallyDrop<SamplerOpenFailure>),
-    Released,
-}
-impl NativeOwner {
-    fn initialized(&self) -> bool {
-        match self {
-            Self::Selected(_) => true,
-            Self::Failed(f) => f.initialized(),
-            Self::Released => false,
-        }
-    }
-    fn selected(&self) -> Option<&NvmlSampler> {
-        if let Self::Selected(s) = self {
-            Some(s)
-        } else {
-            None
-        }
-    }
-    fn selected_mut(&mut self) -> Option<&mut NvmlSampler> {
-        if let Self::Selected(s) = self {
-            Some(s)
-        } else {
-            None
-        }
-    }
-    fn shutdown(&mut self) -> Option<i32> {
-        match self {
-            Self::Selected(s) => s.shutdown(),
-            Self::Failed(f) => f.shutdown(),
-            Self::Released => None,
-        }
-    }
-    /// Caller proved no initialized owner, or a shutdown call actually returned.
-    fn release(&mut self) {
-        match self {
-            Self::Selected(s) => unsafe { ManuallyDrop::drop(s) },
-            Self::Failed(f) => unsafe { ManuallyDrop::drop(f) },
-            Self::Released => (),
-        };
-        *self = Self::Released;
-    }
-}
 pub struct Outcome {
     pub context: Context,
     pub trace: Trace,

@@ -86,6 +86,33 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 starting serial entry composition: `starting_runtime::Trace` now
+  retains logical Open/Describe/Read/Cleanup requests/entries/returns, original
+  preflight history, first failure, signed cleanup status and bounded output/
+  control drain. It composes the exact starting Shared scope rather than a run
+  placeholder. Snapshot owns its own serial begin/return pairing and per-getter
+  raw facts; its read lane closes on return. `starting_entry::execute` now joins
+  the actual starting context, independent watcher, retained NVML selection/
+  description, existing three-setting Snapshot collector and explicit cleanup
+  in source. Initialized failed sessions and selected owners remain in the
+  shared ManuallyDrop NativeOwner until explicit shutdown returns or no session
+  was initialized; existing pilot owner behavior is extracted unchanged.
+  Raw open failure/description/snapshot errors, typed clocks/event-clone errors,
+  original completion on failed handoff and actual control report remain owned.
+  Only already-finished control threads can be joined; no executable routing,
+  final response, artifact export or success exit code is supplied yet.
+  Seven new CPU/static tests cover operation order, raw clocks/returns, stopped/
+  late groups, immutable cleanup, pending/grace/drain, scope/capacity/exhaustion,
+  duplicate rejection and actual entry signature compilation. No native entry,
+  watcher, process, GPU execution or independent-agent review is claimed.
+  Important remaining contract gap: Open/Describe are logical probe API groups,
+  not individual ABI-call traces. Selection/runtime helpers may perform several
+  native calls internally. Per-call stop/deadline barriers must be audited and
+  implemented before executable routing/live qualification; post-group clocks
+  and an independent watcher do not prove no internal successor call occurred.
+  Parent response/export and complete facts/consent/admission also remain open.
+  Final source-bound verification/publication receipt is in ROADMAP.md.
+
 - 2026-11-02 independent starting control: a separate scope-bound temporal state
   and actual Windows event/control-lane watcher now close serial read admission
   independently of NVML. No WorkerBinding/run is invented. Work expires at the

@@ -15,6 +15,8 @@ pub mod producer;
 pub mod sampler_dispatch;
 #[cfg(windows)]
 pub mod sampler_entry;
+#[cfg(windows)]
+mod sampler_native;
 pub mod sampler_runtime;
 pub mod settings;
 pub mod settings_transport;
@@ -23,6 +25,9 @@ pub mod starting_bootstrap;
 pub mod starting_control;
 #[cfg(windows)]
 pub mod starting_control_windows;
+#[cfg(windows)]
+pub mod starting_entry;
+pub mod starting_runtime;
 pub mod telemetry;
 pub mod trace;
 pub mod transport;
