@@ -30,6 +30,7 @@ struct Script {
     handle_status: i32,
     null_handle: bool,
     util_status: i32,
+    system_text_mode: u8,
 }
 
 thread_local! {
@@ -88,6 +89,11 @@ macro_rules! system_text_stub {
     ($function:ident, $name:literal) => {
         unsafe extern "C" fn $function(out: *mut c_char, len: u32) -> i32 {
             record($name);
+            // Mode 1 is a success status carrying an unusable (empty) buffer.
+            if SCRIPT.with(|s| s.borrow().system_text_mode) == 1 {
+                *out = 0;
+                return 0;
+            }
             write_text(out, len)
         }
     };
@@ -127,7 +133,9 @@ unsafe extern "C" fn uuid(handle: Handle, out: *mut c_char, len: u32) -> i32 {
     let (value, status) = SCRIPT.with(|s| {
         let s = s.borrow();
         (
-            s.identities.get(handle as usize - 1).map_or("fixture", |i| i.0),
+            s.identities
+                .get(handle as usize - 1)
+                .map_or("fixture", |i| i.0),
             s.uuid_status,
         )
     });
@@ -146,7 +154,9 @@ unsafe extern "C" fn pci(handle: Handle, out: *mut Pci) -> i32 {
     let (value, status) = SCRIPT.with(|s| {
         let s = s.borrow();
         (
-            s.identities.get(handle as usize - 1).map_or("0000:01:00.0", |i| i.1),
+            s.identities
+                .get(handle as usize - 1)
+                .map_or("0000:01:00.0", |i| i.1),
             s.pci_status,
         )
     });
@@ -209,7 +219,12 @@ macro_rules! uint_stub {
         }
     };
 }
-unsafe extern "C" fn limit(handle:Handle,out:*mut u32)->i32 {record("nvmlDeviceGetPowerManagementLimit");SCRIPT.with(|s|s.borrow_mut().sampled_handles.push(handle as usize));*out=215000;0}
+unsafe extern "C" fn limit(handle: Handle, out: *mut u32) -> i32 {
+    record("nvmlDeviceGetPowerManagementLimit");
+    SCRIPT.with(|s| s.borrow_mut().sampled_handles.push(handle as usize));
+    *out = 215000;
+    0
+}
 uint_stub!(
     default_limit,
     "nvmlDeviceGetPowerManagementDefaultLimit",
@@ -258,7 +273,11 @@ unsafe extern "C" fn modern_offset(handle: Handle, out: *mut ClockOffset) -> i32
             .push(((*out).version, (*out).clock_type, (*out).pstate));
         let domain_status = s.domain_offset_status[usize::from((*out).clock_type == 2)];
         (
-            if domain_status != 0 { domain_status } else { s.offset_status },
+            if domain_status != 0 {
+                domain_status
+            } else {
+                s.offset_status
+            },
             s.offset_mode,
         )
     });
@@ -266,10 +285,7 @@ unsafe extern "C" fn modern_offset(handle: Handle, out: *mut ClockOffset) -> i32
         // Deliberately leave output untouched: failure must not expose sentinels.
         return status;
     }
-    if (*out).version != 0x0100_0018
-        || ![0, 2].contains(&(*out).clock_type)
-        || (*out).pstate != 0
-    {
+    if (*out).version != 0x0100_0018 || ![0, 2].contains(&(*out).clock_type) || (*out).pstate != 0 {
         return 2;
     }
     if mode == 6 {
@@ -329,7 +345,11 @@ fn resolve(name: &[u8]) -> Option<Box<dyn Any>> {
         "nvmlDeviceGetClockOffsets" => Box::new(modern_offset as ClockOffsetQuery),
         "nvmlDeviceSetClockOffsets" if SCRIPT.with(|s| s.borrow().modern_setter_present) => {
             // Opaque data only: no fake setter function or callable conversion exists.
-            Box::new(std::ptr::NonNull::<u8>::dangling().as_ptr().cast::<c_void>() as *const c_void)
+            Box::new(
+                std::ptr::NonNull::<u8>::dangling()
+                    .as_ptr()
+                    .cast::<c_void>() as *const c_void,
+            )
         }
         _ => return None, // Including every setter: never create callable bindings.
     })
@@ -357,81 +377,210 @@ fn sampler(uuid: &str, pci_bus_id: &str) -> Result<NvmlSampler, Failure> {
 }
 #[test]
 fn retained_selection_failure_keeps_initialized_owner_until_one_explicit_shutdown() {
-    for mode in 0..4 {for status in [0,999] {
-        reset();let session=session().unwrap();
-        SCRIPT.with(|s| {
-            let mut s=s.borrow_mut();s.calls.clear();s.shutdown_status=status;
-            if mode==2 {s.count_status=4;}
-            if mode==3 {s.device_count=2;}
-        });
-        let uuid=if mode==0 {""} else if mode==1 {"not-found"} else {"fixture"};
-        let (session,failure)=match session.select_retained(uuid,"0000:01:00.0") {Err(e)=>e,Ok(_)=>panic!("fixture must fail selection")};
-        SCRIPT.with(|s|assert!(!s.borrow().calls.contains(&"nvmlShutdown")));
-        let mut retained=super::super::SamplerOpenFailure{failure,session:Some(session)};
-        assert!(retained.initialized());assert_eq!(retained.shutdown(),Some(status));assert_eq!(retained.shutdown(),None);drop(retained);
-        SCRIPT.with(|s|assert_eq!(s.borrow().calls.iter().filter(|c|**c=="nvmlShutdown").count(),1));
-    }}
+    for mode in 0..4 {
+        for status in [0, 999] {
+            reset();
+            let session = session().unwrap();
+            SCRIPT.with(|s| {
+                let mut s = s.borrow_mut();
+                s.calls.clear();
+                s.shutdown_status = status;
+                if mode == 2 {
+                    s.count_status = 4;
+                }
+                if mode == 3 {
+                    s.device_count = 2;
+                }
+            });
+            let uuid = if mode == 0 {
+                ""
+            } else if mode == 1 {
+                "not-found"
+            } else {
+                "fixture"
+            };
+            let (session, failure) = match session.select_retained(uuid, "0000:01:00.0") {
+                Err(e) => e,
+                Ok(_) => panic!("fixture must fail selection"),
+            };
+            SCRIPT.with(|s| assert!(!s.borrow().calls.contains(&"nvmlShutdown")));
+            let mut retained = super::super::SamplerOpenFailure {
+                failure,
+                session: Some(session),
+            };
+            assert!(retained.initialized());
+            assert_eq!(retained.shutdown(), Some(status));
+            assert_eq!(retained.shutdown(), None);
+            drop(retained);
+            SCRIPT.with(|s| {
+                assert_eq!(
+                    s.borrow()
+                        .calls
+                        .iter()
+                        .filter(|c| **c == "nvmlShutdown")
+                        .count(),
+                    1
+                )
+            });
+        }
+    }
 }
 #[test]
 fn explicit_shutdown_retains_raw_status_once_and_blocks_successor_native_getters() {
     for status in [0, 4, 999] {
         reset();
-        let mut sampler=sampler("fixture","0000:01:00.0").unwrap();
-        SCRIPT.with(|s| {let mut s=s.borrow_mut();s.calls.clear();s.resolutions.clear();s.shutdown_status=status;});
-        assert_eq!(sampler.shutdown(),Some(status));
-        assert_eq!(sampler.shutdown(),None);
-        let raw=sampler.setting(SettingMetric::PowerLimit);
-        assert_eq!(failure(&raw).reason,Reason::QueryFailed);
-        assert_eq!(failure(&raw).vendor_status,None);
+        let mut sampler = sampler("fixture", "0000:01:00.0").unwrap();
+        SCRIPT.with(|s| {
+            let mut s = s.borrow_mut();
+            s.calls.clear();
+            s.resolutions.clear();
+            s.shutdown_status = status;
+        });
+        assert_eq!(sampler.shutdown(), Some(status));
+        assert_eq!(sampler.shutdown(), None);
+        let raw = sampler.setting(SettingMetric::PowerLimit);
+        assert_eq!(failure(&raw).reason, Reason::QueryFailed);
+        assert_eq!(failure(&raw).vendor_status, None);
         drop(sampler);
-        SCRIPT.with(|s| {let s=s.borrow();assert_eq!(s.calls,["nvmlShutdown"]);assert!(s.resolutions.is_empty());});
+        SCRIPT.with(|s| {
+            let s = s.borrow();
+            assert_eq!(s.calls, ["nvmlShutdown"]);
+            assert!(s.resolutions.is_empty());
+        });
     }
 }
 #[test]
 fn selective_current_settings_use_one_getter_without_legacy_or_setter_calls() {
-    for (kind,getter,expected,domain) in [
-        (SettingMetric::PowerLimit,"nvmlDeviceGetPowerManagementLimit",215000,None),
-        (SettingMetric::GraphicsOffsetP0,"nvmlDeviceGetClockOffsets",100,Some(0)),
-        (SettingMetric::MemoryOffsetP0,"nvmlDeviceGetClockOffsets",200,Some(2)),
+    for (kind, getter, expected, domain) in [
+        (
+            SettingMetric::PowerLimit,
+            "nvmlDeviceGetPowerManagementLimit",
+            215000,
+            None,
+        ),
+        (
+            SettingMetric::GraphicsOffsetP0,
+            "nvmlDeviceGetClockOffsets",
+            100,
+            Some(0),
+        ),
+        (
+            SettingMetric::MemoryOffsetP0,
+            "nvmlDeviceGetClockOffsets",
+            200,
+            Some(2),
+        ),
     ] {
-        reset();let sampler=sampler("fixture","0000:01:00.0").unwrap();
-        SCRIPT.with(|s|{s.borrow_mut().calls.clear();s.borrow_mut().resolutions.clear();});
-        assert_eq!(sampler.identity(),Some(("fixture","0000:01:00.0")));
-        let raw=sampler.setting(kind);assert_eq!(value(&raw),&serde_json::json!(expected));assert_eq!(raw.unit,kind.unit());
-        SCRIPT.with(|s|{let s=s.borrow();assert_eq!(s.calls,[getter]);assert_eq!(s.resolutions,[getter]);assert_eq!(s.offset_queries,domain.map(|d|(CLOCK_OFFSET_VERSION,d,0)).into_iter().collect::<Vec<_>>());});
+        reset();
+        let sampler = sampler("fixture", "0000:01:00.0").unwrap();
+        SCRIPT.with(|s| {
+            s.borrow_mut().calls.clear();
+            s.borrow_mut().resolutions.clear();
+        });
+        assert_eq!(sampler.identity(), Some(("fixture", "0000:01:00.0")));
+        let raw = sampler.setting(kind);
+        assert_eq!(value(&raw), &serde_json::json!(expected));
+        assert_eq!(raw.unit, kind.unit());
+        SCRIPT.with(|s| {
+            let s = s.borrow();
+            assert_eq!(s.calls, [getter]);
+            assert_eq!(s.resolutions, [getter]);
+            assert_eq!(
+                s.offset_queries,
+                domain
+                    .map(|d| (CLOCK_OFFSET_VERSION, d, 0))
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            );
+        });
     }
 }
 #[test]
 fn selective_p0_failure_preserves_status_without_legacy_fallback() {
-    for status in [3,4,15,999] {
-        reset();let sampler=sampler("fixture","0000:01:00.0").unwrap();
-        SCRIPT.with(|s|{let mut s=s.borrow_mut();s.offset_status=status;s.calls.clear();});
-        let raw=sampler.setting(SettingMetric::GraphicsOffsetP0);assert_eq!(failure(&raw).vendor_status,Some(status));
-        SCRIPT.with(|s|assert_eq!(s.borrow().calls,["nvmlDeviceGetClockOffsets"]));
+    for status in [3, 4, 15, 999] {
+        reset();
+        let sampler = sampler("fixture", "0000:01:00.0").unwrap();
+        SCRIPT.with(|s| {
+            let mut s = s.borrow_mut();
+            s.offset_status = status;
+            s.calls.clear();
+        });
+        let raw = sampler.setting(SettingMetric::GraphicsOffsetP0);
+        assert_eq!(failure(&raw).vendor_status, Some(status));
+        SCRIPT.with(|s| assert_eq!(s.borrow().calls, ["nvmlDeviceGetClockOffsets"]));
     }
-    reset();let sampler=sampler("fixture","0000:01:00.0").unwrap();
-    SCRIPT.with(|s|s.borrow_mut().missing=Some("nvmlDeviceGetClockOffsets"));
-    let raw=sampler.setting(SettingMetric::MemoryOffsetP0);assert_eq!(raw.symbol_presence,SymbolPresence::Absent);assert_eq!(failure(&raw).reason,Reason::SymbolMissing);
+    reset();
+    let sampler = sampler("fixture", "0000:01:00.0").unwrap();
+    SCRIPT.with(|s| s.borrow_mut().missing = Some("nvmlDeviceGetClockOffsets"));
+    let raw = sampler.setting(SettingMetric::MemoryOffsetP0);
+    assert_eq!(raw.symbol_presence, SymbolPresence::Absent);
+    assert_eq!(failure(&raw).reason, Reason::SymbolMissing);
 }
 #[test]
 fn current_settings_remain_on_the_unique_nonzero_selected_handle() {
     for kind in SettingMetric::ALL {
-        reset();SCRIPT.with(|s|{let mut s=s.borrow_mut();s.device_count=2;s.identities=vec![("other","0000:01:00.0"),("chosen","0000:02:00.0")];});
-        let sampler=sampler("chosen","0000:02:00.0").unwrap();
-        SCRIPT.with(|s|{let mut s=s.borrow_mut();s.calls.clear();s.sampled_handles.clear();});
-        let _=sampler.setting(kind);SCRIPT.with(|s|assert_eq!(s.borrow().sampled_handles,[2]));
+        reset();
+        SCRIPT.with(|s| {
+            let mut s = s.borrow_mut();
+            s.device_count = 2;
+            s.identities = vec![("other", "0000:01:00.0"), ("chosen", "0000:02:00.0")];
+        });
+        let sampler = sampler("chosen", "0000:02:00.0").unwrap();
+        SCRIPT.with(|s| {
+            let mut s = s.borrow_mut();
+            s.calls.clear();
+            s.sampled_handles.clear();
+        });
+        let _ = sampler.setting(kind);
+        SCRIPT.with(|s| assert_eq!(s.borrow().sampled_handles, [2]));
     }
 }
 
 #[test]
 fn selective_samples_call_only_one_requested_getter() {
     for (metric, getter, unit, expected, selector) in [
-        (SampleMetric::Temperature, "nvmlDeviceGetTemperature", "degC", 42, Some(0)),
-        (SampleMetric::Power, "nvmlDeviceGetPowerUsage", "mW", 65000, None),
-        (SampleMetric::GraphicsClock, "nvmlDeviceGetClockInfo", "MHz", 1500, Some(0)),
-        (SampleMetric::MemoryClock, "nvmlDeviceGetClockInfo", "MHz", 7000, Some(2)),
-        (SampleMetric::GpuUtilization, "nvmlDeviceGetUtilizationRates", "%", 17, None),
-        (SampleMetric::MemoryUtilization, "nvmlDeviceGetUtilizationRates", "%", 29, None),
+        (
+            SampleMetric::Temperature,
+            "nvmlDeviceGetTemperature",
+            "degC",
+            42,
+            Some(0),
+        ),
+        (
+            SampleMetric::Power,
+            "nvmlDeviceGetPowerUsage",
+            "mW",
+            65000,
+            None,
+        ),
+        (
+            SampleMetric::GraphicsClock,
+            "nvmlDeviceGetClockInfo",
+            "MHz",
+            1500,
+            Some(0),
+        ),
+        (
+            SampleMetric::MemoryClock,
+            "nvmlDeviceGetClockInfo",
+            "MHz",
+            7000,
+            Some(2),
+        ),
+        (
+            SampleMetric::GpuUtilization,
+            "nvmlDeviceGetUtilizationRates",
+            "%",
+            17,
+            None,
+        ),
+        (
+            SampleMetric::MemoryUtilization,
+            "nvmlDeviceGetUtilizationRates",
+            "%",
+            29,
+            None,
+        ),
     ] {
         reset();
         let sampler = sampler("fixture", "0000:01:00.0").unwrap();
@@ -491,8 +640,14 @@ fn selective_samples_preserve_status_and_missing_symbol_distinctions() {
         (SampleMetric::Power, "nvmlDeviceGetPowerUsage"),
         (SampleMetric::GraphicsClock, "nvmlDeviceGetClockInfo"),
         (SampleMetric::MemoryClock, "nvmlDeviceGetClockInfo"),
-        (SampleMetric::GpuUtilization, "nvmlDeviceGetUtilizationRates"),
-        (SampleMetric::MemoryUtilization, "nvmlDeviceGetUtilizationRates"),
+        (
+            SampleMetric::GpuUtilization,
+            "nvmlDeviceGetUtilizationRates",
+        ),
+        (
+            SampleMetric::MemoryUtilization,
+            "nvmlDeviceGetUtilizationRates",
+        ),
     ] {
         reset();
         let sampler = sampler("fixture", "0000:01:00.0").unwrap();
@@ -525,14 +680,21 @@ fn selective_utilization_keeps_only_requested_component() {
         SCRIPT.with(|s| s.borrow_mut().util = util);
         assert_eq!(value(&sampler.sample(metric)), &serde_json::json!(expected));
         SCRIPT.with(|s| s.borrow_mut().util = (101, 101));
-        assert_eq!(failure(&sampler.sample(metric)).reason, Reason::InvalidValue);
+        assert_eq!(
+            failure(&sampler.sample(metric)).reason,
+            Reason::InvalidValue
+        );
         SCRIPT.with(|s| s.borrow_mut().util_status = 15);
         let reading = sampler.sample(metric);
         assert_eq!(failure(&reading).vendor_status, Some(15));
         assert_eq!(failure(&reading).reason, Reason::GpuLost);
         SCRIPT.with(|s| {
             assert_eq!(
-                s.borrow().calls.iter().filter(|c| **c == "nvmlDeviceGetUtilizationRates").count(),
+                s.borrow()
+                    .calls
+                    .iter()
+                    .filter(|c| **c == "nvmlDeviceGetUtilizationRates")
+                    .count(),
                 3
             );
         });
@@ -589,10 +751,22 @@ fn selected_description_retains_exact_pair_and_queries_only_existing_runtime_get
     assert_eq!(info.runtime.header_api_version, 13);
     SCRIPT.with(|s| {
         let state = s.borrow();
-        assert_eq!(&state.calls[before..], &["nvmlSystemGetCudaDriverVersion_v2", "nvmlSystemGetDriverVersion", "nvmlSystemGetNVMLVersion"]);
+        assert_eq!(
+            &state.calls[before..],
+            &[
+                "nvmlSystemGetCudaDriverVersion_v2",
+                "nvmlSystemGetDriverVersion",
+                "nvmlSystemGetNVMLVersion"
+            ]
+        );
         assert!(state.sampled_handles.is_empty());
-        assert!(!state.calls[before..].iter().any(|c| c.starts_with("nvmlDevice")));
-        assert!(!state.resolutions.iter().any(|c| c.starts_with("nvmlDeviceSet")));
+        assert!(!state.calls[before..]
+            .iter()
+            .any(|c| c.starts_with("nvmlDevice")));
+        assert!(!state
+            .resolutions
+            .iter()
+            .any(|c| c.starts_with("nvmlDeviceSet")));
     });
 }
 
@@ -604,8 +778,16 @@ fn selective_identity_requires_exact_unique_pair() {
         (vec![], "fixture", "00000000:01:00.0"),
         (vec![("", "0000:01:00.0")], "fixture", "0000:01:00.0"),
         (vec![("fixture", "")], "fixture", "0000:01:00.0"),
-        (vec![("fixture", "0000:01:00.0"); 2], "fixture", "0000:01:00.0"),
-        (vec![("a", "0000:01:00.0"), ("b", "0000:02:00.0")], "a", "0000:02:00.0"),
+        (
+            vec![("fixture", "0000:01:00.0"); 2],
+            "fixture",
+            "0000:01:00.0",
+        ),
+        (
+            vec![("a", "0000:01:00.0"), ("b", "0000:02:00.0")],
+            "a",
+            "0000:02:00.0",
+        ),
         (vec![], "", "0000:01:00.0"),
         (vec![], "fixture", ""),
     ] {
@@ -856,7 +1038,10 @@ fn modern_offset_abi_inputs_and_independent_domain_values() {
         ("memory_clock_offset_p0", 200),
     ] {
         let control = &device.controls[key];
-        assert_eq!(value(&control.getters["current"]), &serde_json::json!(current));
+        assert_eq!(
+            value(&control.getters["current"]),
+            &serde_json::json!(current)
+        );
         assert_eq!(value(&control.getters["minimum"]), &serde_json::json!(-500));
         assert_eq!(value(&control.getters["maximum"]), &serde_json::json!(1500));
         assert_eq!(control.write_verification, WriteVerification::NotTested);
@@ -883,8 +1068,14 @@ fn modern_offset_failures_preserve_status_without_zero_fallback() {
                 assert_eq!(getter.unit, "MHz");
             }
         }
-        assert_eq!(value(&device.controls["graphics_clock_offset"].getters["current"]), &serde_json::json!(0));
-        assert_eq!(value(&device.telemetry["temperature"]), &serde_json::json!(42));
+        assert_eq!(
+            value(&device.controls["graphics_clock_offset"].getters["current"]),
+            &serde_json::json!(0)
+        );
+        assert_eq!(
+            value(&device.telemetry["temperature"]),
+            &serde_json::json!(42)
+        );
     }
     reset();
     SCRIPT.with(|s| s.borrow_mut().missing = Some("nvmlDeviceGetClockOffsets"));
@@ -939,7 +1130,10 @@ fn modern_reads_succeed_independently_of_unsupported_legacy_getters() {
             assert_eq!(failure(getter).reason, Reason::Unsupported);
             assert_eq!(failure(getter).vendor_status, Some(3));
         }
-        assert_eq!(value(&device.controls[modern].getters["current"]), &serde_json::json!(expected));
+        assert_eq!(
+            value(&device.controls[modern].getters["current"]),
+            &serde_json::json!(expected)
+        );
     }
     assert!(!device.incomplete()); // Unsupported optional legacy APIs are not collection failures.
 }
@@ -947,8 +1141,18 @@ fn modern_reads_succeed_independently_of_unsupported_legacy_getters() {
 #[test]
 fn modern_domain_failures_do_not_hide_the_other_domain() {
     for (statuses, failed, successful, expected) in [
-        ([4, 0], "graphics_clock_offset_p0", "memory_clock_offset_p0", 200),
-        ([0, 4], "memory_clock_offset_p0", "graphics_clock_offset_p0", 100),
+        (
+            [4, 0],
+            "graphics_clock_offset_p0",
+            "memory_clock_offset_p0",
+            200,
+        ),
+        (
+            [0, 4],
+            "memory_clock_offset_p0",
+            "graphics_clock_offset_p0",
+            100,
+        ),
     ] {
         reset();
         SCRIPT.with(|s| s.borrow_mut().domain_offset_status = statuses);
@@ -957,7 +1161,10 @@ fn modern_domain_failures_do_not_hide_the_other_domain() {
             assert_eq!(failure(getter).reason, Reason::PermissionDenied);
         }
         let control = &device.controls[successful];
-        assert_eq!(value(&control.getters["current"]), &serde_json::json!(expected));
+        assert_eq!(
+            value(&control.getters["current"]),
+            &serde_json::json!(expected)
+        );
         assert_eq!(value(&control.getters["minimum"]), &serde_json::json!(-500));
         assert_eq!(value(&control.getters["maximum"]), &serde_json::json!(1500));
     }
@@ -969,12 +1176,384 @@ fn modern_setter_presence_is_opaque_and_does_not_verify_writes() {
     SCRIPT.with(|s| s.borrow_mut().modern_setter_present = true);
     let device = session().unwrap().device(0).unwrap();
     for key in ["graphics_clock_offset_p0", "memory_clock_offset_p0"] {
-        assert_eq!(device.controls[key].setter_symbol_presence, SymbolPresence::Present);
-        assert_eq!(device.controls[key].write_verification, WriteVerification::NotTested);
+        assert_eq!(
+            device.controls[key].setter_symbol_presence,
+            SymbolPresence::Present
+        );
+        assert_eq!(
+            device.controls[key].write_verification,
+            WriteVerification::NotTested
+        );
     }
     SCRIPT.with(|s| {
         let s = s.borrow();
         assert!(!s.calls.iter().any(|name| name.starts_with("nvmlDeviceSet")));
-        assert_eq!(s.resolutions.iter().filter(|name| name.as_str() == "nvmlDeviceSetClockOffsets").count(), 2);
+        assert_eq!(
+            s.resolutions
+                .iter()
+                .filter(|name| name.as_str() == "nvmlDeviceSetClockOffsets")
+                .count(),
+            2
+        );
     });
+}
+
+// Observed startup/runtime seam. These use the same ABI fakes as above; the
+// scheduler/container lanes are not involved and no DLL is loaded.
+#[derive(Default)]
+struct Watch {
+    calls: Vec<SamplerCall>,
+    returns: Vec<(SamplerCall, i32)>,
+    stop_before: Option<usize>,
+    reject_return: Option<usize>,
+    // A stopped lane is sticky across observed API invocations, matching the
+    // worker Ledger/NativeAdmission gate rather than one CallGuard instance.
+    halted: bool,
+}
+impl SamplerObserver for Watch {
+    fn before(&mut self, call: SamplerCall) -> bool {
+        self.calls.push(call);
+        !self.halted && self.stop_before != Some(self.calls.len() - 1)
+    }
+    fn returned(&mut self, call: SamplerCall, raw: SamplerReturn) -> bool {
+        self.returns.push((call, raw.status));
+        let keep = !self.halted && self.reject_return != Some(self.returns.len() - 1);
+        if !keep {
+            self.halted = true;
+        }
+        keep
+    }
+}
+fn opened(watch: &mut Watch) -> Session {
+    Session::initialize_observed(
+        Symbols::Fake(resolve),
+        PathBuf::from("test-only-no-DLL"),
+        &mut CallGuard::new(watch),
+    )
+    .unwrap()
+}
+fn selected(session: Session, watch: &mut Watch) -> Result<SelectedSession, (Session, Failure)> {
+    selected_as(session, "fixture", "0000:01:00.0", watch)
+}
+fn selected_as(
+    session: Session,
+    uuid: &str,
+    pci: &str,
+    watch: &mut Watch,
+) -> Result<SelectedSession, (Session, Failure)> {
+    session.select_observed(uuid, pci, &mut CallGuard::new(watch))
+}
+#[test]
+fn observed_startup_and_description_trace_each_abi_call_once() {
+    reset();
+    let mut watch = Watch::default();
+    let session = opened(&mut watch);
+    let selected = match selected(session, &mut watch) {
+        Ok(s) => s,
+        Err(_) => panic!("fixture selection must succeed"),
+    };
+    let info = selected.describe_observed(&mut watch);
+    let expected = [
+        SamplerCall::Initialize,
+        SamplerCall::Count,
+        SamplerCall::Handle(0),
+        SamplerCall::Uuid(0),
+        SamplerCall::Pci(0),
+        SamplerCall::CudaVersion,
+        SamplerCall::DriverVersion,
+        SamplerCall::NvmlVersion,
+    ];
+    assert_eq!(watch.calls, expected);
+    assert_eq!(
+        watch.returns.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+        expected
+    );
+    assert!(watch.returns.iter().all(|(_, status)| *status == 0));
+    assert_eq!(info.raw_uuid, "fixture");
+    assert_eq!(info.raw_pci, "0000:01:00.0");
+    assert_eq!(
+        info.runtime.library_path.as_deref(),
+        Some("test-only-no-DLL")
+    );
+    assert_eq!(
+        value(&info.runtime.cuda_driver_version),
+        &serde_json::json!(13040)
+    );
+    assert_eq!(
+        value(&info.runtime.driver_version),
+        &serde_json::json!("fixture")
+    );
+    assert_eq!(
+        value(&info.runtime.nvml_version),
+        &serde_json::json!("fixture")
+    );
+    SCRIPT.with(|s| {
+        let s = s.borrow();
+        assert_eq!(
+            s.calls,
+            [
+                "nvmlInit_v2",
+                "nvmlDeviceGetCount_v2",
+                "nvmlDeviceGetHandleByIndex_v2",
+                "nvmlDeviceGetUUID",
+                "nvmlDeviceGetPciInfo_v3",
+                "nvmlSystemGetCudaDriverVersion_v2",
+                "nvmlSystemGetDriverVersion",
+                "nvmlSystemGetNVMLVersion",
+            ]
+        );
+        // Observation must not resurrect the name getter or a shutdown.
+        assert!(!s.calls.contains(&"nvmlDeviceGetName"));
+        assert!(!s.calls.contains(&"nvmlShutdown"));
+        assert!(s.sampled_handles.is_empty());
+        assert_eq!(s.indices, [0]);
+    });
+    drop(selected);
+    SCRIPT.with(|s| {
+        assert_eq!(
+            s.borrow()
+                .calls
+                .iter()
+                .filter(|c| **c == "nvmlShutdown")
+                .count(),
+            1
+        );
+    });
+}
+#[test]
+fn observed_stop_before_abi_call_prevents_successor_and_retains_owner() {
+    reset();
+    // Fourth observed call is the UUID getter; stopping before it must prevent
+    // both that call and every later internal selection call.
+    let mut watch = Watch {
+        stop_before: Some(3),
+        ..Watch::default()
+    };
+    let session = opened(&mut watch);
+    let (session, failure) = match selected(session, &mut watch) {
+        Ok(_) => panic!("stopped selection must not succeed"),
+        Err(e) => e,
+    };
+    assert_eq!(failure.reason, Reason::QueryFailed);
+    assert_eq!(
+        watch.calls,
+        [
+            SamplerCall::Initialize,
+            SamplerCall::Count,
+            SamplerCall::Handle(0),
+            SamplerCall::Uuid(0),
+        ]
+    );
+    SCRIPT.with(|s| {
+        let s = s.borrow();
+        assert_eq!(
+            s.calls,
+            [
+                "nvmlInit_v2",
+                "nvmlDeviceGetCount_v2",
+                "nvmlDeviceGetHandleByIndex_v2",
+            ]
+        );
+        assert!(!s.calls.contains(&"nvmlShutdown"));
+    });
+    let mut retained = super::super::SamplerOpenFailure {
+        failure,
+        session: Some(session),
+    };
+    assert!(retained.initialized());
+    assert_eq!(retained.shutdown(), Some(0));
+    assert_eq!(retained.shutdown(), None);
+    SCRIPT.with(|s| {
+        assert_eq!(
+            s.borrow()
+                .calls
+                .iter()
+                .filter(|c| **c == "nvmlShutdown")
+                .count(),
+            1
+        );
+    });
+}
+#[test]
+fn observed_stop_at_return_rejects_a_completed_selection() {
+    reset();
+    let mut watch = Watch {
+        reject_return: Some(0),
+        ..Watch::default()
+    };
+    let session = opened(&mut watch);
+    let (session, failure) = match selected(session, &mut watch) {
+        Ok(_) => panic!("post-return stop must close the startup lane"),
+        Err(e) => e,
+    };
+    assert_eq!(failure.reason, Reason::QueryFailed);
+    assert_eq!(watch.returns.len(), 1);
+    // Initialization succeeded natively, but the lane closed before any
+    // successor call: no count, enumeration or shutdown occurred.
+    SCRIPT.with(|s| {
+        let s = s.borrow();
+        assert_eq!(s.calls, ["nvmlInit_v2"]);
+        assert!(!s.calls.contains(&"nvmlShutdown"));
+    });
+    let mut retained = super::super::SamplerOpenFailure {
+        failure,
+        session: Some(session),
+    };
+    assert_eq!(retained.shutdown(), Some(0));
+}
+#[test]
+fn observed_native_status_failure_prevents_successor_selection_calls() {
+    for status in [3, 4, 15, 999] {
+        reset();
+        SCRIPT.with(|s| s.borrow_mut().count_status = status);
+        let mut watch = Watch::default();
+        let session = opened(&mut watch);
+        let (session, failure) = match selected(session, &mut watch) {
+            Ok(_) => panic!("native count failure must fail selection"),
+            Err(e) => e,
+        };
+        assert_eq!(failure.vendor_status, Some(status));
+        SCRIPT.with(|s| {
+            let s = s.borrow();
+            assert_eq!(s.calls, ["nvmlInit_v2", "nvmlDeviceGetCount_v2"]);
+        });
+        let mut retained = super::super::SamplerOpenFailure {
+            failure,
+            session: Some(session),
+        };
+        assert_eq!(retained.shutdown(), Some(0));
+    }
+}
+#[test]
+fn observed_identity_requires_the_same_exact_unique_pair() {
+    for (case, (identities, uuid, pci)) in [
+        (
+            vec![("fixture", "0000:01:00.0"); 2],
+            "fixture",
+            "0000:01:00.0",
+        ),
+        (vec![("fixture", "0000:02:00.0")], "fixture", "0000:01:00.0"),
+        (vec![], "Fixture", "0000:01:00.0"),
+        (vec![], "", "0000:01:00.0"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        reset();
+        SCRIPT.with(|s| {
+            let mut s = s.borrow_mut();
+            if !identities.is_empty() {
+                s.device_count = identities.len() as u32;
+            }
+            s.identities = identities.clone();
+        });
+        let mut watch = Watch::default();
+        let session = opened(&mut watch);
+        let (session, failure) = match selected_as(session, uuid, pci, &mut watch) {
+            Ok(_) => panic!("non-unique or wrong identity must fail (case {case})"),
+            Err(e) => e,
+        };
+        assert_eq!(failure.reason, Reason::InvalidValue);
+        SCRIPT.with(|s| assert!(!s.borrow().calls.contains(&"nvmlShutdown")));
+        let mut retained = super::super::SamplerOpenFailure {
+            failure,
+            session: Some(session),
+        };
+        assert_eq!(retained.shutdown(), Some(0));
+    }
+}
+#[test]
+fn observed_description_stop_prevents_later_runtime_getters() {
+    reset();
+    let mut watch = Watch::default();
+    let session = opened(&mut watch);
+    let selected = match selected(session, &mut watch) {
+        Ok(s) => s,
+        Err(_) => panic!("fixture selection must succeed"),
+    };
+    let before = SCRIPT.with(|s| s.borrow().calls.len());
+    let mut describe = Watch {
+        stop_before: Some(1),
+        ..Watch::default()
+    };
+    let info = selected.describe_observed(&mut describe);
+    assert_eq!(
+        describe.calls,
+        [SamplerCall::CudaVersion, SamplerCall::DriverVersion]
+    );
+    SCRIPT.with(|s| {
+        assert_eq!(
+            &s.borrow().calls[before..],
+            &["nvmlSystemGetCudaDriverVersion_v2"]
+        );
+    });
+    assert_eq!(
+        value(&info.runtime.cuda_driver_version),
+        &serde_json::json!(13040)
+    );
+    assert_eq!(
+        failure(&info.runtime.driver_version).reason,
+        Reason::QueryFailed
+    );
+    assert_eq!(
+        failure(&info.runtime.nvml_version).reason,
+        Reason::QueryFailed
+    );
+}
+#[test]
+fn observed_missing_runtime_symbol_prevents_the_later_getter() {
+    reset();
+    let mut watch = Watch::default();
+    let session = opened(&mut watch);
+    let selected = match selected(session, &mut watch) {
+        Ok(s) => s,
+        Err(_) => panic!("fixture selection must succeed"),
+    };
+    SCRIPT.with(|s| s.borrow_mut().missing = Some("nvmlSystemGetDriverVersion"));
+    let before = SCRIPT.with(|s| s.borrow().calls.len());
+    let info = selected.describe_observed(&mut Watch::default());
+    SCRIPT.with(|s| {
+        let s = s.borrow();
+        assert_eq!(&s.calls[before..], &["nvmlSystemGetCudaDriverVersion_v2"]);
+    });
+    assert_eq!(
+        failure(&info.runtime.driver_version).reason,
+        Reason::SymbolMissing
+    );
+    assert_eq!(
+        failure(&info.runtime.nvml_version).reason,
+        Reason::QueryFailed
+    );
+}
+#[test]
+fn observed_runtime_text_failure_prevents_the_later_getter() {
+    reset();
+    let mut watch = Watch::default();
+    let session = opened(&mut watch);
+    let selected = match selected(session, &mut watch) {
+        Ok(s) => s,
+        Err(_) => panic!("fixture selection must succeed"),
+    };
+    // Success status with a malformed buffer is still a failed runtime fact.
+    SCRIPT.with(|s| s.borrow_mut().system_text_mode = 1);
+    let before = SCRIPT.with(|s| s.borrow().calls.len());
+    let info = selected.describe_observed(&mut Watch::default());
+    SCRIPT.with(|s| {
+        let s = s.borrow();
+        assert_eq!(
+            &s.calls[before..],
+            &[
+                "nvmlSystemGetCudaDriverVersion_v2",
+                "nvmlSystemGetDriverVersion",
+            ]
+        );
+    });
+    assert_eq!(
+        failure(&info.runtime.driver_version).reason,
+        Reason::InvalidValue
+    );
+    assert_eq!(
+        failure(&info.runtime.nvml_version).reason,
+        Reason::QueryFailed
+    );
 }

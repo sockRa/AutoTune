@@ -10,6 +10,7 @@ pub mod dispatch;
 pub mod gate;
 pub mod launch;
 pub mod manifest;
+pub mod nvml_trace;
 pub mod parent_sampler;
 pub mod producer;
 pub mod sampler_dispatch;

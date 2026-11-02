@@ -86,6 +86,32 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 per-ABI/per-call NVML stop/deadline barriers: the probe now has a
+  fixed read-only `SamplerObserver` seam (`SamplerCall`/`SamplerOutput`/
+  `SamplerReturn`) hooked before and after every internal startup/selection/
+  description ABI call: init, bounded count, per-index handle/UUID/PCI and the
+  three runtime text/version getters. `CallGuard` delivers the raw signed status
+  and complete output buffer before the post-call clock hook; a false/rejected
+  hook or nonzero native status permanently closes that observed invocation, so
+  no successor ABI call is issued. The observed identity still requires the same
+  exact unique UUID+PCI pair, null-handle rejection and 1024 count bound as the
+  unobserved path, and initialized/selected ownership remains with the caller
+  for explicit shutdown. `workload::nvml_trace::Ledger` records the fixed
+  3077-entry bound with per-call before/after anchors, first fault, overflow,
+  rejected return and a budget reservation; any fault stops the shared
+  `NativeAdmission` gate. Both the pilot sampler entry and the starting entry
+  compose this observer for Open/Describe, and reject runtime facts/faults
+  before readiness. Eight probe cases (exact ABI order, stop-before call,
+  stop-at-return, native status, exact identity, describe stop, missing symbol,
+  status-0 unusable text) and eight Ledger cases (raw per-call anchors, stopped
+  gate, deadline equality, clock loss/regression, unpaired/mismatched return,
+  native status, fixed capacity/no eviction, construction bounds) were added.
+  CPU-only verification binds baseline `fbd9f3078dc7e90dacfe787734c35be7e4127aea`,
+  441 tests, formatting, warning-denied scoped Clippy and full-workspace
+  all-target/all-feature linking (manifest in ROADMAP.md). No native load,
+  process/GPU execution, final response/export or independent-agent review is
+  claimed; the group-to-per-call gap is closed in source and CPU fakes only.
+
 - 2026-11-02 starting serial entry composition: `starting_runtime::Trace` now
   retains logical Open/Describe/Read/Cleanup requests/entries/returns, original
   preflight history, first failure, signed cleanup status and bounded output/

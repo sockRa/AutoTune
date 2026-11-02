@@ -35,6 +35,7 @@ include, in the user documentation and internal comments to the code,
 the above Disclaimer and U.S. Government End Users Notice.
 */
 use crate::{adapter::ReadOnlyAdapter, report::*};
+include!("nvml_observer.rs");
 
 /// One read-only monitor getter per sampling invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +128,48 @@ pub struct SamplerInfo {
 }
 
 impl NvmlSampler {
+    /// Observed fixed read-only startup. Successful init remains owned even if
+    /// its post-call observer closes the gate. Callers supervise explicit cleanup.
+    #[allow(clippy::result_large_err)]
+    pub fn open_observed(
+        uuid: &str,
+        pci_bus_id: &str,
+        observer: &mut impl SamplerObserver,
+    ) -> Result<Self, SamplerOpenFailure> {
+        #[cfg(windows)]
+        {
+            let mut guard = windows::CallGuard::new(observer);
+            let session = windows::Session::open_observed(&mut guard).map_err(|failure| {
+                SamplerOpenFailure {
+                    failure,
+                    session: None,
+                }
+            })?;
+            match session.select_observed(uuid, pci_bus_id, &mut guard) {
+                Ok(selected) => Ok(Self { selected }),
+                Err((session, failure)) => Err(SamplerOpenFailure {
+                    failure,
+                    session: Some(session),
+                }),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (uuid, pci_bus_id, observer);
+            Self::open_retained("", "")
+        }
+    }
+    pub fn describe_observed(&self, observer: &mut impl SamplerObserver) -> SamplerInfo {
+        #[cfg(windows)]
+        {
+            self.selected.describe_observed(observer)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = observer;
+            self.describe()
+        }
+    }
     /// Preserve initialized-session ownership on selection failure. No shutdown
     /// is hidden inside this failure return; cleanup remains independently timed.
     #[allow(clippy::result_large_err)]
@@ -542,6 +585,10 @@ mod windows {
 
     impl Session {
         pub fn open() -> Result<Self, Failure> {
+            let (library, path) = Self::load()?;
+            Self::initialize(library, path)
+        }
+        fn load() -> Result<(Symbols, PathBuf), Failure> {
             // OS API, not environment variables or PATH, establishes the trusted root.
             let mut directory = [0u16; 32768];
             // SAFETY: buffer size is accurate and the kernel function writes UTF-16.
@@ -575,7 +622,7 @@ mod windows {
                         format!("{}: {error}", path.display()),
                     )
                 })?;
-            Self::initialize(Symbols::Native(library), path)
+            Ok((Symbols::Native(library), path))
         }
 
         fn initialize(library: Symbols, path: PathBuf) -> Result<Self, Failure> {
@@ -1133,6 +1180,7 @@ mod windows {
         }
     }
 
+    include!("nvml_guarded.rs");
     #[cfg(test)]
     mod tests {
         use super::*;

@@ -28,6 +28,7 @@ use std::{mem::ManuallyDrop, thread, time::Duration};
 pub struct Outcome {
     pub context: Context,
     pub trace: Trace,
+    pub native_calls: super::nvml_trace::Ledger,
     pub control: Option<Handle>,
     pub report: Option<Report>,
     pub settings: Option<Dispatch>,
@@ -140,11 +141,29 @@ pub unsafe fn entry() -> Result<Outcome, EntryFailure> {
             })
         }
     };
+    let binding = bootstrap.binding();
+    let native_calls = match super::nvml_trace::Ledger::new(
+        binding.monitor().qpc_frequency,
+        binding.epoch,
+        bootstrap.receipt(),
+        bootstrap.deadline_ns(),
+        &budget,
+    ) {
+        Ok(l) => l,
+        Err(_) => {
+            return Err(EntryFailure {
+                fault: Fault::Capacity,
+                startup: None,
+                context: Some(context),
+            })
+        }
+    };
     drop(raw);
     drop(args_charge);
     let mut outcome = Outcome {
         context,
         trace,
+        native_calls,
         control: None,
         report: None,
         settings: None,
@@ -236,7 +255,13 @@ fn run(out: &mut Outcome) {
         {
             return Err(Fault::Runtime);
         }
-        let opened = NvmlSampler::open_retained(run.raw_uuid(), run.raw_pci());
+        let opened = NvmlSampler::open_observed(
+            run.raw_uuid(),
+            run.raw_pci(),
+            &mut out
+                .native_calls
+                .observer(gate, || capture(clock, &mut out.clock_error)),
+        );
         out.native = match opened {
             Ok(s) => NativeOwner::Selected(ManuallyDrop::new(s)),
             Err(f) => {
@@ -246,6 +271,9 @@ fn run(out: &mut Outcome) {
         };
         let after = capture(clock, &mut out.clock_error);
         out.trace.returned(Operation::Open, after, gate);
+        if out.native_calls.fault() == Some(super::nvml_trace::Fault::Clock) {
+            shared.close_at(binding, None);
+        }
         if out.native.selected().is_none() {
             return Err(Fault::Runtime);
         }
@@ -259,13 +287,41 @@ fn run(out: &mut Outcome) {
         {
             return Err(Fault::Runtime);
         }
-        out.info = Some(out.native.selected().expect("selected above").describe());
+        out.info = Some(
+            out.native
+                .selected()
+                .expect("selected above")
+                .describe_observed(
+                    &mut out
+                        .native_calls
+                        .observer(gate, || capture(clock, &mut out.clock_error)),
+                ),
+        );
         let after = capture(clock, &mut out.clock_error);
         out.trace.returned(Operation::Describe, after, gate);
+        if out.native_calls.fault() == Some(super::nvml_trace::Fault::Clock) {
+            shared.close_at(binding, None);
+        }
         if out.trace.fault.is_some() {
             return Err(Fault::Clock);
         }
         let info = out.info.as_ref().expect("description retained");
+        if out.native_calls.fault().is_some()
+            || [
+                &info.runtime.driver_version,
+                &info.runtime.nvml_version,
+                &info.runtime.cuda_driver_version,
+            ]
+            .iter()
+            .any(|f| {
+                matches!(
+                    f.reading,
+                    autotune_probe::report::Reading::Unavailable { .. }
+                )
+            })
+        {
+            return Err(Fault::Runtime);
+        }
         let runtime = serde_json::to_string(&info.runtime).map_err(|_| Fault::Ready)?;
         let before = before.ok_or(Fault::Clock)?;
         let after = after.ok_or(Fault::Clock)?;
