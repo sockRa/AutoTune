@@ -162,7 +162,7 @@ pub(in crate::workload) fn parse_anchor(v: &Value) -> Result<Option<Anchor>, Blo
         unbiased_100ns: uint(get(o, "unbiased_100ns")).map_err(|_| Block::Scope)?,
     }))
 }
-fn field(v: &Value) -> Result<Field, Block> {
+pub(in crate::workload) fn field(v: &Value) -> Result<Field, Block> {
     let o = exact(v, &["unit", "symbol", "reading"]).map_err(|_| Block::Scope)?;
     let symbol_presence = match text(get(o, "symbol"))? {
         "present" => SymbolPresence::Present,

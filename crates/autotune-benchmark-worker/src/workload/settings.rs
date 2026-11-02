@@ -14,6 +14,7 @@ use autotune_probe::{
     nvml::{NvmlSampler, SettingMetric},
     report::{Field, Reading, Reason, SymbolPresence},
 };
+pub(super) use receive::field as parse_field;
 pub(super) use receive::parse_anchor;
 pub use receive::ReportedCapture;
 const CAP: usize = 64 * 1024;
@@ -450,7 +451,7 @@ fn checked_anchor(clock: &mut Clock, last: &mut Anchor, raw: Option<Anchor>) -> 
     *last = raw;
     Ok(ns)
 }
-fn bounded(f: &Field) -> bool {
+pub(super) fn bounded(f: &Field) -> bool {
     f.unit.capacity() <= 32
         && match &f.reading {
             Reading::Available { value } => match value {
@@ -461,7 +462,7 @@ fn bounded(f: &Field) -> bool {
             Reading::Unavailable { failure } => failure.detail.capacity() <= 1024,
         }
 }
-fn raw_value(f: &Field) -> Value {
+pub(super) fn raw_value(f: &Field) -> Value {
     let symbol = match f.symbol_presence {
         SymbolPresence::Present => "present",
         SymbolPresence::Absent => "absent",

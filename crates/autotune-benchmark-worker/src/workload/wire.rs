@@ -105,6 +105,17 @@ impl WorkerBinding {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
+    SamplerQuery {
+        ticket: crate::monitor::Ticket,
+        issued: Anchor,
+    },
+    SamplerRecord {
+        ticket: crate::monitor::Ticket,
+        before: Option<Anchor>,
+        after: Option<Anchor>,
+        raw: Option<autotune_probe::report::Field>,
+        native: bool,
+    },
     SamplerReady {
         before: Anchor,
         after: Anchor,
@@ -163,6 +174,8 @@ pub enum Message {
 impl Message {
     fn route(&self) -> (Lane, Direction, &'static str) {
         match self {
+            Self::SamplerQuery { .. } => (Lane::Ordinary, Direction::ToWorker, "sampler_query"),
+            Self::SamplerRecord { .. } => (Lane::Ordinary, Direction::FromWorker, "sampler_record"),
             Self::SamplerReady { .. } => (Lane::Ordinary, Direction::FromWorker, "sampler_ready"),
             Self::NativeFailure { .. } => (Lane::Control, Direction::FromWorker, "native_failure"),
             Self::PhaseEntered { .. } => (Lane::Ordinary, Direction::FromWorker, "phase_entered"),
@@ -178,6 +191,9 @@ impl Message {
     }
     fn payload_bytes(&self) -> usize {
         match self {
+            Self::SamplerRecord { raw, .. } => {
+                raw.as_ref().map_or(0, super::telemetry::field_bytes)
+            }
             Self::SamplerReady {
                 raw_uuid,
                 raw_pci,
@@ -194,6 +210,18 @@ impl Message {
     }
     pub(super) fn validate(&self, b: WorkerBinding) -> Result<(), WireError> {
         match self {
+            Self::SamplerQuery { ticket, issued } => {
+                super::telemetry::validate_ticket(*ticket, b)?;
+                if b.elapsed(*issued)? != ticket.start_ns {
+                    return Err(WireError::Body);
+                }
+            }
+            Self::SamplerRecord { ticket, raw, .. } => {
+                super::telemetry::validate_ticket(*ticket, b)?;
+                if raw.as_ref().is_some_and(|f| !super::settings::bounded(f)) {
+                    return Err(WireError::Capacity);
+                }
+            }
             Self::SamplerReady {
                 before,
                 after,
@@ -301,6 +329,32 @@ impl Message {
     }
     fn body(&self) -> Value {
         match self {
+            Self::SamplerQuery { ticket, issued } => object([
+                ("ticket", super::telemetry::ticket_value(*ticket)),
+                ("issued", super::settings::raw_anchor(*issued)),
+            ]),
+            Self::SamplerRecord {
+                ticket,
+                before,
+                after,
+                raw,
+                native,
+            } => object([
+                ("ticket", super::telemetry::ticket_value(*ticket)),
+                (
+                    "before",
+                    before.map_or(Value::Null, super::settings::raw_anchor),
+                ),
+                (
+                    "after",
+                    after.map_or(Value::Null, super::settings::raw_anchor),
+                ),
+                (
+                    "raw",
+                    raw.as_ref().map_or(Value::Null, super::settings::raw_value),
+                ),
+                ("native", Value::Bool(*native)),
+            ]),
             Self::SamplerReady {
                 before,
                 after,
@@ -412,6 +466,39 @@ impl Message {
             i32::try_from(v.as_i64().map_err(|_| WireError::Body)?).map_err(|_| WireError::Body)
         };
         let message = match kind {
+            "sampler_query" => {
+                let o = exact(v, &["ticket", "issued"])?;
+                Self::SamplerQuery {
+                    ticket: super::telemetry::parse_ticket(get(o, "ticket"), b)?,
+                    issued: super::settings::parse_anchor(get(o, "issued"))
+                        .map_err(|_| WireError::Body)?
+                        .ok_or(WireError::Body)?,
+                }
+            }
+            "sampler_record" => {
+                let o = exact(v, &["ticket", "before", "after", "raw", "native"])?;
+                Self::SamplerRecord {
+                    ticket: super::telemetry::parse_ticket(get(o, "ticket"), b)?,
+                    before: super::settings::parse_anchor(get(o, "before"))
+                        .map_err(|_| WireError::Body)?,
+                    after: super::settings::parse_anchor(get(o, "after"))
+                        .map_err(|_| WireError::Body)?,
+                    raw: match get(o, "raw") {
+                        Value::Null => None,
+                        v => {
+                            let f = super::settings::parse_field(v).map_err(|_| WireError::Body)?;
+                            if super::settings::raw_value(&f).to_canonical() != v.to_canonical() {
+                                return Err(WireError::Canonical);
+                            }
+                            Some(f)
+                        }
+                    },
+                    native: match get(o, "native") {
+                        Value::Bool(v) => *v,
+                        _ => return Err(WireError::Body),
+                    },
+                }
+            }
             "sampler_ready" => {
                 let o = exact(
                     v,
@@ -567,9 +654,13 @@ impl EncodedFrame {
 }
 pub struct OwnedMessage {
     message: Message,
+    binding: WorkerBinding,
     _allocation: Reservation,
 }
 impl OwnedMessage {
+    pub fn binding(&self) -> WorkerBinding {
+        self.binding
+    }
     pub fn message(&self) -> &Message {
         &self.message
     }
@@ -610,10 +701,13 @@ impl Channel {
                 | Message::RoleFinished { .. }
                 | Message::NativeFailure { .. }
         );
-        if shared
-            || (self.sampler && matches!(m, Message::SamplerReady { .. }))
-            || (!self.sampler && !matches!(m, Message::SamplerReady { .. }))
-        {
+        let specific = matches!(
+            m,
+            Message::SamplerReady { .. }
+                | Message::SamplerQuery { .. }
+                | Message::SamplerRecord { .. }
+        );
+        if shared || self.sampler == specific {
             Ok(())
         } else {
             Err(WireError::Binding)
@@ -787,10 +881,11 @@ impl Channel {
         }
         drop(value);
         allocation
-            .shrink_to(std::mem::size_of::<Message>() + message.payload_bytes())
+            .shrink_to(std::mem::size_of::<OwnedMessage>() + message.payload_bytes())
             .map_err(|_| WireError::Capacity)?;
         Ok(OwnedMessage {
             message,
+            binding: self.binding,
             _allocation: allocation,
         })
     }

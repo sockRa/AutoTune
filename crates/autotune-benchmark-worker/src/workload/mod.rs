@@ -14,6 +14,7 @@ pub mod producer;
 pub mod sampler_dispatch;
 pub mod settings;
 pub mod settings_transport;
+pub mod telemetry;
 pub mod trace;
 pub mod transport;
 #[cfg(windows)]

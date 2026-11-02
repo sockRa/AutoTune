@@ -1074,3 +1074,65 @@ boundaries, reserved control memory, full tick history and cleanup/ABI shutdown.
 Local manifest: `target/workload-verification/pilot-control-verified-manifest.json`,
 SHA-256 `a0eb93ca0474001c6c0a7df57d84a9232af463c25e89e8a789ac80f19e5bfc8b`.
 No independent-agent review or executed Windows control/native proof is claimed.
+
+## Pilot telemetry composition
+
+`workload::telemetry::Collector` now connects pilot-bound queries to the already
+selected NVML sampler and the existing owned pipe sender. `poll_native` composes
+the actual inherited ordinary pipe, strict sampler-role decoder, one selected
+getter and response handoff. It does not open a runtime or issue compute
+permission. The independent control thread shares the same atomic native gate.
+
+Queries carry the full pilot binding, an exact metric/slot ticket and the original
+parent issue anchor. Slot arithmetic is checked, issue must be inside the current
+slot and run, and per-metric replay closes the lane. Receipt/getter-start/return
+chronology remains on the original epoch. A stale query cannot enter a getter.
+The existing 50 ms conservative issue-to-return bound is preserved alongside the
+actual child before/after bracket; neither is a device sensor timestamp. There
+is one serial getter invocation per accepted query, with no retry or replacement.
+
+Raw return ownership precedes post-call clock capture and validation. Missing or
+foreign anchors, failed getters, device loss, unit/symbol/value contradictions,
+safety boundaries and a return after stop remain retained. A stopped operation
+can export its original return but cannot admit a successor. Memory-utilization
+unavailability remains optional; GPU loss still stops even on that metric.
+Explicit fixture collection marks every response simulated. The parent receipt
+reader rejects that source for native assessment and separately checks the exact
+expected ticket, original issue, raw chronology, 50 ms conservative query bound,
+100 ms transport age, run boundary and field conversion. The reported native bit
+remains an untrusted claim requiring actual peer/image/execution evidence.
+
+The charged ledger retains original query packets, typed responses, exact unsent
+frames and codec/OS-send errors. Later rejected packets return to the caller.
+Clock history reserves one idle observation per tick plus three per possible
+metric slot and a fixed allowance, with no eviction or allocator-capacity-based
+limit. The complete simulated 45-second, 1,080-query run and its raw owners fit
+the session budget. Before-getter reservation failure cannot enter native code.
+Callers still retain/export Poll failures and typed clock-capture errors, enforce
+the tick cadence and aggregate session limits, and drain output within original
+stop policy. Queued response bytes establish neither peer receipt nor durability.
+
+Decoded owned messages now retain the complete immutable codec binding, with its
+storage accounted before allocation. Telemetry receipts/queries and control state
+reject an owner decoded against another manifest even if monitor identity is
+equal. Existing worker and readonly sampler frame bytes remain unchanged. Probe
+field equality derives and internal raw-field helper visibility do not change
+the report schema.
+
+Final source-bound verification at baseline `bfda12c` plus unchanged inventories
+passes 351 CPU-only tests (284 integration, 23 probe ABI fakes, 19 feature-library
+fakes/static, 25 reference/prepared), scoped all-feature warning-denied Clippy,
+formatting and full-workspace/all-feature compile/link. Fifteen added regressions
+cover serial metrics, original clocks/tickets, raw return retention, stop races,
+replay, optional/required faults, safety boundaries, exact manifest binding,
+capacity, source/role rejection, noncanonical scalar tags and full-run memory.
+Manifest `target/workload-verification/pilot-telemetry-final-manifest.json`, SHA-256
+`0c0ee2561b8e78fc6e7fbb12336cc091a7eb5dd83fb3bcde2d64931825aa55b3`.
+No independent-agent review is claimed. The actual Windows pipe/NVML path is
+compiled/linked only; no process, native runtime or GPU execution occurred.
+
+Fixed executable entries, complete parent fact/safety/re-entry/consent composition,
+the worker native-admission issuer and aggregate live export remain unfinished.
+Parent monitor timing across runs must preserve the original epoch and session
+ceiling. E3 remains partial and Gate B unmet; this is not a useful baseline or an
+automatic optimization delivery.

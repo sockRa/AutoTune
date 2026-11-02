@@ -221,6 +221,12 @@ impl WorkerReceived {
             .map(OwnedMessage::message)
             .map_err(|e| *e)
     }
+    pub fn binding(&self) -> Result<WorkerBinding, WireError> {
+        self.message
+            .as_ref()
+            .map(OwnedMessage::binding)
+            .map_err(|e| *e)
+    }
 }
 pub struct SettingsReceived {
     raw: RawReceived,

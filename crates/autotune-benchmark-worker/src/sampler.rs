@@ -72,7 +72,7 @@ pub fn map_field(ticket: Ticket, end_ns: u64, receipt_ns: u64, raw: Field) -> Ma
     MappedSample { raw, record }
 }
 
-fn convert(
+pub(crate) fn convert(
     ticket: Ticket,
     end_ns: u64,
     receipt_ns: u64,

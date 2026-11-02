@@ -42,6 +42,7 @@ pub struct Report {
     pub clock_error: Option<crate::monitor::windows_clock::CaptureError>,
     _metadata: Reservation,
 }
+#[allow(clippy::large_enum_variant)] // Four inline slots, prepaid in report metadata.
 pub enum Command {
     Stop(Option<crate::monitor::Anchor>),
     Failure(Message),

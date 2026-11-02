@@ -16,7 +16,7 @@ pub enum Reason {
     UnsupportedPlatform,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Failure {
     pub reason: Reason,
     pub vendor_status: Option<i32>,
@@ -59,14 +59,14 @@ pub enum SymbolPresence {
     NotChecked,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Reading {
     Available { value: Value },
     Unavailable { failure: Failure },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Field {
     pub unit: String,
     pub symbol_presence: SymbolPresence,

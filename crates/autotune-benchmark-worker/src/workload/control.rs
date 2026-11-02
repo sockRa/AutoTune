@@ -240,12 +240,17 @@ impl State {
     fn accept_packet(&mut self, received: WorkerReceived) -> Option<Message> {
         let receipt = received.raw().receipt();
         let message = received.message().cloned();
+        let binding = received.binding();
         if self.raw.len() == 4 {
             self.overflow = Some(received);
             self.fail(Fault::Capacity);
             return None;
         }
         self.raw.push(received);
+        if binding != Ok(self.binding) {
+            self.fail(Fault::Protocol);
+            return None;
+        }
         let n = self.now(receipt).ok()?;
         let Ok(Message::Stop {
             trigger_ns,

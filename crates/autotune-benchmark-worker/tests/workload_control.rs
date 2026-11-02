@@ -319,3 +319,25 @@ fn reserved_control_codec_still_works_when_ordinary_ram_is_exhausted() {
     let frame = tx.encode(&stop(0)).unwrap();
     assert_eq!(rx.decode(frame.as_bytes()).unwrap().message(), &stop(0));
 }
+#[test]
+fn control_rejects_a_foreign_full_manifest_even_if_monitor_identity_matches() {
+    let (b, binding, shared, mut state) = setup();
+    let text = manifest(&b)
+        .canonical()
+        .replace(&digest(9).to_hex(), &digest(99).to_hex());
+    let m = PilotManifest::parse(text.as_bytes(), &b).unwrap();
+    let foreign = WorkerBinding::new(&m.bind_run(0, 0).unwrap(), 1_000_000_000, a(0)).unwrap();
+    assert_eq!(foreign.monitor(), binding.monitor());
+    assert_ne!(foreign, binding);
+    let mut tx = Channel::sampler(foreign, Lane::Control, Direction::ToWorker, b.clone()).unwrap();
+    let mut rx = Channel::sampler(foreign, Lane::Control, Direction::ToWorker, b.clone()).unwrap();
+    let frame = tx.encode(&stop(0)).unwrap();
+    assert!(state
+        .packet(received(frame.as_bytes(), Some(a(100)), &mut rx, &b))
+        .ok()
+        .flatten()
+        .is_none());
+    assert_eq!(state.fault(), Some(Fault::Protocol));
+    assert!(shared.admission().stopped());
+    assert_eq!(state.raw()[0].raw().packet().bytes(), frame.as_bytes());
+}
