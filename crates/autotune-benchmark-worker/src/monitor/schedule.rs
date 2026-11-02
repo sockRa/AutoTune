@@ -126,6 +126,13 @@ pub(super) struct Schedule {
     pub pending: Option<Ticket>,
 }
 impl Schedule {
+    pub(super) fn at_run(binding: Binding, origin_ns: u64) -> Self {
+        Self {
+            binding,
+            next: [origin_ns / limits().cadence_ns; 6],
+            pending: None,
+        }
+    }
     pub fn new(binding: Binding) -> Self {
         Self {
             binding,

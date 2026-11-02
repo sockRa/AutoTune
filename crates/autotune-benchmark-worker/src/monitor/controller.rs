@@ -106,9 +106,16 @@ pub struct Report {
     now_ns: u64,
     clock_valid: bool,
     session_deadline_ns: u64,
+    run_origin_ns: u64,
     capacity: Capacity,
 }
 impl Report {
+    pub(crate) fn missed_from(&self, start: usize) -> impl Iterator<Item = MissedSlots> + '_ {
+        self.misses.iter().skip(start).map(|m| m.range)
+    }
+    pub fn run_origin_ns(&self) -> u64 {
+        self.run_origin_ns
+    }
     pub fn binding(&self) -> Binding {
         self.binding
     }
@@ -262,6 +269,7 @@ pub struct Controller {
     schedule: Schedule,
     report: Report,
     sequence: u64,
+    _allocation: Option<crate::sampler::budget::Reservation>,
 }
 
 fn reserve<T>(count: usize) -> Result<Vec<T>, InitError> {
@@ -272,14 +280,65 @@ fn reserve<T>(count: usize) -> Result<Vec<T>, InitError> {
 }
 impl Controller {
     pub fn new(binding: Binding, origin: Anchor, session: Session) -> Result<Self, InitError> {
+        Self::construct(binding, origin, session, None)
+    }
+    /// Pilot parent composition only. Original epoch/session ceiling remains;
+    /// initial safety grace and slot namespace start at the declared run origin.
+    pub(crate) fn for_pilot_run(
+        binding: Binding,
+        epoch: Anchor,
+        first: Anchor,
+        run_origin_ns: u64,
+        run_end_ns: u64,
+        budget: &crate::sampler::budget::Budget,
+    ) -> Result<Self, InitError> {
+        let n = Clock::new(binding, epoch)
+            .map_err(InitError::Clock)?
+            .observe(first)
+            .map_err(InitError::Clock)?;
+        if n < run_origin_ns
+            || n >= run_end_ns
+            || run_end_ns > limits().pilot_session_ns
+            || run_origin_ns >= run_end_ns
+        {
+            return Err(InitError::Clock(ClockError::Epoch));
+        }
+        let mut result = Self::construct(
+            binding,
+            epoch,
+            Session::Pilot,
+            Some((run_origin_ns, run_end_ns, budget)),
+        )?;
+        result.poll(first);
+        Ok(result)
+    }
+    fn construct(
+        binding: Binding,
+        origin: Anchor,
+        session: Session,
+        scope: Option<(u64, u64, &crate::sampler::budget::Budget)>,
+    ) -> Result<Self, InitError> {
         let clock = Clock::new(binding, origin).map_err(InitError::Clock)?;
         let limits = limits();
         let ordinary_budget_bytes =
             limits.evidence_ram_bytes - limits.writer_queue_bytes - limits.failure_snapshot_bytes;
         let event_capacity =
-            usize::try_from(limits.event_capacity - 1).map_err(|_| InitError::Capacity)?;
+            usize::try_from(scope.map_or(limits.event_capacity - 1, |(start, end, _)| {
+                ((end - start) / limits.controller_tick_ns * 4 + 64).min(limits.event_capacity - 1)
+            }))
+            .map_err(|_| InitError::Capacity)?;
         let sample_capacity =
-            usize::try_from(limits.sample_capacity - 1).map_err(|_| InitError::Capacity)?;
+            usize::try_from(scope.map_or(limits.sample_capacity - 1, |(start, end, _)| {
+                (((end - start) / limits.cadence_ns + 1) * 6).min(limits.sample_capacity - 1)
+            }))
+            .map_err(|_| InitError::Capacity)?;
+        let bytes = std::mem::size_of::<Self>()
+            + event_capacity * std::mem::size_of::<ControlEvidence>()
+            + sample_capacity * std::mem::size_of::<SampleEvidence>()
+            + event_capacity * std::mem::size_of::<MissEvidence>();
+        let allocation = scope
+            .map(|(_, _, b)| b.reserve(bytes).map_err(|_| InitError::Capacity))
+            .transpose()?;
         let mut controls = reserve::<ControlEvidence>(event_capacity)?;
         let samples = reserve::<SampleEvidence>(sample_capacity)?;
         let misses = reserve::<MissEvidence>(event_capacity)?;
@@ -288,7 +347,11 @@ impl Controller {
             + samples.capacity() * std::mem::size_of::<SampleEvidence>()
             + misses.capacity() * std::mem::size_of::<MissEvidence>())
             as u64;
-        if allocated_bytes > ordinary_budget_bytes {
+        if allocated_bytes > ordinary_budget_bytes
+            || allocation
+                .as_ref()
+                .is_some_and(|r| allocated_bytes > r.bytes() as u64)
+        {
             return Err(InitError::Capacity);
         }
         controls.push(ControlEvidence {
@@ -301,8 +364,12 @@ impl Controller {
         });
         Ok(Self {
             clock,
-            schedule: Schedule::new(binding),
+            schedule: scope.map_or_else(
+                || Schedule::new(binding),
+                |(origin, _, _)| Schedule::at_run(binding, origin),
+            ),
             sequence: 1,
+            _allocation: allocation,
             report: Report {
                 binding,
                 controls,
@@ -320,6 +387,7 @@ impl Controller {
                     Session::Pilot => limits.pilot_session_ns,
                     Session::Acceptance => limits.acceptance_session_ns,
                 },
+                run_origin_ns: scope.map_or(0, |(start, _, _)| start),
                 capacity: Capacity {
                     ordinary_budget_bytes,
                     allocated_bytes,
@@ -367,7 +435,8 @@ impl Controller {
                 } else {
                     for (i, metric) in [Metric::Temperature, Metric::Power].into_iter().enumerate()
                     {
-                        let end = self.report.safety[i].map_or(0, |r| r.end_ns);
+                        let end =
+                            self.report.safety[i].map_or(self.report.run_origin_ns, |r| r.end_ns);
                         if now - end >= limits().observation_gap_ns {
                             self.stop_once(StopReason::SafetyGap(metric));
                         }

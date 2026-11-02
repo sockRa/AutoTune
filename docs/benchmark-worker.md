@@ -1205,3 +1205,67 @@ fresh safety/re-entry/Start/consent admission, the worker entry/driver compositi
 aggregate metadata/session budgets and live export remain unfinished. The child
 trace's ownership is not a completed artifact export. No sampler/native/hardware
 qualification, useful baseline, E3 completion or Gate B follows from this slice.
+
+## Parent sampler scheduling and receipt assessment
+
+`workload::parent_sampler::ParentSampler` now composes the sampler-side parent
+exchange: one ordinary sequence for Ready/metric receipts, a separate settings
+exchange, sequential issued queries, strict raw receipts, monitor policy,
+re-entry observations and reserved control traffic. Its Windows factory binds
+the retained process declaration and actual reserved control pool. `drive_process`
+polls that original process transport, queues settings once and asks for one
+metric at a time. Faults request the owned stop event and one control-frame send;
+uncertain sends are retained without retry. Inputs-finished, receive, query and
+stop-event observations remain distinct; transport closure is not process exit.
+These Windows paths compile/link only in this delivery.
+
+Ready checks compare the exact raw UUID/PCI text, including PCI function, then
+parse the bounded runtime description with canonical round-trip validation and
+required typed version fields. The current-settings reader requires its original
+request/digest/window and a readable reported native path. Raw simulated claims,
+malformed/duplicate/foreign frames, missing clocks and late replies remain owned.
+Outstanding ticket/issue anchors, original unsent owners and typed codec/OS errors
+are retained. The parent ends admission after the original combined maximum
+query/transport interval if no reply has arrived; this necessary bound adds no
+time beyond the existing 50 ms/100 ms policies.
+
+The re-entry screen pairs temperature and GPU-utilization records by scheduled
+slot and requires four consecutive qualifying pairs. An invalid newly observed
+value or a missed required re-entry slot clears the old sequence immediately;
+it cannot borrow an earlier four-pair result while awaiting a new pair. Paired
+evidence must remain fresh under the unchanged observation-gap policy. A reported
+screen is deliberately insufficient for native permission: it authenticates no
+peer, environment or human consent. Its state/evidence are exposed read-only;
+neither this actor nor the monitor can issue workload `NativeAdmission`.
+
+Pilot monitor construction now reserves scoped arrays before allocating them in
+the shared root. Structural capacities follow the declared run duration/ticks
+and six metric schedules, inside the existing profile ceilings. The original
+epoch and absolute 180-second session ceiling remain; per-run initial safety
+grace begins at the declared run origin, never at delayed controller creation.
+Slots keep their original session numbering (for example, 45 seconds starts at
+slot 180), without inventing missed samples from earlier runs. Legacy standalone
+monitor construction and the acceptance cadence/policy remain unchanged.
+
+Planned sampler shutdown closes scheduling, freezes original grace, and retains
+acknowledgement and reported cleanup/completion separately. Reported completion
+requires a timely nonpending successful cleanup frame and cannot clear timeout.
+No new query is admitted during shutdown. Only the outer controller can establish
+worker completion, direct-process exit, job accounting and permission to proceed;
+child completion or queue drain remains no physical GPU fence.
+
+Final source-bound checks at baseline `7e12751` plus unchanged inventories pass
+382 CPU-only tests (314 integration, 24 probe ABI fakes, 19 feature-library
+fakes/static, 25 reference/prepared), scoped all-feature warning-denied Clippy,
+formatting and full-workspace/all-feature compile/link. Fourteen added tests
+cover report/settings composition, original epoch/slot/safety grace, re-entry
+resets, pending/late queries, exact raw identity, planned/expired cleanup,
+reserved control capacity and a full 45-second/1,080-reply parent run with the
+12 MiB writer/failure pools reserved. Native-path claims in these fixtures are
+explicitly synthetic reported inputs, never native execution evidence.
+Manifest `target/workload-verification/parent-sampler-final-manifest.json`, SHA-256
+`4b03fa49c3a5a5cfcaafa41fff8f1862ec652afef0402613d21cd90caf7670ed`.
+No independent-agent review, process/native/GPU execution or qualification is
+claimed. Complete pre-manifest/environment/peer/image/consent facts, worker entry,
+native admission, aggregate live export and executed qualification still remain;
+E3 stays partial and Gate B unmet.

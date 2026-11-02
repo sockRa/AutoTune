@@ -50,6 +50,9 @@ pub enum Receive {
     },
 }
 impl InheritedTransport {
+    pub fn reserved_control_budget(&self) -> Budget {
+        self.transport.reserved_control_budget()
+    }
     pub(crate) fn queue_copy(&self, lane: Lane, bytes: &[u8]) -> Result<(), SendFailure> {
         self.transport.send_borrowed(lane, bytes)
     }

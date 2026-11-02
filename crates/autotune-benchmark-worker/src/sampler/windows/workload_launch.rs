@@ -38,6 +38,9 @@ impl Queue for ProcessQueue<'_> {
     }
 }
 impl Process {
+    pub fn reserved_control_budget(&self) -> Budget {
+        self.transport.reserved_control_budget()
+    }
     fn launch(declaration: Declaration, budget: Budget, shared: SharedLaunch) -> io::Result<Self> {
         check(&shared)?;
         // Same bounded hashing/UTF-16/attribute-list allowance as the existing

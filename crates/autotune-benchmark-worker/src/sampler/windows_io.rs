@@ -228,6 +228,9 @@ impl Sink for PipeWrite<'_> {
     }
 }
 impl Transport {
+    pub(crate) fn reserved_control_budget(&self) -> Budget {
+        self.control_budget.clone()
+    }
     pub(crate) fn take_control(&mut self) -> ControlPort {
         let (_, empty) = mpsc::channel();
         ControlPort {
