@@ -1,5 +1,6 @@
 //! Fixed sampler process containment. Compile-only until exact execution consent.
 //! Wait/exit/job facts are independent, and never native quiescence evidence.
+pub mod workload_launch;
 pub use super::ingress::Received;
 use super::{
     budget::Budget,
@@ -52,6 +53,13 @@ fn wide(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(Some(0)).collect()
 }
 fn fixed_path(fixture: bool) -> io::Result<PathBuf> {
+    sibling_path(if fixture {
+        "autotune-sampler-fixture.exe"
+    } else {
+        "autotune-nvml-sampler.exe"
+    })
+}
+fn sibling_path(image_name: &str) -> io::Result<PathBuf> {
     let current = std::env::current_exe()?;
     let parent = current
         .parent()
@@ -63,16 +71,13 @@ fn fixed_path(fixture: bool) -> io::Result<PathBuf> {
     } else {
         parent
     };
-    parent
-        .join(if fixture {
-            "autotune-sampler-fixture.exe"
-        } else {
-            "autotune-nvml-sampler.exe"
-        })
-        .canonicalize()
+    parent.join(image_name).canonicalize()
 }
 fn measure(fixture: bool) -> io::Result<(PathBuf, File, [u8; 32])> {
     let path = fixed_path(fixture)?;
+    measure_path(path)
+}
+fn measure_path(path: PathBuf) -> io::Result<(PathBuf, File, [u8; 32])> {
     let mut image = OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ)
@@ -113,6 +118,10 @@ fn pipe(child_reads: bool) -> io::Result<(OwnedHandle, OwnedHandle)> {
     }
 }
 fn job() -> io::Result<OwnedHandle> {
+    let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+    job_limits(p.sampler_commit_bytes, p.sampler_cpu_ns_per_session)
+}
+fn job_limits(commit_bytes: u64, user_cpu_ns: u64) -> io::Result<OwnedHandle> {
     unsafe {
         let job = own(CreateJobObjectW(null(), null()))?;
         let p = autotune_fma_reference::profile::Profile::approved_design().limits;
@@ -123,10 +132,9 @@ fn job() -> io::Result<OwnedHandle> {
             | JOB_OBJECT_LIMIT_JOB_MEMORY
             | JOB_OBJECT_LIMIT_PROCESS_TIME;
         wanted.BasicLimitInformation.ActiveProcessLimit = p.processes_per_job;
-        wanted.BasicLimitInformation.PerProcessUserTimeLimit =
-            (p.sampler_cpu_ns_per_session / 100) as i64;
-        wanted.ProcessMemoryLimit = p.sampler_commit_bytes as usize;
-        wanted.JobMemoryLimit = p.sampler_commit_bytes as usize;
+        wanted.BasicLimitInformation.PerProcessUserTimeLimit = (user_cpu_ns / 100) as i64;
+        wanted.ProcessMemoryLimit = commit_bytes as usize;
+        wanted.JobMemoryLimit = commit_bytes as usize;
         ok(SetInformationJobObject(
             job.as_raw_handle(),
             JobObjectExtendedLimitInformation,
@@ -159,6 +167,14 @@ fn spawn(
     command: &str,
     handles: &[HANDLE],
 ) -> io::Result<(OwnedHandle, OwnedHandle)> {
+    spawn_environment(path, command, handles, &[0, 0])
+}
+fn spawn_environment(
+    path: &std::path::Path,
+    command: &str,
+    handles: &[HANDLE],
+    environment: &[u16],
+) -> io::Result<(OwnedHandle, OwnedHandle)> {
     unsafe {
         let mut bytes = 0;
         InitializeProcThreadAttributeList(null_mut(), 1, 0, &mut bytes);
@@ -182,7 +198,6 @@ fn spawn(
             startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
             startup.lpAttributeList = list;
             let mut info: PROCESS_INFORMATION = zeroed();
-            let environment = [0u16; 2];
             let mut cmd = wide(OsStr::new(command));
             ok(CreateProcessW(
                 wide(path.as_os_str()).as_ptr(),
@@ -229,6 +244,8 @@ pub struct FailedLaunch {
     creation: Option<u64>,
     termination: Option<Result<(), u32>>,
     io_shutdown: [super::runtime::IoObservation; 4],
+    _image: Option<File>,
+    image: Option<(PathBuf, [u8; 32])>,
 }
 impl std::fmt::Debug for FailedLaunch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -243,11 +260,18 @@ impl std::fmt::Debug for FailedLaunch {
 }
 impl std::fmt::Display for FailedLaunch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "sampler launch failed at {}: {}", self.stage, self.error)
+        write!(f, "process launch failed at {}: {}", self.stage, self.error)
     }
 }
 impl std::error::Error for FailedLaunch {}
 impl FailedLaunch {
+    /// Supplemental actual image observation when supplied by the pilot launcher.
+    /// Historical sampler failures may have no retained image observation.
+    pub fn image(&self) -> Option<(&std::path::Path, [u8; 32])> {
+        self.image
+            .as_ref()
+            .map(|(path, digest)| (path.as_path(), *digest))
+    }
     pub fn from_error(error: io::Error) -> Result<Box<Self>, io::Error> {
         if error.get_ref().is_some_and(|e| e.is::<Self>()) {
             Ok(error
@@ -319,6 +343,8 @@ fn failed_launch(
         assigned,
         creation,
         termination: None,
+        _image: None,
+        image: None,
     };
     // A request is retained independently of the later process/job observation.
     let _ = failure.request_termination();
@@ -513,35 +539,7 @@ impl SamplerProcess {
     /// Observed user+kernel CPU is distinct from the job's user-mode-only hard
     /// limit. Observation is sampled, not an OS hard cap on total CPU time.
     pub fn resources(&self) -> super::runtime::ResourceObservation {
-        unsafe {
-            let mut counters: PROCESS_MEMORY_COUNTERS_EX = zeroed();
-            counters.cb = size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
-            let memory = K32GetProcessMemoryInfo(
-                self.process.as_raw_handle(),
-                (&mut counters as *mut PROCESS_MEMORY_COUNTERS_EX).cast(),
-                counters.cb,
-            );
-            let memory_error = (memory == 0).then(|| GetLastError());
-            let (mut created, mut exited, mut kernel, mut user) =
-                (zeroed(), zeroed(), zeroed(), zeroed());
-            let time = GetProcessTimes(
-                self.process.as_raw_handle(),
-                &mut created,
-                &mut exited,
-                &mut kernel,
-                &mut user,
-            );
-            let time_error = (time == 0).then(|| GetLastError());
-            let ticks =
-                |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
-            super::runtime::ResourceObservation {
-                commit_bytes: (memory != 0).then_some(counters.PrivateUsage as u64),
-                user_100ns: (time != 0).then_some(ticks(user)),
-                kernel_100ns: (time != 0).then_some(ticks(kernel)),
-                memory_error,
-                time_error,
-            }
-        }
+        observe_resources(&self.process)
     }
     pub fn request_stop(&self) -> io::Result<()> {
         unsafe { ok(SetEvent(self.stop.as_raw_handle())) }
@@ -648,13 +646,16 @@ struct SharedLaunch {
 }
 impl SharedLaunch {
     fn new() -> io::Result<Self> {
+        Self::with_job(job()?)
+    }
+    fn with_job(job: OwnedHandle) -> io::Result<Self> {
         let attributes = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: null_mut(),
             bInheritHandle: 1,
         };
         Ok(Self {
-            job: Arc::new(job()?),
+            job: Arc::new(job),
             stop: Arc::new(unsafe { own(CreateEventW(&attributes, 1, 0, null()))? }),
             cancelled: Arc::new(AtomicBool::new(false)),
         })
@@ -836,6 +837,37 @@ fn observe_process(
             termination,
             active_processes: (success != 0).then_some(accounting.ActiveProcesses),
             accounting_error: (success == 0).then(|| GetLastError()),
+        }
+    }
+}
+
+fn observe_resources(process: &OwnedHandle) -> super::runtime::ResourceObservation {
+    unsafe {
+        let mut counters: PROCESS_MEMORY_COUNTERS_EX = zeroed();
+        counters.cb = size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+        let memory = K32GetProcessMemoryInfo(
+            process.as_raw_handle(),
+            (&mut counters as *mut PROCESS_MEMORY_COUNTERS_EX).cast(),
+            counters.cb,
+        );
+        let memory_error = (memory == 0).then(|| GetLastError());
+        let (mut created, mut exited, mut kernel, mut user) =
+            (zeroed(), zeroed(), zeroed(), zeroed());
+        let time = GetProcessTimes(
+            process.as_raw_handle(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        );
+        let time_error = (time == 0).then(|| GetLastError());
+        let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
+        super::runtime::ResourceObservation {
+            commit_bytes: (memory != 0).then_some(counters.PrivateUsage as u64),
+            user_100ns: (time != 0).then_some(ticks(user)),
+            kernel_100ns: (time != 0).then_some(ticks(kernel)),
+            memory_error,
+            time_error,
         }
     }
 }

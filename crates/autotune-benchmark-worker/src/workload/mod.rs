@@ -2,6 +2,7 @@
 pub mod assessment;
 pub mod dispatch;
 pub mod gate;
+pub mod launch;
 pub mod manifest;
 pub mod producer;
 pub mod sampler_dispatch;
@@ -11,4 +12,6 @@ pub mod trace;
 pub mod transport;
 #[cfg(windows)]
 pub mod windows_transport;
+#[cfg(windows)]
+pub use crate::sampler::windows::workload_launch as windows_process;
 pub mod wire;

@@ -86,6 +86,34 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 fixed pilot process startup: role/image/run/epoch argument declaration
+  and strict child binding, with actual Windows background measurement/create/
+  assign/resume source reusing existing sampler containment primitives. Role
+  commit/user-CPU limits preserve the frozen profile. Original process/job/image
+  owners, measured absolute path/hash, failure stage/raw code, creation/assignment,
+  termination request and I/O shutdown observations remain independent. Post-create
+  errors retain image locks as well as original process handles; late cancelled
+  results remain observable and closed to ordinary work. A shared cancellation
+  queue protects senders created before stop and preserves control availability.
+  Worker child environment requests CUDA_CACHE_DISABLE=1 after NVIDIA documentation
+  review; sampler retains its old empty environment. No parent/global environment
+  modification, native/default-mode execution, benchmark permission or GPU fence.
+  Six new CPU tests cover the declaration/binding/cancellation seam. Baseline
+  `7d5f135` plus unchanged before/after source inventories passes **314 CPU-only
+  tests** (248 integration, 22 probe ABI fakes, 19 worker library, 25 reference/
+  prepared), scoped all-feature warning-denied Clippy, formatting and full-
+  workspace/all-feature compile/link. Manifest
+  `target/workload-verification/pilot-launch-verified-manifest.json`, SHA-256
+  `4680803dc22df76e18797932410d58e527b8a3a21d582de94813297affc3c62d`.
+  Source inspection retained actual image locks/path/hash on failures as well as
+  live process handles and closed cancellation/owner-loss cases before final
+  checks; no independent-agent review is claimed. Actual OS startup is compile/
+  link only; no process/native/GPU test ran. Both pinned matrix images still
+  match. Prior dispatch `b97670d` passed hosted run 41408825278 on Linux and MSVC.
+  Publication receipt belongs in ROADMAP.md.
+  Fixed child executable entries/bootstrap/control/telemetry and full parent
+  admission/session export remain Task 3 obligations; NativeAdmission has no issuer.
+
 - 2026-11-02 selected sampler settings dispatch: actual inherited-pipe poll now
   composes strict one-shot request parsing, child receipt/setup chronology,
   selected NVML collection under the independent shared stop gate, immutable

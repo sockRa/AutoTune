@@ -50,6 +50,9 @@ pub enum Receive {
     },
 }
 impl InheritedTransport {
+    pub(crate) fn queue_copy(&self, lane: Lane, bytes: &[u8]) -> Result<(), SendFailure> {
+        self.transport.send_borrowed(lane, bytes)
+    }
     /// Adopt exactly four unique live pipe endpoints supplied by the fixed
     /// launcher. Job/process/peer/image/consent checks remain the launcher's job.
     pub fn new(

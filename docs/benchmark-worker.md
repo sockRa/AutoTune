@@ -897,3 +897,60 @@ actual Windows/NVML path is compile/link checked only. This is source compositio
 not a runnable/qualified pilot sampler: fixed process entry/launch, independent
 control-loop startup, telemetry scheduling, runtime/image/peer/environment/initial
 facts, complete parent admission and bounded live session export remain open.
+
+## Fixed pilot process startup
+
+`workload::launch::Declaration` binds one pilot run, its complete WorkerBinding,
+role and expected image digest. The fixed roles select `autotune-pilot-worker.exe`
+or `autotune-pilot-sampler.exe` alongside the controller. There is no caller-supplied
+program, shell, DLL path, kernel override or device ordinal. Declarations are intent,
+not human authorization or an issuer of workload NativeAdmission.
+
+The versioned argument vector has exactly 16 bounded tokens: fixed role flag, five
+unique nonzero inherited handle values, manifest digest, run ID, frequency, epoch
+token, four original epoch counters, original run origin and a role/binding digest.
+The strict child reader checks decimal/hex shape and duplicates without adopting
+handles. Its `bind` then checks the canonical pilot manifest and recomputes the full
+role/run/device/artifact/profile/clock binding. Actual child entry still must check
+the five live handle types/roles, its own measured image, runtime and parent scope.
+
+`workload::windows_process::Launch` performs hashing/creation on a background
+thread, with a bounded one-result handoff. It reuses the sampler's measured-image,
+explicit handle allowlist, private Job Object, suspended creation, assignment,
+creation-time and resume primitives. Job commit/user-CPU limits select the existing
+approved role values and are read back before use. Sampled user+kernel CPU remains
+separate; the controller must still enforce aggregate sampler/session CPU and
+original phase/session deadlines. This is not a hard GPU duration/VRAM fence.
+
+The measured absolute image path/hash and read-only shared file handle stay owned
+with the process. Post-creation failure retains the original process handle, stage,
+raw OS code, assignment/creation/termination facts, I/O cancellation observations
+and image observation/lock in `RetainedFailure`. It remains observable before job
+assignment; no lost handle or successful terminate request becomes proof of exit.
+The new optional image observation does not manufacture one for historical failures.
+
+Stop/termination share the same permanent cancellation flag through launch and
+process handoff. The sender checks it at every ordinary queue handoff, even if
+constructed before stop; control remains available. A late cancelled result keeps
+its process owner, requests termination and stays closed to new ordinary work.
+Dropping an untransferred launcher requests termination; dropping the process owner
+also requests containment if none was requested, even while the launcher retains
+its shared job reference. Without a surviving observer, completion stays unknown.
+No automatic restart, replacement, reconnect, elevation or driver reset is added.
+
+The worker receives the exact child-only environment `CUDA_CACHE_DISABLE=1` with
+double-NUL termination; the sampler keeps the existing empty child environment.
+This implements the integration contract's recommendation after checking the
+[NVIDIA environment-variable reference](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/environment-variables.html).
+It requests disabling disk JIT caching; driver behavior and JIT setup time still
+need observation. It neither disables compilation nor changes/cleans parent/system
+environment or user caches. No other CUDA loading/device/JIT defaults are claimed
+as observed. Original setup deadlines still apply if compilation takes too long.
+
+Six CPU tests cover exact argument/binding round trips, role/clock/manifest tampering,
+invalid/aliased handles, capacity ownership, fixed role resources/environment, and
+cancellation of an existing sender while preserving raw bytes/control. Concrete
+Windows process startup is compiled/linked only, not executed. The fixed child
+executables/entry/bootstrap/control startup, live telemetry, full parent admission
+and session export remain unfinished. Missing images or unmet prerequisites must
+fail; this source must not be reported as an executed pilot or useful baseline.
