@@ -48,7 +48,8 @@ pub fn ticks_to_ns(ticks: u64, frequency: u64, ceil: bool) -> Result<u64, ClockE
 }
 
 pub struct Clock {
-    binding: Binding,
+    clock_token: [u8; 16],
+    frequency: u64,
     origin: Anchor,
     last: Anchor,
     rejected: Option<ClockError>,
@@ -64,8 +65,21 @@ impl Clock {
         {
             return Err(ClockError::Binding);
         }
+        Self::temporal(binding.qpc_frequency, binding.clock_token, anchor)
+    }
+    /// Pre-bootstrap temporal validation only: no invented device/session and
+    /// no binding/native authority. Full binding must still pass Clock::new.
+    pub(crate) fn temporal(
+        frequency: u64,
+        clock_token: [u8; 16],
+        anchor: Anchor,
+    ) -> Result<Self, ClockError> {
+        if frequency == 0 || clock_token == [0; 16] {
+            return Err(ClockError::Binding);
+        }
         let clock = Self {
-            binding,
+            clock_token,
+            frequency,
             origin: anchor,
             last: anchor,
             rejected: None,
@@ -75,15 +89,14 @@ impl Clock {
     }
 
     fn validate_anchor(&self, anchor: Anchor) -> Result<(), ClockError> {
-        if anchor.clock_token != self.binding.clock_token {
+        if anchor.clock_token != self.clock_token {
             return Err(ClockError::Epoch);
         }
         let ticks = anchor
             .qpc_after
             .checked_sub(anchor.qpc_before)
             .ok_or(ClockError::Order)?;
-        if ticks_to_ns(ticks, self.binding.qpc_frequency, true)? > super::limits().clock_bracket_ns
-        {
+        if ticks_to_ns(ticks, self.frequency, true)? > super::limits().clock_bracket_ns {
             return Err(ClockError::Bracket);
         }
         Ok(())
@@ -107,7 +120,7 @@ impl Clock {
             .ok_or(ClockError::Overflow)?;
         let lower = ticks_to_ns(
             later.qpc_before.saturating_sub(earlier.qpc_after),
-            self.binding.qpc_frequency,
+            self.frequency,
             false,
         )?;
         let upper = ticks_to_ns(
@@ -115,7 +128,7 @@ impl Clock {
                 .qpc_after
                 .checked_sub(earlier.qpc_before)
                 .ok_or(ClockError::Regression)?,
-            self.binding.qpc_frequency,
+            self.frequency,
             true,
         )?;
         let limits = super::limits();

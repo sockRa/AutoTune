@@ -954,3 +954,58 @@ Windows process startup is compiled/linked only, not executed. The fixed child
 executables/entry/bootstrap/control startup, live telemetry, full parent admission
 and session export remain unfinished. Missing images or unmet prerequisites must
 fail; this source must not be reported as an executed pilot or useful baseline.
+
+## Common child bootstrap
+
+`workload::bootstrap` supplies a distinct first frame for both fixed pilot roles.
+It binds exact process role, declaration digest, first parent setup entry and
+canonical pilot manifest. `Sender::send_bootstrap` uses the same bounded Windows
+queue path as worker/settings frames and returns the exact original owner on
+failure. The existing readonly sampler protocol, worker report frames and launch
+argument bytes are unchanged.
+
+The child reader binds the supplied launch arguments to the received manifest,
+recomputes the role/run/device/artifact/profile/epoch declaration, and validates
+parent setup -> actual first child entry -> actual receipt chronology. Setup uses
+the earlier first-parent-entry plus its approved cap and original run cumulative
+boundary. `Gate::from_bootstrap` carries that frozen deadline into the worker
+handshake; receiving bootstrap later cannot renew setup. Sampler bootstrap cannot
+initialize a worker gate. This remains handshake intent, never driver/compute or
+human-consent authority.
+
+`workload::child_windows::Context::from_inherited` composes the actual inherited
+Windows endpoint adoption, clock capture, image hashing/lock, real pipe polling
+and strict bootstrap reader. Its unsafe contract requires one exclusive adoption
+at real process entry; validating a numeric handle cannot establish Rust ownership.
+All five values are validated before adoption, four pipe types are checked, and
+child inheritance flags are cleared. The stop event's role still relies on the
+fixed launcher's explicit handle allowlist; wait failure closes startup.
+
+Before the manifest/device/session is known, the existing temporal clock engine
+can validate only frequency/token/epoch and consecutive anchors, without inventing
+an identity. Its public bound constructor still requires valid full binding. A
+charged 64 KiB EntryClock history preserves successful and faulty observations,
+explicit missing capture and the first overflow anchor without evicting history.
+The concrete child continuously uses it during pre-manifest polling and then
+requires complete binding. Regression, suspend/disagreement/bracket policy and
+numeric limits are unchanged. A separate first-actual-child-entry setup cap bounds
+bootstrap waiting even when stale or forged arguments could not establish an epoch.
+The parent must still enforce its own original deadlines off blocking file/pipe I/O.
+
+The context holds exact raw first packet, full bound manifest, first entry/receipt,
+clock history, stop handle, transport, measured absolute image path/hash and file
+lock. It checks the fixed image name and role's expected digest before returning.
+Failures preserve partial available observations, raw packet if received, capture/
+OS failures, image state and nonblocking I/O cancellation observations; missing
+facts remain unknown. An initial validation/allocation failure manufactures no
+clock/identity/image or successful cleanup. The caller retains the original
+argument values and must export context/failure evidence within aggregate limits.
+
+Eight CPU regressions cover both roles, mismatched/tampered/partial/canonical
+bootstrap, full clock chronology, original setup equality, worker-gate deadline,
+capacity ownership, clock-history loss/regression/overflow and sender-to-framer
+byte preservation. Native endpoint adoption/clock/file/pipe work is compile/link
+only in this slice. No executable main or native admission issuer is added. Fixed
+child mains, independent control-loop startup, actual telemetry/driver/producer
+composition, complete parent admission and live session export remain unfinished;
+this context is no Ready, executed pilot, native qualification or baseline verdict.

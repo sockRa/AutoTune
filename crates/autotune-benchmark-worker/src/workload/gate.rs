@@ -52,6 +52,23 @@ pub struct Gate {
     start: Option<StartObservation>,
 }
 impl Gate {
+    /// Bootstrap intent with the already frozen parent setup entry/deadline.
+    /// Does not authenticate execution consent or permit driver initialization.
+    pub fn from_bootstrap(bootstrap: &super::bootstrap::Bound) -> Result<Self, Fault> {
+        if bootstrap.role() != super::launch::Role::Worker {
+            return Err(Fault::Protocol);
+        }
+        let mut gate = Self::new(bootstrap.binding())?;
+        gate.clock
+            .observe(bootstrap.setup_entry())
+            .map_err(|_| Fault::Clock)?;
+        gate.clock
+            .observe(bootstrap.receipt())
+            .map_err(|_| Fault::Clock)?;
+        gate.setup_deadline_ns = Some(bootstrap.deadline_ns());
+        gate.state = State::Bootstrapped;
+        Ok(gate)
+    }
     pub fn new(binding: WorkerBinding) -> Result<Self, Fault> {
         Ok(Self {
             binding,

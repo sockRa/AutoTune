@@ -130,6 +130,12 @@ impl Declaration {
     pub fn image_digest(&self) -> Digest {
         self.image
     }
+    pub(super) fn tag(&self) -> Digest {
+        self.tag
+    }
+    pub(super) fn manifest_digest(&self) -> Digest {
+        self.manifest
+    }
     /// Fixed bounded numeric/hex tokens; no paths, secrets or arbitrary commands.
     /// Caller reserves command/UTF-16 storage before formatting these tokens.
     pub fn arguments(&self, handles: [usize; 5]) -> Result<Vec<String>, Error> {

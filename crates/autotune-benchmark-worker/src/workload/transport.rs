@@ -134,6 +134,20 @@ impl<Q: Queue> Sender<Q> {
             Err(_) => Err(frame),
         }
     }
+    pub fn send_bootstrap(
+        &mut self,
+        frame: super::bootstrap::Frame,
+    ) -> Result<(), super::bootstrap::Frame> {
+        match self.handoff(
+            Lane::Ordinary,
+            frame.binding,
+            Direction::ToWorker,
+            frame.as_bytes(),
+        ) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(frame),
+        }
+    }
 }
 impl<Q: Queue> FrameSink for Sender<Q> {
     fn send(&mut self, frame: EncodedFrame) -> Result<(), EncodedFrame> {

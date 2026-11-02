@@ -86,6 +86,30 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 common actual child bootstrap: first pilot frame now binds role,
+  declaration, parent setup entry and canonical manifest through the existing
+  bounded sender/pipe path. Concrete Windows context composes exclusive inherited
+  endpoint adoption, actual clock capture, own-image measurement/lock, pipe poll
+  and strict role/manifest/argument/chronology checks. Original raw first packet,
+  available image/clock/failure observations and I/O shutdown state remain owned.
+  Pre-manifest temporal validation reuses unchanged clock rules without inventing
+  device/session IDs; a bounded charged history preserves missing/overflow faults.
+  Worker Gate::from_bootstrap keeps the original parent setup deadline and rejects
+  the sampler role. Eight new CPU tests cover these seams, including actual shared
+  framer/sender byte ownership. One initial misplaced-field compile error was
+  corrected before verification. No independent-agent review or native execution
+  is claimed. Baseline `ef98931` plus unchanged before/after source inventories
+  passes **322 CPU-only tests** (256 integration, 22 probe ABI fakes, 19 worker
+  library, 25 reference/prepared), scoped all-feature warning-denied Clippy,
+  formatting and full-workspace/all-feature compile/link. Manifest
+  `target/workload-verification/child-bootstrap-final-manifest.json`, SHA-256
+  `19383dac24d733fa8893974a3eaf68007c7c43e9ed8e5ffe0c6cfed08ae3f999`.
+  Concrete Windows endpoint/clock/image/pipe work is compiled, not executed;
+  both pinned old matrix images still match. Pilot start `0fc3bce` passed hosted
+  run 41411782871 on Linux and Windows/MSVC. Publication belongs in ROADMAP.md.
+  Fixed mains/control/
+  telemetry/native producer and complete parent admission/export remain Task 3.
+
 - 2026-11-02 fixed pilot process startup: role/image/run/epoch argument declaration
   and strict child binding, with actual Windows background measurement/create/
   assign/resume source reusing existing sampler containment primitives. Role

@@ -288,6 +288,9 @@ impl PilotManifest {
     }
 }
 impl BoundRun<'_> {
+    pub(super) fn index(&self) -> usize {
+        self.index
+    }
     pub fn raw_uuid(&self) -> &str {
         &self.manifest.draft.raw_uuid
     }
