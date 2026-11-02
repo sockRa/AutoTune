@@ -5,5 +5,6 @@ pub mod gate;
 pub mod manifest;
 pub mod producer;
 pub mod settings;
+pub mod settings_transport;
 pub mod trace;
 pub mod wire;

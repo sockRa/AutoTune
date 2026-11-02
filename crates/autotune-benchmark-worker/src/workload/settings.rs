@@ -1,4 +1,5 @@
 //! Bound raw current-setting facts, not consent/native admission or baseline truth.
+mod receive;
 use super::{manifest::BoundRun, wire::WorkerBinding};
 use crate::{
     evidence::{Digest, Domain, Value},
@@ -13,6 +14,8 @@ use autotune_probe::{
     nvml::{NvmlSampler, SettingMetric},
     report::{Field, Reading, Reason, SymbolPresence},
 };
+pub(super) use receive::parse_anchor;
+pub use receive::ReportedCapture;
 const CAP: usize = 64 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
@@ -63,7 +66,7 @@ pub enum Comparison {
     },
 }
 pub struct Capture {
-    binding: WorkerBinding,
+    pub(super) binding: WorkerBinding,
     manifest: Digest,
     expected_uuid: String,
     expected_pci: String,
@@ -113,26 +116,72 @@ impl Capture {
         budget: &Budget,
     ) -> Result<Self, Block> {
         let binding = WorkerBinding::new(run, frequency, epoch).map_err(|_| Block::Clock)?;
-        let identity = sampler.identity().ok_or(Block::Identity)?;
-        Self::collect(
+        Self::collect_native_scoped(
             run,
             binding,
-            identity,
-            clock,
-            stop,
-            |kind| sampler.setting(kind),
+            sampler,
+            (binding.epoch, binding.setup_boundary()),
+            (clock, stop),
             budget,
         )
     }
+    pub(super) fn collect_native_scoped(
+        run: &BoundRun<'_>,
+        binding: WorkerBinding,
+        sampler: &mut NvmlSampler,
+        window: (Anchor, u64),
+        callbacks: (impl FnMut() -> Option<Anchor>, impl FnMut() -> bool),
+        budget: &Budget,
+    ) -> Result<Self, Block> {
+        let identity = sampler.identity().ok_or(Block::Identity)?;
+        Self::collect_window(
+            run,
+            binding,
+            identity,
+            window,
+            (callbacks.0, callbacks.1, |kind| sampler.setting(kind)),
+            budget,
+        )
+    }
+    #[cfg(test)]
     fn collect(
         run: &BoundRun<'_>,
         binding: WorkerBinding,
         identity: (&str, &str),
-        mut clock: impl FnMut() -> Option<Anchor>,
-        mut stop: impl FnMut() -> bool,
-        mut read: impl FnMut(SettingMetric) -> Field,
+        clock: impl FnMut() -> Option<Anchor>,
+        stop: impl FnMut() -> bool,
+        read: impl FnMut(SettingMetric) -> Field,
         budget: &Budget,
     ) -> Result<Self, Block> {
+        Self::collect_window(
+            run,
+            binding,
+            identity,
+            (binding.epoch, binding.setup_boundary()),
+            (clock, stop, read),
+            budget,
+        )
+    }
+    fn collect_window(
+        run: &BoundRun<'_>,
+        binding: WorkerBinding,
+        identity: (&str, &str),
+        window: (Anchor, u64),
+        callbacks: (
+            impl FnMut() -> Option<Anchor>,
+            impl FnMut() -> bool,
+            impl FnMut(SettingMetric) -> Field,
+        ),
+        budget: &Budget,
+    ) -> Result<Self, Block> {
+        let lower_ns = binding
+            .elapsed(window.0)
+            .map_err(|_| Block::Clock)?
+            .max(binding.origin_ns);
+        if lower_ns >= window.1 || window.1 > binding.setup_boundary() {
+            return Err(Block::Phase);
+        }
+        let (mut clock, mut stop, mut read) = callbacks;
         // The closed native source returns scalar fields and bounded static
         // error details. Reserve raw staging before getters/model allocation.
         let _staging = budget.reserve(CAP).map_err(|_| Block::Capacity)?;
@@ -154,6 +203,7 @@ impl Capture {
         }
         let mut validator = Clock::new(binding.monitor, binding.epoch).map_err(|_| Block::Clock)?;
         let mut last = binding.epoch;
+        checked_anchor(&mut validator, &mut last, Some(window.0))?;
         for observation in &mut draft.observations {
             observation.before = clock();
             let before = checked_anchor(&mut validator, &mut last, observation.before);
@@ -164,7 +214,7 @@ impl Capture {
                     break;
                 }
             };
-            if now < binding.origin_ns || now >= binding.setup_boundary() {
+            if now < lower_ns || now >= window.1 {
                 draft.halt = Some(Block::Phase);
                 break;
             }
@@ -179,7 +229,7 @@ impl Capture {
             }
             observation.after = clock();
             match checked_anchor(&mut validator, &mut last, observation.after) {
-                Ok(n) if n < binding.setup_boundary() => (),
+                Ok(n) if n < window.1 => (),
                 Ok(_) => {
                     draft.halt.get_or_insert(Block::Phase);
                 }
@@ -382,7 +432,7 @@ impl Capture {
         }
     }
 }
-fn raw_anchor(a: Anchor) -> Value {
+pub(super) fn raw_anchor(a: Anchor) -> Value {
     object([
         ("clock_token", Value::Text(hex(&a.clock_token))),
         ("qpc_before", Value::U64(a.qpc_before)),
@@ -686,5 +736,42 @@ mod tests {
         drop(c);
         drop(pressure);
         assert_eq!(b.used(), 0);
+    }
+    #[test]
+    fn scoped_request_window_prevents_early_or_expired_getters_without_losing_returns() {
+        let b = Budget::new(8 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let run = m.bind_run(0, 0).unwrap();
+        let binding = WorkerBinding::new(&run, 1_000_000_000, a(0)).unwrap();
+        for (before, after, expected_calls) in [(499, 600, 0), (1000, 1100, 0), (500, 1000, 1)] {
+            let mut clocks = [a(before), a(after)].into_iter();
+            let mut calls = 0;
+            let c = Capture::collect_window(
+                &run,
+                binding,
+                (run.raw_uuid(), run.raw_pci()),
+                (a(500), 1000),
+                (
+                    || clocks.next(),
+                    || false,
+                    |k| {
+                        calls += 1;
+                        Field::available(k.unit(), 1)
+                    },
+                ),
+                &b,
+            )
+            .unwrap();
+            assert_eq!(calls, expected_calls);
+            assert_eq!(
+                c.current(),
+                Err(if before < 500 {
+                    Block::Clock
+                } else {
+                    Block::Phase
+                })
+            );
+            assert_eq!(c.draft().observations[0].raw.is_some(), calls == 1);
+        }
     }
 }

@@ -86,6 +86,30 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-02 settings exchange continuation: separate bounded
+  `pilot_settings_sampler` request/response framing connects the selected
+  current-setting collector and strict parent ReportedCapture reader. One
+  attempt, exact full binding/request/artifact digests, preserved raw failures,
+  sender-claimed provenance and sticky independent parent stop/deadline outcomes.
+  Setup entry and exact relative/cumulative deadline travel in the request and
+  constrain actual getter collection; issue/child/receipt chronology is assessed
+  without rebasing the original epoch or granting a Start/settings freshness lease.
+  Windows sampler dispatch, metadata/session export and full parent required-fact/
+  safety/re-entry/consent admission remain Task 3 obligations. NativeAdmission
+  remains unavailable. Baseline `3dddef2` plus unchanged source inventories passes
+  **294 CPU-only tests** (229 integration, 22 probe ABI fakes, 18 worker library,
+  25 reference/prepared), scoped all-feature warning-denied Clippy, formatting
+  and full-workspace/all-feature compile/link. Manifest
+  `target/workload-verification/settings-transport-closed-manifest.json`, SHA-256
+  `0cf0bfe5a7ff135fb798e85c1794aa1f1f23df97c5a5524c025c1902467d57f6`.
+  Seven new integration and one private collector-window test cover the seam.
+  Local contract/source inspection tightened the child relative deadline and
+  original issue bracket before final verification; no independent-agent review
+  is claimed. Initial visibility compile and sandbox linker failures remain
+  historical. Old pinned matrix images still match; no native/process/GPU run.
+  Settings source `5a9b289` passed hosted run 41347349598. New publication evidence
+  belongs in ROADMAP.md; full Task 3 and the roadmap remain incomplete.
+
 - Final current-setting fact-source verification: baseline `8688ab7` plus exact
   sources, unchanged before/after inventories, **286 CPU-only tests** (222
   integration, 22 probe ABI fakes, 17 feature-library fakes, 25 reference/prepared),

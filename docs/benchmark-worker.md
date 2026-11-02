@@ -753,7 +753,53 @@ This per-run artifact references an already frozen manifest. It cannot itself be
 the manifest's pre-existing starting-evidence artifact, which would create a
 digest cycle. The parent still needs the separate initial evidence, actual frozen
 relative setup/Start timing, current runtime/environment, required safety/re-entry
-facts, trusted native peers and exact independent human consent. Settings request/
-response integration with the sampler role and live artifact/session composition
-remain unfinished. NativeAdmission has no issuer; no new native-read process,
+facts, trusted native peers and exact independent human consent. The separate
+settings exchange below supplies byte-level request/response integration; actual
+Windows sampler dispatch and live artifact/session composition remain unfinished.
+NativeAdmission has no issuer; no new native-read process,
 default executable mode or hardware qualification follows from this source slice.
+
+## Pilot current-settings exchange
+
+`workload::settings_transport` connects the selected collector to a strict parent
+reader without extending the readonly sampler protocol or its native modes. Each
+bound pilot run permits one request and one response attempt. The independent
+`pilot_settings_sampler` role binds the entire WorkerBinding, sequence zero,
+request/response kind and canonical body. Four-byte little-endian inclusive frame
+lengths remain bounded at 64 KiB. Schema, canonicality, complexity, artifact digest
+and exact run/device/manifest/clock/image/profile binding are checked before a
+reported artifact becomes accessible. An uncertain send must stop the exchange;
+no replay/reconnect or fresh request is permitted on that instance.
+
+The parent freezes setup's relative 10 s deadline from its first supplied setup
+entry, capped at the original cumulative 20 s boundary. Entry, deadline and issue
+anchor travel in the request; the child checks their arithmetic and chronology.
+`Request::collect_native` invokes the actual selected collector once, under that
+same frozen window and no earlier than request issue. Before/after getter expiry
+preserves any raw return and prevents a successor. It requires an already selected
+sampler and separately authorized native scope; it neither loads NVML nor proves
+the setup entry, re-entry/safety state, consent or containment. Ordinary telemetry
+scheduling and blocking-call supervision still need Windows composition.
+
+The response borrows an immutable Capture and binds both its digest and the exact
+request-frame digest. A response-encoding failure leaves the capture caller-owned
+and closes the response attempt. `ReportedCapture` is a distinct parent type:
+even `native_getter_path` is explicitly a sender claim, with no conversion to a
+locally collected native Capture or a NativeAdmission. Its strict decoder retains
+wrong raw identities/tokens, missing anchors/fields, reordered metric kinds,
+unavailable reason/status/detail and scalar types for separate assessment. Generic
+decode/re-encode cannot silently normalize numeric representations into evidence.
+
+Parent ticks run independently of the getter. A structurally valid late or stopped
+response is retained with its original issued/receipt anchors, exact raw frame and
+capture; it cannot clear a frozen fault. Child anchors must follow issue, precede
+receipt and respect the frozen setup deadline. Structural/capacity rejection
+leaves the borrowed raw frame caller-owned and permanently closes that receive
+attempt. Retained frames/models and temporary codecs reserve shared budget before
+allocation; live composition must still partition aggregate metadata/queues/disk.
+The receipt is exportable evidence, not a persisted session or complete admission.
+
+CPU tests cover encoded end-to-end exchange, raw scalar/error/clock round trips,
+binding/schema/digest tampering, replay, stop/late receipt, original relative and
+cumulative setup boundaries, pre/post-getter window closure and capacity failure.
+No native getter, process fixture or GPU workload executes in these tests.
