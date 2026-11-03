@@ -8,6 +8,7 @@ use super::{
     starting_bootstrap::Bound,
     starting_control::{Completion, Fault as ControlFault},
     starting_control_windows::{Handle, Report},
+    starting_delivery::{Chunks, Delivery, DeliveryFault},
     starting_export::{Binding, ClockFault, ControlFacts, Facts, Response},
     starting_runtime::{Fault, Operation, Trace},
 };
@@ -15,7 +16,7 @@ use crate::monitor::{
     windows_clock::{CaptureError, WindowsClock},
     Anchor,
 };
-use crate::sampler::budget::Budget;
+use crate::sampler::{budget::Budget, wire::Lane};
 use autotune_probe::{
     nvml::{NvmlSampler, SamplerInfo},
     report::Failure as NativeFailure,
@@ -35,9 +36,31 @@ pub struct Outcome {
     pub control_error: Option<ControlFault>,
     pub event_clone_error: Option<u32>,
     pub unreported_completion: Option<Completion>,
+    pub export_error: Option<Block>,
+    pub delivery: Option<Delivery>,
+    pub delivery_error: Option<DeliveryFault>,
     native: NativeOwner,
 }
 impl Outcome {
+    /// Child orderly-completion status only, never qualification or GPU fence.
+    /// Requires the complete bounded export to have been handed to the queue.
+    pub fn exit_code(&self) -> i32 {
+        if self.trace.fault.is_none()
+            && self.trace.output_drained
+            && self.trace.control_finished
+            && self.export_error.is_none()
+            && self.delivery_error.is_none()
+            && self.delivery.as_ref().is_some_and(Delivery::drained)
+            && self
+                .report
+                .as_ref()
+                .is_some_and(|r| r.state.finished() && r.state.shared().fault().is_none())
+        {
+            0
+        } else {
+            2
+        }
+    }
     pub fn initialized_session_retained(&self) -> bool {
         self.native.initialized()
     }
@@ -101,6 +124,47 @@ pub struct EntryFailure {
     pub context: Context<Bound>,
     pub fault: Fault,
 }
+/// Entry-level rejection before or around the actual retained context/draft.
+pub enum EntryError {
+    Arguments,
+    Capacity,
+    Startup(Box<super::child_windows::Failure>),
+    Entry(Box<EntryFailure>),
+}
+/// The fixed executable dispatches only on this exact first token.
+pub fn is_starting(args: &[std::ffi::OsString]) -> bool {
+    args.first()
+        .is_some_and(|a| a.to_str() == Some(super::starting_bootstrap::FLAG))
+}
+/// Parse the fixed starting argument mode, adopt the exclusively inherited
+/// endpoints and compose the actual entry.
+/// # Safety
+/// Invoke once at the fixed sampler's process entry before any other adoption.
+/// Exact native-read execution scope/consent remain caller prerequisites.
+pub unsafe fn entry() -> Result<Outcome, EntryError> {
+    let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+    let budget = Budget::new(p.evidence_ram_bytes as usize).map_err(|_| EntryError::Capacity)?;
+    let args_charge = budget.reserve(8192).map_err(|_| EntryError::Capacity)?;
+    let mut raw = Vec::with_capacity(14);
+    // Read one extra token so a launcher that supplies more than the fixed 14
+    // arguments is rejected by the strict parser instead of silently truncated.
+    for arg in std::env::args_os().skip(1).take(15) {
+        let arg = arg.into_string().map_err(|_| EntryError::Arguments)?;
+        if arg.len() > 128 {
+            return Err(EntryError::Arguments);
+        }
+        raw.push(arg);
+    }
+    let args =
+        super::starting_bootstrap::Arguments::parse(&raw).map_err(|_| EntryError::Arguments)?;
+    drop(raw);
+    drop(args_charge);
+    // SAFETY: the fixed executable calls entry once, before any other owner can
+    // adopt these inherited endpoints. The fixed launcher supplies its allowlist.
+    let context = unsafe { Context::from_starting_inherited(&args, budget.clone()) }
+        .map_err(|f| EntryError::Startup(Box::new(f)))?;
+    execute(context).map_err(|f| EntryError::Entry(Box::new(f)))
+}
 fn capture(clock: &WindowsClock, error: &mut Option<CaptureError>) -> Option<Anchor> {
     match clock.capture() {
         Ok(a) => Some(a),
@@ -152,10 +216,44 @@ pub unsafe fn execute(mut context: Context<Bound>) -> Result<Outcome, EntryFailu
         control_error: None,
         event_clone_error: None,
         unreported_completion: None,
+        export_error: None,
+        delivery: None,
+        delivery_error: None,
         native: NativeOwner::Released,
     };
     run(&mut out);
+    deliver(&mut out);
     Ok(out)
+}
+/// Send one complete bounded export over the already-owned ordinary lane. A
+/// response-build or queue failure is retained; it never becomes success.
+fn deliver(out: &mut Outcome) {
+    let budget = {
+        let (_, _, _, _, budget) = out.context.parts();
+        budget.clone()
+    };
+    let response = match out.response(&budget) {
+        Ok(response) => response,
+        Err(block) => {
+            out.export_error = Some(block);
+            return;
+        }
+    };
+    let chunks = match Chunks::new(&response, &budget) {
+        Ok(chunks) => chunks,
+        Err(_) => {
+            out.export_error = Some(Block::Capacity);
+            return;
+        }
+    };
+    let (_, transport, _, _, _) = out.context.parts();
+    match chunks.send(
+        |bytes| transport.queue_copy(Lane::Ordinary, bytes),
+        || transport.output_drained(),
+    ) {
+        Ok(delivery) => out.delivery = Some(delivery),
+        Err(fault) => out.delivery_error = Some(fault),
+    }
 }
 fn run(out: &mut Outcome) {
     let (bootstrap, transport, clock, event, budget) = out.context.parts();

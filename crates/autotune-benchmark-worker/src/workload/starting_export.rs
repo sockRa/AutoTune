@@ -21,7 +21,7 @@ use autotune_probe::{
     nvml::{SamplerCall, SamplerInfo, SamplerOutput, SamplerReturn},
     report::Failure as NativeFailure,
 };
-const CAP: usize = 2 * 1024 * 1024;
+pub const CAP: usize = 2 * 1024 * 1024;
 const OPERATIONS: [&str; 4] = ["open", "describe", "read", "cleanup"];
 /// Raw clock fault carried without inventing an anchor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

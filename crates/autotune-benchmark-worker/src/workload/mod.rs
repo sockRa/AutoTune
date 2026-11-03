@@ -26,6 +26,7 @@ pub mod starting_bootstrap;
 pub mod starting_control;
 #[cfg(windows)]
 pub mod starting_control_windows;
+pub mod starting_delivery;
 #[cfg(windows)]
 pub mod starting_entry;
 pub mod starting_export;

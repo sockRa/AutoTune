@@ -86,6 +86,44 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-03 executable starting-mode routing and bounded response delivery:
+  the fixed `autotune-pilot-sampler` main now dispatches only on the exact
+  `--pilot-starting-v1` first token to `starting_entry::entry`; every other
+  argument vector keeps the unchanged pilot sampler entry. `entry` parses the
+  fixed 14-token starting argument mode (one extra token forces a strict
+  rejection instead of silent truncation), adopts the exclusively inherited
+  endpoints through `Context::from_starting_inherited`, and composes the actual
+  entry. `execute` now builds the retained `Response` and hands it to the
+  bounded `starting_delivery::Chunks` sender over the already-owned ordinary
+  lane after the original stop/drain/control completion. The frame is
+  `[u32 total][u32 header_len][canonical header][raw data]`, at most 64 KiB; the
+  fixed response cap (2 MiB) needs at most 33 chunks. The header binds the exact
+  declaration tag, scope digest, transfer digest, index/count, total and byte
+  offset. The parent `Assembler` reserves the full response cap before any body
+  allocation, requires a strictly increasing index/offset with exact declared
+  lengths, verifies the assembled SHA-256 against the declared digest, and then
+  verifies the payload still names the parent's scope digest and declaration
+  tag before exposing canonical bytes. Gaps, duplicates, foreign
+  declaration/scope, structural contradictions, digest mismatch and a missing
+  final chunk remain sticky explicit faults; only a complete verified stream
+  yields `Status::Complete`. A failed queue handoff retains its chunk index,
+  sent count and cause and sends no successor. `Outcome::exit_code` is 0 only
+  for clean trace/drain/control completion together with a complete drained
+  delivery; it remains child orderly-completion, not qualification or a GPU
+  fence. No native/live/hosted/process execution is claimed. CPU-only
+  verification binds baseline `10550de` plus unchanged before/after source
+  inventories: **462 tests** (381 integration including 12 new delivery/routing
+  cases, 32 probe ABI fakes, 24 worker feature-library fakes/static, 25
+  reference/prepared), formatting, warning-denied scoped Clippy and
+  full-workspace/all-target/all-feature compile/link. Manifest
+  `target/workload-verification/starting-delivery-final3-manifest.json`,
+  SHA-256
+  `b5e69b5fd4c1aacbd9b30ffa2f5cd683d43d46bd4a963006efca6d6f137a3b67`.
+  Both pinned matrix images remain byte-identical. Parent-side pipe polling,
+  multi-mode launch declaration selection, complete required consent facts and
+  actual Windows/NVML acceptance remain open; no success qualification follows
+  from the exit code.
+
 - 2026-11-03 bounded starting response/export: `workload::starting_export::Response`
   now freezes one canonical `pilot_starting_settings_response` that binds the
   exact starting scope canonical/digest, declaration tag, original frequency/

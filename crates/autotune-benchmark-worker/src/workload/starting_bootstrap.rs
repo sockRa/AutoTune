@@ -17,7 +17,7 @@ use crate::{
     },
 };
 const CAP: usize = 64 * 1024;
-const FLAG: &str = "--pilot-starting-v1";
+pub const FLAG: &str = "--pilot-starting-v1";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Arguments,
