@@ -28,6 +28,7 @@ pub mod starting_control;
 pub mod starting_control_windows;
 #[cfg(windows)]
 pub mod starting_entry;
+pub mod starting_export;
 pub mod starting_runtime;
 pub mod telemetry;
 pub mod trace;

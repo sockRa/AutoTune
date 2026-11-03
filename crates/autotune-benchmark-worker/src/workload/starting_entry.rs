@@ -8,12 +8,14 @@ use super::{
     starting_bootstrap::Bound,
     starting_control::{Completion, Fault as ControlFault},
     starting_control_windows::{Handle, Report},
+    starting_export::{Binding, ClockFault, ControlFacts, Facts, Response},
     starting_runtime::{Fault, Operation, Trace},
 };
 use crate::monitor::{
     windows_clock::{CaptureError, WindowsClock},
     Anchor,
 };
+use crate::sampler::budget::Budget;
 use autotune_probe::{
     nvml::{NvmlSampler, SamplerInfo},
     report::Failure as NativeFailure,
@@ -38,6 +40,61 @@ pub struct Outcome {
 impl Outcome {
     pub fn initialized_session_retained(&self) -> bool {
         self.native.initialized()
+    }
+    /// Own one bounded canonical export of the retained raw facts. This neither
+    /// delivers it to a peer nor proves native execution/cleanup/GPU quiescence.
+    pub fn response(&self, budget: &Budget) -> Result<Response, Block> {
+        let bootstrap = self.context.bootstrap();
+        let control = ControlFacts {
+            completion: self.report.as_ref().and_then(|r| r.state.completion()),
+            completion_receipt: self
+                .report
+                .as_ref()
+                .and_then(|r| r.state.completion_receipt()),
+            finished: self.report.as_ref().map(|r| r.state.finished()),
+            fault: self.report.as_ref().and_then(|r| r.state.shared().fault()),
+            window: self.report.as_ref().and_then(|r| r.state.shared().window()),
+            trigger: self
+                .report
+                .as_ref()
+                .and_then(|r| r.state.shared().trigger()),
+            event_status: self.report.as_ref().and_then(|r| r.event_status),
+            event_error: self.report.as_ref().and_then(|r| r.event_error),
+            transport_error: self.report.as_ref().and_then(|r| r.transport_error),
+            observed_frequency: self.report.as_ref().and_then(|r| r.observed_frequency),
+            rejected_receipt: self
+                .report
+                .as_ref()
+                .and_then(|r| r.rejected.as_ref().and_then(|x| x.receipt())),
+        };
+        Response::build(
+            Binding {
+                scope: bootstrap.scope(),
+                declaration: bootstrap.declaration(),
+                first_entry: bootstrap.first_entry(),
+                receipt: bootstrap.receipt(),
+                deadline_ns: bootstrap.deadline_ns(),
+            },
+            Facts {
+                info: self.info.as_ref(),
+                ledger: &self.native_calls,
+                snapshot: self.snapshot.as_ref(),
+                snapshot_error: self.snapshot_error,
+                trace: &self.trace,
+                control,
+                native_failure: self.native_failure.as_ref(),
+                clock_error: self.clock_error.map(ClockFault::from).or_else(|| {
+                    self.report
+                        .as_ref()
+                        .and_then(|r| r.clock_error)
+                        .map(ClockFault::from)
+                }),
+                control_error: self.control_error,
+                event_clone_error: self.event_clone_error,
+                unreported_completion: self.unreported_completion,
+            },
+            budget,
+        )
     }
 }
 pub struct EntryFailure {

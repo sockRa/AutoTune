@@ -75,6 +75,9 @@ impl Trace {
             _metadata: metadata,
         })
     }
+    pub fn scope_digest(&self) -> Digest {
+        self.scope
+    }
     pub fn fail(&mut self, f: Fault, shared: &Shared) {
         self.fault.get_or_insert(f);
         shared.close();

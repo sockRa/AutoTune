@@ -86,6 +86,34 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-03 bounded starting response/export: `workload::starting_export::Response`
+  now freezes one canonical `pilot_starting_settings_response` that binds the
+  exact starting scope canonical/digest, declaration tag, original frequency/
+  epoch, child first entry/receipt and 10 s preflight deadline. It retains the
+  observed `SamplerInfo` runtime/raw UUID+PCI, the complete fixed 3077-call
+  `nvml_trace::Ledger` (per-call before/after anchors, attempted flag, raw signed
+  status and complete fixed output buffer, first fault, overflow and rejected
+  return), the snapshot canonical/digest/source or an explicit missing snapshot
+  plus block, all four serial operations' requested/attempted/returned/raw clocks,
+  cleanup status, original stop/drain/control facts, the control completion/
+  receipt/finished/fault/window/trigger/event/transport/frequency/rejected
+  receipt, and native-failure/clock/control/event-clone/unreported-completion
+  evidence. Foreign or stale scope/declaration/snapshot and mismatched reported
+  identity are rejected before encoding; owned/codec capacity is reserved before
+  model construction; the canonical bytes and `RawArtifact` digest are
+  deterministic. `starting_entry::Outcome::response` composes this export from
+  the actual retained entry. No peer delivery, wire response, executable routing
+  or success exit code is added; this is raw retained evidence, not native
+  execution/cleanup/GPU proof or a baseline verdict. CPU-only verification binds
+  baseline `01c16cf9a679dddf7ad0f9e6ac4c54696d9b0f46`, 450 tests (369 integration
+  including 9 new export cases, 32 probe ABI fakes, 24 worker feature-library
+  fakes/static, 25 reference/prepared), formatting, warning-denied scoped Clippy
+  and full-workspace/all-target/all-feature linking. Manifest
+  `target/workload-verification/starting-export-final-manifest.json`, SHA-256
+  `cc8f06f5aa45a5fd271693b7bc191f078dde9edc8a2465ca582e5ba10853069a`.
+  No independent-agent review, native entry/load/watcher/process/GPU execution is
+  claimed; both pinned matrix images remain byte-identical.
+
 - 2026-11-02 per-ABI/per-call NVML stop/deadline barriers: the probe now has a
   fixed read-only `SamplerObserver` seam (`SamplerCall`/`SamplerOutput`/
   `SamplerReturn`) hooked before and after every internal startup/selection/

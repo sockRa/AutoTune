@@ -85,6 +85,9 @@ impl Declaration {
     pub fn scope_digest(&self) -> Digest {
         self.scope
     }
+    pub fn tag(&self) -> Digest {
+        self.tag
+    }
     /// Caller reserves command storage first. Handles are tokens, never adopted here.
     pub fn arguments(&self, handles: [usize; 5]) -> Result<Vec<String>, Error> {
         valid_handles(handles).map_err(|_| Error::Arguments)?;
