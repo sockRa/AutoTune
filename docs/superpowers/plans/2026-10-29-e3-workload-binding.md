@@ -746,3 +746,27 @@ composition are still required before a runnable benchmark can be claimed.
   `target/workload-verification/linux-gate-fix2-manifest.json`. Hosted
   results are not retroactively rewritten; the fix needs its own observed
   run.
+
+- 2026-11-03 parent-side starting reception: `workload::starting_receive::
+  Receiver` now drives the strict assembler under the original epoch and
+  absolute deadline, with a monotonic receive clock, explicit stop and a
+  sticky first fault that stays distinguishable from chunk faults
+  (`Clock`, `Deadline`, `Stopped`, `Assembly(..)`). A chunk arriving at the
+  deadline is rejected; a stop or supervision fault hides every payload; a
+  verified completion is retained and cannot be withdrawn by a stray later
+  chunk, which is reported without recording a new fault. Capacity is
+  reserved in the constructor, before any chunk is accepted. Nine new CPU
+  cases cover exact payload exposure, post-completion retention, stop,
+  deadline equality, clock regression, foreign chunk, duplicate gap, epoch
+  deadline validation and capacity. Full CPU-only verification ran as
+  `starting-receive2`: 471 tests (390 integration, 32 probe ABI fakes, 24
+  feature-library fakes/static, 25 reference/prepared), scoped
+  warning-denied Clippy, formatting and full-workspace/all-target/
+  all-feature linking; manifest
+  `target/workload-verification/starting-receive2-manifest.json`. Cross
+  target `x86_64-unknown-linux-gnu` workspace/all-target check passes
+  (`target/workload-verification/starting-receive2-linux-manual.log`).
+  The first run failed red on an unused `Domain` import and the unused
+  `epoch_ns` field; both were corrected before this manifest. Reception is
+  transport-agnostic source: no parent process polling, live/native/GPU
+  execution or qualification follows.

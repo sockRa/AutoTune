@@ -30,6 +30,7 @@ pub mod starting_delivery;
 #[cfg(windows)]
 pub mod starting_entry;
 pub mod starting_export;
+pub mod starting_receive;
 pub mod starting_runtime;
 pub mod telemetry;
 pub mod trace;
