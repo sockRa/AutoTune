@@ -20,6 +20,7 @@ use autotune_probe::{
     },
     report::Field,
 };
+#[cfg(windows)]
 use std::ffi::OsString;
 
 fn d(n: u8) -> Digest {
@@ -449,6 +450,7 @@ fn assembler_reserves_before_accepting_any_chunk() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn executable_routes_only_the_exact_starting_token() {
     let starting = vec![OsString::from("--pilot-starting-v1"); 14];
@@ -466,6 +468,7 @@ fn executable_routes_only_the_exact_starting_token() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn actual_entry_signatures_compile_without_invocation() {
     let _: unsafe fn() -> Result<

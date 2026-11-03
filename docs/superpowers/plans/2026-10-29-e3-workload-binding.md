@@ -726,3 +726,23 @@ composition are still required before a runnable benchmark can be claimed.
   preserving source/artifacts needed for that existing request; if approval
   arrives while this work is dirty, isolate only these agent-owned source
   changes reversibly before revalidating the already pinned fixture revision.
+
+- 2026-11-03 hosted CI gate correction: the delivered starting delivery
+  slice exposed two Linux-only build defects that failed hosted runs
+  41497007596 (`fe97463`), 41497054618 (`01c16cf`), 41631462137 (`55ba2d8`)
+  and 41631529381 (`10550de`) at workspace Clippy. `NvmlSampler::
+  describe_observed` called the Windows-only `describe()` from its
+  unsupported-platform branch, and the new delivery integration test
+  referenced the Windows-only `starting_entry`. `describe_observed` is now
+  itself Windows-gated (all its callers are Windows modules), and the token
+  routing/signature cases plus their `OsString` import are Windows-gated.
+  Cross-target `cargo check --workspace --all-targets --target
+  x86_64-unknown-linux-gnu` now passes (log
+  `target/workload-verification/linux-gate-fix2-linux-manual.log`, separate
+  `target/linux-check` build root). Windows CPU-only verification re-ran as
+  `linux-gate-fix2` (462 tests: 381 integration, 32 probe ABI fakes, 24
+  feature-library fakes/static, 25 reference/prepared) with scoped Clippy,
+  formatting and all-workspace/all-target/all-feature linking; manifest
+  `target/workload-verification/linux-gate-fix2-manifest.json`. Hosted
+  results are not retroactively rewritten; the fix needs its own observed
+  run.

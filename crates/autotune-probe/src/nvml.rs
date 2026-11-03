@@ -159,16 +159,11 @@ impl NvmlSampler {
             Self::open_retained("", "")
         }
     }
+    /// Observe runtime description of the already selected device. Construction
+    /// itself requires Windows, so this has no unsupported-platform fallback.
+    #[cfg(windows)]
     pub fn describe_observed(&self, observer: &mut impl SamplerObserver) -> SamplerInfo {
-        #[cfg(windows)]
-        {
-            self.selected.describe_observed(observer)
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = observer;
-            self.describe()
-        }
+        self.selected.describe_observed(observer)
     }
     /// Preserve initialized-session ownership on selection failure. No shutdown
     /// is hidden inside this failure return; cleanup remains independently timed.
