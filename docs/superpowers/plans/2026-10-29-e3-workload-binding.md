@@ -770,3 +770,22 @@ composition are still required before a runnable benchmark can be claimed.
   `epoch_ns` field; both were corrected before this manifest. Reception is
   transport-agnostic source: no parent process polling, live/native/GPU
   execution or qualification follows.
+
+- 2026-11-03 concrete parent-side starting reception poll: `starting_receive::
+  poll_native` now drives the strict receiver from one nonblocking owned
+  inherited-pipe poll, keeping the OS cause, transport fault, idle/finished
+  state and any rejected packet separate from the receiver's sticky fault.
+  Idle polls advance the original-epoch deadline, a missing clock is a clock
+  fault (never on-time), a closed peer or transport fault closes reception,
+  and a non-ordinary lane or framing rejection is not accepted as a chunk.
+  `Receiver::tick`/`clock_lost` expose the same rules to fixture tests.
+  Four added cases cover idle deadline enforcement, idle clock regression,
+  missing-clock semantics before and after a verified completion, and the
+  compiled poll signature. Full CPU-only verification ran as
+  `starting-receive3`: 475 tests (394 integration, 32 probe ABI fakes, 24
+  feature-library fakes/static, 25 reference/prepared), scoped
+  warning-denied Clippy, formatting and full-workspace/all-target/
+  all-feature linking; manifest
+  `target/workload-verification/starting-receive3-manifest.json`. Cross
+  target Linux workspace/all-target check passes. The concrete pipe/OS path
+  is compiled, not executed; no live/native/GPU verification follows.

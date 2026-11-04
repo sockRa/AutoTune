@@ -7,6 +7,14 @@ use super::{
     starting_delivery::{Assembler, Fault as Assembly, Status},
 };
 use crate::sampler::budget::Budget;
+#[cfg(windows)]
+use {
+    super::{
+        transport::RawReceived,
+        windows_transport::{InheritedTransport, Receive},
+    },
+    crate::{monitor::Anchor, sampler::wire::Lane},
+};
 /// Parent-side reception fault, kept separate from the assembler's own bounded
 /// chunk faults so supervision failures stay distinguishable after completion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +94,33 @@ impl Receiver {
         }
         self.assembler.canonical()
     }
+    /// Advance the receive clock without a chunk. The deadline is enforced on
+    /// idle polls too, so a silent peer cannot keep reception open forever.
+    pub fn tick(&mut self, now_ns: u64) -> Result<(), Fault> {
+        if let Some(fault) = self.fault() {
+            return Err(fault);
+        }
+        if self.assembler.complete() {
+            return Ok(());
+        }
+        if now_ns < self.last_ns {
+            self.fault = Some(Fault::Clock);
+            return Err(Fault::Clock);
+        }
+        self.last_ns = now_ns;
+        if now_ns >= self.deadline_ns {
+            self.fault = Some(Fault::Deadline);
+            return Err(Fault::Deadline);
+        }
+        Ok(())
+    }
+    /// A missing parent clock observation is retained as a clock fault; it can
+    /// never be treated as an on-time or on-deadline observation.
+    pub fn clock_lost(&mut self) {
+        if !self.complete() {
+            self.fault.get_or_insert(Fault::Clock);
+        }
+    }
     /// One bounded chunk with the parent's observed receive clock. Rejection
     /// leaves the borrowed bytes caller-owned; the first fault is retained.
     pub fn accept(&mut self, now_ns: u64, bytes: &[u8]) -> Result<Status, Fault> {
@@ -114,6 +149,88 @@ impl Receiver {
             Err(fault) => {
                 self.fault = Some(Fault::Assembly(fault));
                 Err(Fault::Assembly(fault))
+            }
+        }
+    }
+}
+
+/// One concrete inherited-pipe poll result. Supervisory facts are retained
+/// separately from the receiver's sticky fault so the OS cause is not lost.
+#[cfg(windows)]
+pub struct Poll {
+    pub anchor: Option<Anchor>,
+    pub transport_fault: bool,
+    pub os_code: Option<i32>,
+    pub idle: bool,
+    pub finished: bool,
+    /// A rejected packet stays caller-owned; it never replaces accepted bytes.
+    pub rejected: Option<RawReceived>,
+}
+/// Drive one nonblocking owned-pipe poll into the strict receiver. Idle polls
+/// still advance the original-epoch deadline; a closed or faulty peer closes
+/// reception instead of waiting without a bound.
+#[cfg(windows)]
+pub fn poll_native(
+    receiver: &mut Receiver,
+    transport: &InheritedTransport,
+    mut clock: impl FnMut() -> Option<Anchor>,
+) -> Poll {
+    if transport.inputs_finished() && !receiver.complete() {
+        receiver.stop();
+    }
+    match transport.receive(&mut clock) {
+        Receive::Packet(raw) => {
+            let anchor = raw.receipt();
+            let accepted = if raw.lane() != Lane::Ordinary || raw.packet().rejection().is_some() {
+                receiver.stop();
+                Err(())
+            } else {
+                match anchor.map(|a| a.qpc_before) {
+                    Some(now) => receiver
+                        .accept(now, raw.packet().bytes())
+                        .map(|_| ())
+                        .map_err(|_| ()),
+                    None => {
+                        receiver.clock_lost();
+                        Err(())
+                    }
+                }
+            };
+            let rejected = accepted.err().map(|_| raw);
+            Poll {
+                anchor,
+                transport_fault: false,
+                os_code: None,
+                idle: false,
+                finished: false,
+                rejected,
+            }
+        }
+        Receive::Idle { anchor } => {
+            match anchor.map(|a| a.qpc_before) {
+                Some(now) => {
+                    let _ = receiver.tick(now);
+                }
+                None => receiver.clock_lost(),
+            }
+            Poll {
+                anchor,
+                transport_fault: false,
+                os_code: None,
+                idle: true,
+                finished: transport.inputs_finished() && !receiver.complete(),
+                rejected: None,
+            }
+        }
+        Receive::Fault { code, anchor } => {
+            receiver.stop();
+            Poll {
+                anchor,
+                transport_fault: true,
+                os_code: code,
+                idle: false,
+                finished: false,
+                rejected: None,
             }
         }
     }

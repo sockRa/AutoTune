@@ -314,3 +314,64 @@ fn capacity_is_reserved_before_any_chunk_is_accepted() {
         ))
     );
 }
+
+#[test]
+fn idle_ticks_enforce_the_original_deadline() {
+    let f = fixture();
+    let (frames, _) = frames(&f);
+    let mut rx = receiver(&f);
+    rx.accept(1_000, &frames[0]).unwrap();
+    assert_eq!(rx.tick(9_999_999_999), Ok(()));
+    assert_eq!(rx.tick(10_000_000_000), Err(Fault::Deadline));
+    assert_eq!(rx.tick(10_000_000_001), Err(Fault::Deadline));
+    assert_eq!(rx.canonical(), None);
+    assert_eq!(rx.fault(), Some(Fault::Deadline));
+}
+
+#[test]
+fn idle_clock_regression_is_a_sticky_fault() {
+    let f = fixture();
+    let mut rx = receiver(&f);
+    assert_eq!(rx.tick(2_000), Ok(()));
+    assert_eq!(rx.tick(1_999), Err(Fault::Clock));
+    assert_eq!(rx.tick(2_001), Err(Fault::Clock));
+    assert_eq!(rx.fault(), Some(Fault::Clock));
+}
+
+#[test]
+fn a_missing_clock_observation_is_never_on_time() {
+    let f = fixture();
+    let (frames, response) = frames(&f);
+    let mut rx = receiver(&f);
+    for (index, frame) in frames.iter().enumerate() {
+        rx.accept(1_000 + index as u64, frame).unwrap();
+    }
+    assert!(rx.complete());
+    // A clock loss after a verified completion cannot withdraw that payload.
+    rx.clock_lost();
+    assert_eq!(rx.fault(), None);
+    assert_eq!(rx.canonical(), Some(response.canonical().as_bytes()));
+
+    let mut broken = receiver(&f);
+    broken.clock_lost();
+    assert_eq!(broken.fault(), Some(Fault::Clock));
+    assert!(broken.accept(1_000, &frames[0]).is_err());
+    assert_eq!(broken.canonical(), None);
+}
+
+#[cfg(windows)]
+#[test]
+fn concrete_poll_path_is_compiled_without_pipe_io() {
+    use autotune_benchmark_worker::{
+        monitor::Anchor,
+        workload::{
+            starting_receive::{poll_native, Receiver},
+            windows_transport::InheritedTransport,
+        },
+    };
+    let check =
+        |receiver: &mut Receiver, transport: &InheritedTransport, clock: fn() -> Option<Anchor>| {
+            let _ = poll_native(receiver, transport, clock);
+        };
+    let _ = check;
+}
