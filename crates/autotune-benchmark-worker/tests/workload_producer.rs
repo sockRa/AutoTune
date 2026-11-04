@@ -57,6 +57,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc,
 };
+include!("support/worker_runtime.rs");
 #[derive(Default)]
 struct Stats {
     submits: AtomicUsize,

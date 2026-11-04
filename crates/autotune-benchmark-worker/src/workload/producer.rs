@@ -62,6 +62,14 @@ pub trait FrameSink {
 pub struct NativeAdmission {
     binding: WorkerBinding,
 }
+/// Preserve the original native owner and callback owners on every recoverable
+/// preparation failure. No speculative close/retry is performed on this path.
+pub struct PrepareFailure<B, C, S> {
+    pub fault: Fault,
+    pub driver: B,
+    pub clock: C,
+    pub stop: S,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
     Admission,
@@ -233,22 +241,53 @@ impl<
         stop: S,
         budget: &Budget,
     ) -> Result<Self, Fault> {
-        if driver.identity() != binding.monitor.device || driver.shape() != binding.plan.shape {
-            return Err(Fault::Binding);
-        }
+        Self::prepare_retained(binding, driver, clock, stop, budget).map_err(|f| f.fault)
+    }
+    #[allow(clippy::result_large_err)] // Return original owners without post-failure allocation.
+    pub fn prepare_retained(
+        binding: WorkerBinding,
+        driver: B,
+        clock: C,
+        stop: S,
+        budget: &Budget,
+    ) -> Result<Self, PrepareFailure<B, C, S>> {
         let lanes = binding.plan.shape.lanes() as usize;
-        let working = budget
-            .reserve(
-                lanes * 28
-                    + std::mem::size_of::<Self>()
-                    + std::mem::size_of::<Context<C, S>>()
-                    + 4096,
+        let resources = (|| {
+            if driver.identity() != binding.monitor.device || driver.shape() != binding.plan.shape {
+                return Err(Fault::Binding);
+            }
+            let working = budget
+                .reserve(
+                    lanes * 28
+                        + std::mem::size_of::<Self>()
+                        + std::mem::size_of::<Context<C, S>>()
+                        + 4096,
+                )
+                .map_err(|_| Fault::Capacity)?;
+            let failure_budget = budget
+                .partition(Profile::approved_design().limits.failure_snapshot_bytes as usize)
+                .map_err(|_| Fault::Capacity)?;
+            let validator = Clock::new(binding.monitor, binding.epoch).map_err(|_| Fault::Clock)?;
+            let channel = Channel::new(
+                binding,
+                Lane::Ordinary,
+                Direction::FromWorker,
+                budget.clone(),
             )
             .map_err(|_| Fault::Capacity)?;
-        let failure_budget = budget
-            .partition(Profile::approved_design().limits.failure_snapshot_bytes as usize)
-            .map_err(|_| Fault::Capacity)?;
-        let validator = Clock::new(binding.monitor, binding.epoch).map_err(|_| Fault::Clock)?;
+            Ok((working, failure_budget, validator, channel))
+        })();
+        let (working, failure_budget, validator, channel) = match resources {
+            Ok(v) => v,
+            Err(fault) => {
+                return Err(PrepareFailure {
+                    fault,
+                    driver,
+                    clock,
+                    stop,
+                })
+            }
+        };
         let context = Rc::new(RefCell::new(Context {
             clock,
             stop,
@@ -263,13 +302,6 @@ impl<
             drain: false,
         }));
         let prepared = PreparedReference::new(Recipe::new(binding.plan.seed, binding.plan.shape));
-        let channel = Channel::new(
-            binding,
-            Lane::Ordinary,
-            Direction::FromWorker,
-            budget.clone(),
-        )
-        .map_err(|_| Fault::Capacity)?;
         Ok(Self {
             binding,
             driver,
@@ -336,7 +368,9 @@ impl<
         if admission.binding != self.binding
             || self.driver.provenance() != Provenance::Native
             || self.control.as_ref().is_none_or(|shared| {
-                shared.admission().stopped() || shared.setup_observations().1.is_none()
+                shared.admission().stopped()
+                    || shared.admission().pending()
+                    || shared.setup_observations().1.is_none()
             })
         {
             self.end.get_or_insert(End::Fault(Fault::Admission));
@@ -350,9 +384,17 @@ impl<
             return Err(Fault::Binding);
         }
         let mut c = self.context.borrow_mut();
-        c.validator
-            .observe(start.issued)
+        // Issued is a peer observation already checked by Gate. It can precede
+        // our post-Ready queue receipt; validate against the original epoch
+        // without rewinding this worker's continuous observation clock.
+        self.binding
+            .elapsed(start.issued)
             .map_err(|_| Fault::Clock)?;
+        if start.issued.qpc_after > start.receipt.qpc_before
+            || start.receipt.qpc_before < c.last.qpc_after
+        {
+            return Err(Fault::Clock);
+        }
         c.now = c
             .validator
             .observe(start.receipt)
@@ -373,6 +415,22 @@ impl<
     }
     pub fn provenance(&self) -> Provenance {
         self.driver.provenance()
+    }
+    pub(super) fn identity(&self) -> Identity {
+        self.driver.identity()
+    }
+    pub(super) fn inherit_setup(&mut self, anchor: Anchor) -> Result<(), Fault> {
+        let mut c = self.context.borrow_mut();
+        if self.started || c.failure.is_some() || anchor.qpc_before < c.last.qpc_after {
+            return Err(Fault::Clock);
+        }
+        c.now = c.validator.observe(anchor).map_err(|_| Fault::Clock)?;
+        c.last = anchor;
+        Ok(())
+    }
+    pub(super) fn latest_observation(&self) -> Option<Anchor> {
+        let c = self.context.borrow();
+        c.failure.map_or(Some(c.last), |f| f.anchor)
     }
     pub fn reports_sent(&self) -> u32 {
         self.reports_sent
@@ -431,6 +489,30 @@ impl<
     }
     pub fn teardown_ledger(&self) -> &teardown::Ledger {
         &self.teardown
+    }
+    pub(super) fn setup_observation(&mut self, deadline: u64) -> Result<Anchor, Fault> {
+        if self.started || self.end.is_some() || deadline > self.binding.setup_boundary() {
+            return Err(Fault::Protocol);
+        }
+        self.guard(deadline)?;
+        let c = self.context.borrow();
+        if c.requested.is_some()
+            || self
+                .control
+                .as_ref()
+                .is_some_and(|s| s.admission().stopped())
+        {
+            return Err(Fault::Admission);
+        }
+        Ok(c.last)
+    }
+    pub(super) fn publish_ready(
+        &mut self,
+        message: &Message,
+        sink: &mut impl FrameSink,
+    ) -> Result<(), Fault> {
+        let frame = self.channel.encode(message).map_err(|_| Fault::Protocol)?;
+        self.send(frame, sink)
     }
     fn guard(&mut self, deadline: u64) -> Result<(), Fault> {
         let mut c = self.context.borrow_mut();
@@ -553,9 +635,12 @@ impl<
         self.context.borrow_mut().dispatch = self.dispatch;
         let clock = self.context.clone();
         let stop = self.context.clone();
+        let control = self.control.clone();
         let clock: Box<dyn FnMut() -> Option<Anchor>> =
             Box::new(move || clock.borrow_mut().capture());
-        let stop: Box<dyn FnMut() -> bool> = Box::new(move || stop.borrow_mut().control());
+        let stop: Box<dyn FnMut() -> bool> = Box::new(move || {
+            control.as_ref().is_some_and(|s| s.admission().stopped()) || stop.borrow_mut().control()
+        });
         let trace = CallTrace::new(
             self.binding,
             self.dispatch,

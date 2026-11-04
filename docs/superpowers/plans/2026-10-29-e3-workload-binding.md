@@ -86,6 +86,38 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 worker preparation/Ready/Start composition: worker_runtime::Session
+  now composes the original bootstrap Gate, exact frozen Shared setup binding,
+  retained producer preparation, fresh Ready, one output sequence and strict
+  owned encoded Start. Ready and all subsequent producer reports share the same
+  Channel; failed handoff retains the original frame and forbids retry. Original
+  setup observations, late receipts and clock faults remain in a prepaid bounded
+  EntryClock. Native setup's final anchor can be inherited without resetting the
+  continuous producer clock. Peer-issued Start is checked against the original
+  epoch separately from the worker's later post-Ready observation, preserving a
+  legitimate cross-process issue/queue-return race without clock rewinding.
+  Producer::prepare_retained returns the original driver and both callback owners
+  on every recoverable failure; the actual preparation path uses it. The opt-in
+  worker_native::prepare now checks worker role/full bootstrap/shared deadline
+  before loading, composes observed CUDA open with Session preparation, and
+  retains SetupFailure or preparation owners and the raw setup ledger. Successful
+  CUDA capability/context checks supply Ready facts; no compute or consent is
+  implied. Shared stop now also closes the per-call producer compute trace.
+  Nine CPU cases cover the encoded Ready/first report sequence, racing Start,
+  Ready-send failure/no retry, late raw receipt/equality, invalid/duplicate Start,
+  inherited-clock regression, stop, returned owner/budget failures and native
+  fixture rejection. Initial compile corrected Ready capability integer widths;
+  the first sequence test incorrectly expected a warm-up PhaseEntered, corrected
+  to the existing protocol's Ready then DispatchRecord. Final verification and
+  publication: ROADMAP.md. Native setup composition is compile/link only, with
+  no loader/process/GPU execution or independent-agent review. Actual executable
+  adoption, concrete pipe/control event loop and controlled in-flight stop/drain,
+  aggregate raw export, complete parent facts/consent, admission issuance and
+  qualification remain open. A shared stop currently freezes this Session without
+  entering more native calls and retains any in-flight producer uncertainty; it
+  is not an executed stop/drain result or a complete worker entry. Full automatic
+  benchmark/search/validation remains the goal. Actions stays removed/disabled.
+
 - 2026-11-04 producer-bound teardown: Driver close now requires a portable
   per-call observer, and the actual CUDA Driver bridge delegates to
   close_observed. Producer cleanup owns eight inline prepaid raw entries and

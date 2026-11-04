@@ -1771,3 +1771,44 @@ rejection and no retry. The actual CUDA Driver forwarding test uses typed ABI
 fakes only. Current source-bound verification is in ROADMAP.md. Worker executable
 composition, complete parent facts/consent, native admission, aggregate raw export
 and real process/native qualification remain open; no live run was performed.
+
+### Worker preparation, Ready and encoded Start — 2026-11-04
+
+`worker_runtime::Session` composes the original bootstrap Gate and exact frozen
+Shared setup deadline with producer preparation, Ready handoff and one retained
+encoded Start. Ready and dispatch/phase/failure reports use the same producer
+Channel, preserving one ordinary output sequence. A failed Ready send retains
+its exact frame and message, closes admission and cannot be retried. Queue-return
+and later setup polls retain raw observations in a bounded prepaid EntryClock;
+a late queue return cannot become successful setup completion.
+
+`Producer::prepare_retained` preserves the original driver and clock/control
+callback owners on recoverable failure. The legacy prepare API delegates to it;
+the new composition uses the retained failure. Setup's final observed anchor is
+inherited into the producer's existing original-epoch validator. Parent-issued
+Start may precede the worker's post-Ready queue receipt while still following
+Ready itself. Gate checks that peer chronology, and producer Start validates it
+against the original epoch without rewinding the local continuous clock. Start
+receipt must still follow the last worker observation. This is not a fresh epoch
+or a renewed setup/warm-up allowance.
+
+The opt-in Windows x64 `worker_native::prepare` composes the actual observed CUDA
+loader/setup and this Session. Before loading, it checks worker role, full shared
+binding and the exact bootstrap deadline. The initial clock must continue from
+bootstrap receipt. Its outcome retains the setup ledger and either the prepared
+Session/facts, original SetupFailure, or original failed-preparation owner and
+callbacks. CUDA setup already verifies actual context-device equality and exact
+7.5 capability before supplying the Ready facts. This API needs separate native
+execution authorization and has not been executed; no native-admission issuer
+or executable main is introduced.
+
+Nine CPU regressions exercise real codecs and an injected driver, including
+Ready/report sequence continuity, racing Start timestamps, raw late receipts,
+invalid/duplicate Start, stop/clock failures, original-owner/budget retention and
+rejection of the fixture entry for native provenance. The actual native factory
+is compile/link only. Shared stop closes both the Session and per-call compute
+trace; the Session retains any in-flight uncertainty without further native
+calls. Actual fixed executable adoption, concrete pipe/control event loop and
+controlled in-flight stop/drain remain unfinished, alongside aggregate export,
+parent required facts/consent, workload admission and real qualification. Exact
+source-bound verification and publication are recorded in ROADMAP.md.

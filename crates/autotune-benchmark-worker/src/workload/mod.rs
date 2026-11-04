@@ -47,3 +47,6 @@ pub mod windows_transport;
 #[cfg(windows)]
 pub use crate::sampler::windows::workload_launch as windows_process;
 pub mod wire;
+#[cfg(all(windows, target_arch = "x86_64", feature = "native-cuda"))]
+pub mod worker_native;
+pub mod worker_runtime;
