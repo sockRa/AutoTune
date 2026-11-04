@@ -49,6 +49,12 @@ impl NativeAdmission {
                 }
             })
     }
+    /// Serial bookkeeping for one already-admitted query/readback after stop.
+    /// Caller must prove its original drain bounds; this grants no new work,
+    /// native execution, retry or cancellation authority.
+    pub fn begin_drain(&self) -> Result<(), ChildError> {
+        self.begin_cleanup()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChildError {

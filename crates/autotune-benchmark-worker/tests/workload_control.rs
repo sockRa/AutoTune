@@ -387,3 +387,48 @@ fn late_setup_completion_publishes_original_deadline_before_another_control_tick
     assert!(!state.tick(Some(a(10_510_000_000))));
     assert_eq!(state.window().unwrap().trigger_ns, 10_000_000_000);
 }
+
+#[test]
+fn shared_stop_retains_original_trigger_when_run_end_clips_both_deadlines() {
+    let (b, binding, shared, mut state) = setup();
+    let end = manifest(&b).bind_run(0, 0).unwrap().plan().envelope_ns;
+    assert!(state.event(Some(a(end - 1000))).is_some());
+    let window = shared.stop_window(binding).unwrap().unwrap();
+    assert_eq!(window.trigger_ns, end - 1000);
+    assert_eq!(window.cooperative_ns, end);
+    assert_eq!(window.exit_ns, end);
+    assert_eq!(Some(window), state.window());
+}
+#[test]
+fn shared_original_window_can_only_tighten_and_unknown_control_cannot_invent_it() {
+    let (_, binding, shared, mut state) = setup();
+    assert_eq!(shared.stop_window(binding).unwrap(), None);
+    shared.close();
+    assert_eq!(shared.stop_window(binding).unwrap(), None);
+    assert!(state.event(Some(a(1_000_000))).is_some());
+    state.local_stop(Some(a(1000)), Some(a(2_000_000)));
+    let original = shared.stop_window(binding).unwrap().unwrap();
+    assert_eq!(original.trigger_ns, 1000);
+    state.local_stop(Some(a(3_000_000)), Some(a(4_000_000)));
+    assert_eq!(shared.stop_window(binding).unwrap(), Some(original));
+    state.fail(Fault::Clock);
+    assert!(shared.stop_window(binding).is_err());
+    assert_eq!(state.window(), Some(original));
+}
+#[test]
+fn shared_stop_window_uses_elapsed_original_epoch_and_checks_full_binding() {
+    let (b, _, _, _) = setup();
+    let m = manifest(&b);
+    let binding =
+        WorkerBinding::new(&m.bind_run(0, 0).unwrap(), 1_000_000_000, a(5_000_000_000)).unwrap();
+    let shared = Arc::new(Shared::default());
+    let mut state = State::new(binding, a(5_000_000_000), shared.clone(), &b).unwrap();
+    assert!(state.event(Some(a(5_100_000_000))).is_some());
+    let window = shared.stop_window(binding).unwrap().unwrap();
+    assert_eq!(window.trigger_ns, 100_000_000);
+    assert_eq!(window.cooperative_ns, 1_100_000_000);
+    assert_eq!(shared.cooperative_raw(), 61_000_000);
+    let foreign =
+        WorkerBinding::new(&m.bind_run(1, 0).unwrap(), 1_000_000_000, a(5_000_000_000)).unwrap();
+    assert!(shared.stop_window(foreign).is_err());
+}

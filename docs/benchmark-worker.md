@@ -1806,9 +1806,58 @@ Nine CPU regressions exercise real codecs and an injected driver, including
 Ready/report sequence continuity, racing Start timestamps, raw late receipts,
 invalid/duplicate Start, stop/clock failures, original-owner/budget retention and
 rejection of the fixture entry for native provenance. The actual native factory
-is compile/link only. Shared stop closes both the Session and per-call compute
-trace; the Session retains any in-flight uncertainty without further native
-calls. Actual fixed executable adoption, concrete pipe/control event loop and
-controlled in-flight stop/drain remain unfinished, alongside aggregate export,
+is compile/link only. The receive/drain continuation below now permits finite
+query/readback only for the existing submitted dispatch under a known original
+stop window. Unknown/invalid control still freezes native progression with
+retained uncertainty. Actual fixed executable adoption and the complete control/
+finalization event loop remain unfinished, alongside aggregate export,
 parent required facts/consent, workload admission and real qualification. Exact
 source-bound verification and publication are recorded in ROADMAP.md.
+
+### Original shared stop/drain and concrete receive — 2026-11-04
+
+Shared retains the earliest actual trigger in original-epoch elapsed nanoseconds,
+independently of the raw cooperative cap. `stop_window` checks the full worker
+binding and derives the unchanged approved cooperative/exit windows from that
+trigger. A cap clipped at run end never invents an earlier trigger. Later events
+can tighten the trigger/cap, never renew them; unknown or failed control remains
+explicit and cannot admit drain.
+
+Producer reads that window directly from Shared while retaining the injected
+control path. Eight prepaid inline history entries preserve observed earlier
+windows and their actual receipt anchors; a separate overflow owner stops work
+without eviction. With a known original window, Session permits the one existing
+dispatch's finite query/readback/full check/hash under its unchanged stream,
+cycle, phase and cooperative limits. No next dispatch starts. Terminal stop and
+teardown retain original exit deadlines. Unknown control or uncertain native
+returns still prohibit successors and retain unresolved owners.
+
+CallTrace now brackets each native host call with the same serial Shared gate.
+Normal entry uses begin; only existing-dispatch query/readback may use begin_drain
+after stop and before the original cap. Raw return precedes gate completion and
+post-clock observation. StopAck pending therefore describes the host-call lane;
+stream pending separately describes submitted work. A NOT_READY return clears
+the returned host call while retaining stream pending. Mismatched/no returns
+never clear unknown pending or authorize replacement work. This bookkeeping does
+not prove physical GPU entry order, cancellation or quiescence.
+
+Session also owns one ordinary input decoder and a concrete Windows poll_native
+bridge. Raw packets, idle/missing/regressing clock observations, OS failure and
+EOF stay distinct. Each receive advances the producer's original continuous
+clock; idle equality expires original setup. A bracketed Start receipt already
+observed during reception is consumed once, not rejected as a duplicate
+observation of overlapping brackets. The Windows adapter is compile/link only.
+
+Thirteen new CPU regressions cover original/clipped/nonzero-epoch windows, finite
+pending/completed drain, expiry without a query or new grace, tighter-history
+retention/overflow, encoded receive/Start, clock/OS/EOF failures, and separate host/
+stream pending with rejected unmatched returns. Receive history is prepaid from
+the frozen run envelope for two observations per control tick; a complete
+simulated original run fits without growth and still expires at the original
+end. Review corrected the initial setup-only history capacity before the final
+manifest. Source-bound final verification
+is in ROADMAP.md. Fixed executable/Context/control/native preparation composition,
+final output/control/I/O drain, aggregate live export, complete parent facts and
+consent, workload admission issuance and real qualification remain unfinished.
+No real native, pipe/process or GPU execution was performed. Actions remains
+removed and disabled; verification is local.

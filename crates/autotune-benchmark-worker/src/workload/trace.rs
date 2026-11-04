@@ -9,6 +9,7 @@ use crate::{
     worker::Fault as BackendFault,
 };
 use autotune_fma_reference::profile::{Phase as PlanPhase, Profile};
+use std::sync::Arc;
 
 /// Adapter must stop immediately on observer failure and keep native uncertainty
 /// sticky. A callback may inspect clock/control; it must never call the driver.
@@ -59,6 +60,8 @@ pub struct CallTrace<C, S> {
     cycle_start: Option<u64>,
     stream_start: Option<u64>,
     _allocation: Reservation,
+    control: Option<Arc<super::control::Shared>>,
+    native_active: bool,
 }
 impl<C: FnMut() -> Option<Anchor>, S: FnMut() -> bool> CallTrace<C, S> {
     pub fn new(
@@ -105,7 +108,19 @@ impl<C: FnMut() -> Option<Anchor>, S: FnMut() -> bool> CallTrace<C, S> {
             cycle_start: None,
             stream_start: None,
             _allocation: allocation,
+            control: None,
+            native_active: false,
         })
+    }
+    /// Exact serial host-call bookkeeping. Does not grant workload admission;
+    /// the stop callback must enforce original drain windows independently.
+    pub fn bind_control(&mut self, shared: Arc<super::control::Shared>) -> Result<(), Fault> {
+        if self.control.is_some() || !self.calls.is_empty() || !shared.matches(self.binding) {
+            shared.close();
+            return Err(Fault::Binding);
+        }
+        self.control = Some(shared);
+        Ok(())
     }
     pub fn calls(&self) -> &[Call] {
         &self.calls
@@ -124,6 +139,20 @@ impl<C: FnMut() -> Option<Anchor>, S: FnMut() -> bool> CallTrace<C, S> {
     }
     fn fail(&mut self, f: Fault) -> BackendFault {
         self.fault.get_or_insert(f);
+        if let Some(shared) = &self.control {
+            if f == Fault::Stopped {
+                shared.close();
+            } else {
+                shared.close_at(
+                    self.binding,
+                    if f == Fault::Clock {
+                        None
+                    } else {
+                        self.calls.last().and_then(|c| c.after)
+                    },
+                );
+            }
+        }
         match self.fault.expect("first fault") {
             Fault::Native { operation, status } => BackendFault {
                 operation: native_name(operation),
@@ -148,6 +177,15 @@ impl<C: FnMut() -> Option<Anchor>, S: FnMut() -> bool> CallTrace<C, S> {
         (a, value)
     }
     fn check(&self, now: u64) -> Result<(), Fault> {
+        if self.control.as_ref().is_some_and(|s| {
+            self.binding
+                .epoch
+                .interrupt_100ns
+                .checked_add(now / 100)
+                .is_none_or(|raw| raw >= s.cooperative_raw())
+        }) {
+            return Err(Fault::Stopped);
+        }
         let limits = Profile::approved_design().limits;
         if now >= self.deadline_ns
             || self
@@ -202,6 +240,23 @@ impl<C: FnMut() -> Option<Anchor>, S: FnMut() -> bool> CallTrace<C, S> {
                 | Operation::Query
                 | Operation::Readback
         ) {
+            if let Some(shared) = &self.control {
+                let entered = if shared.admission().stopped() {
+                    if matches!(op, Operation::Query | Operation::Readback)
+                        && matches!(shared.stop_window(self.binding), Ok(Some(window)) if now < window.cooperative_ns)
+                    {
+                        shared.admission().begin_drain()
+                    } else {
+                        return Err(self.fail(Fault::Stopped));
+                    }
+                } else {
+                    shared.admission().begin()
+                };
+                if entered.is_err() {
+                    return Err(self.fail(Fault::Protocol));
+                }
+                self.native_active = true;
+            }
             self.pending = true;
         }
         Ok(())
@@ -219,6 +274,12 @@ impl<C: FnMut() -> Option<Anchor>, S: FnMut() -> bool> CallTrace<C, S> {
         }
         // Store the raw return before attempting the post-call clock.
         self.calls.last_mut().expect("active call").status = status;
+        if self.native_active {
+            if let Some(shared) = &self.control {
+                shared.admission().complete();
+            }
+            self.native_active = false;
+        }
         if status == Some(0)
             && matches!(
                 op,

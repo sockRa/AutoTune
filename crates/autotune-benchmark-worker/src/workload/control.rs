@@ -31,6 +31,7 @@ pub struct Shared {
     scope: OnceLock<WorkerBinding>,
     setup_deadline_raw: AtomicU64,
     setup_completed_raw: AtomicU64,
+    stop_trigger_ns: AtomicU64,
 }
 impl Default for Shared {
     fn default() -> Self {
@@ -40,10 +41,52 @@ impl Default for Shared {
             scope: OnceLock::new(),
             setup_deadline_raw: AtomicU64::new(u64::MAX),
             setup_completed_raw: AtomicU64::new(u64::MAX),
+            stop_trigger_ns: AtomicU64::new(u64::MAX),
         }
     }
 }
 impl Shared {
+    /// The retained original trigger, not a trigger inferred from a clipped cap.
+    /// Stop closes admission before publication; None with a closed lane means
+    /// unobserved/unfinished control, never a grant to drain or renew grace.
+    pub fn stop_window(&self, binding: WorkerBinding) -> Result<Option<StopWindow>, Fault> {
+        if !self.matches(binding) || self.cooperative_raw() == 0 {
+            return Err(Fault::Protocol);
+        }
+        let trigger_ns = self.stop_trigger_ns.load(Ordering::Acquire);
+        Ok((trigger_ns != u64::MAX).then(|| {
+            let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+            StopWindow {
+                trigger_ns,
+                cooperative_ns: trigger_ns
+                    .saturating_add(p.cooperative_stop_ns)
+                    .min(binding.run_end()),
+                exit_ns: trigger_ns
+                    .saturating_add(p.exit_observation_ns)
+                    .min(binding.run_end()),
+            }
+        }))
+    }
+    fn publish_stop(&self, binding: WorkerBinding, trigger_ns: u64) {
+        self.close();
+        if !self.matches(binding) {
+            self.cooperative_raw.fetch_min(0, Ordering::AcqRel);
+            return;
+        }
+        self.stop_trigger_ns.fetch_min(trigger_ns, Ordering::AcqRel);
+        let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+        let raw = binding
+            .epoch
+            .interrupt_100ns
+            .checked_add(
+                trigger_ns
+                    .saturating_add(p.cooperative_stop_ns)
+                    .min(binding.run_end())
+                    / 100,
+            )
+            .unwrap_or(0);
+        self.cooperative_raw.fetch_min(raw, Ordering::AcqRel);
+    }
     pub(super) fn matches(&self, binding: WorkerBinding) -> bool {
         self.scope.get() == Some(&binding)
     }
@@ -67,6 +110,14 @@ impl Shared {
             .map(|(a, b)| a.min(b))
             .unwrap_or(0);
         self.cooperative_raw.fetch_min(cap, Ordering::AcqRel);
+        if self.matches(binding) && deadline != u64::MAX {
+            self.publish_stop(
+                binding,
+                deadline
+                    .saturating_sub(binding.epoch.interrupt_100ns)
+                    .saturating_mul(100),
+            );
+        }
     }
     pub fn setup_observations(&self) -> (Option<u64>, Option<u64>) {
         let d = self.setup_deadline_raw.load(Ordering::Acquire);
@@ -146,18 +197,11 @@ impl Shared {
     }
     pub(super) fn close_at(&self, binding: WorkerBinding, trigger: Option<Anchor>) {
         self.close();
-        let p = autotune_fma_reference::profile::Profile::approved_design().limits;
-        let raw = trigger
-            .and_then(|a| binding.elapsed(a).ok())
-            .and_then(|n| {
-                binding.epoch.interrupt_100ns.checked_add(
-                    n.saturating_add(p.cooperative_stop_ns)
-                        .min(binding.run_end())
-                        / 100,
-                )
-            })
-            .unwrap_or(0);
-        self.cooperative_raw.fetch_min(raw, Ordering::AcqRel);
+        if let Some(n) = trigger.and_then(|a| binding.elapsed(a).ok()) {
+            self.publish_stop(binding, n);
+        } else {
+            self.cooperative_raw.fetch_min(0, Ordering::AcqRel);
+        }
     }
 }
 pub struct State {
@@ -258,13 +302,7 @@ impl State {
             window
         };
         self.window = Some(window);
-        let cap = self
-            .binding
-            .epoch
-            .interrupt_100ns
-            .checked_add(window.cooperative_ns / 100)
-            .unwrap_or(0);
-        self.shared.cooperative_raw.fetch_min(cap, Ordering::AcqRel);
+        self.shared.publish_stop(self.binding, window.trigger_ns);
     }
     pub fn event(&mut self, anchor: Option<Anchor>) -> Option<Message> {
         self.shared.close();

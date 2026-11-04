@@ -409,3 +409,101 @@ fn trace_identity_phase_and_invocation_cannot_be_relabelled_at_bind_or_encode() 
     // Failed foreign encoding retains the original immutable raw owner.
     assert_eq!(owned.record().dispatch, 0);
 }
+
+#[test]
+fn shared_host_pending_and_gpu_pending_stay_distinct_during_admitted_drain() {
+    use autotune_benchmark_worker::workload::control::{Shared, State};
+    use std::sync::Arc;
+    let b = Budget::new(8 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let binding = binding(&m);
+    let shared = Arc::new(Shared::default());
+    let mut control = State::new(binding, a(0), shared.clone(), &b).unwrap();
+    let mut ns = 0;
+    let mut trace = CallTrace::new(
+        binding,
+        0,
+        Phase::Warmup,
+        a(0),
+        || {
+            ns += 1000;
+            Some(a(ns))
+        },
+        || false,
+        &b,
+    )
+    .unwrap();
+    trace.bind_control(shared.clone()).unwrap();
+    trace.before(Operation::Launch).unwrap();
+    assert!(shared.admission().pending());
+    let ack = control.event(Some(a(1500))).unwrap();
+    assert!(matches!(ack, Message::StopAck { pending: true, .. }));
+    trace.after(Operation::Launch, 0).unwrap();
+    assert!(!shared.admission().pending());
+    assert!(trace.pending());
+    trace.before(Operation::Query).unwrap();
+    assert!(shared.admission().pending());
+    trace.after(Operation::Query, 600).unwrap();
+    assert!(!shared.admission().pending());
+    assert!(trace.pending());
+    trace.before(Operation::Query).unwrap();
+    assert!(shared.admission().pending());
+    trace.after(Operation::Query, 0).unwrap();
+    assert!(!shared.admission().pending());
+    assert!(!trace.pending());
+    assert!(shared.admission().stopped());
+    trace.before(Operation::Readback).unwrap();
+    assert!(shared.admission().pending());
+    trace.after(Operation::Readback, 0).unwrap();
+    assert!(!shared.admission().pending());
+    assert!(trace.before(Operation::Launch).is_err());
+    assert!(shared.admission().stopped());
+}
+#[test]
+fn serial_trace_never_clears_unmatched_pending_or_admits_drain_at_original_cap() {
+    use autotune_benchmark_worker::workload::control::{Shared, State};
+    use std::sync::Arc;
+    let b = Budget::new(8 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let binding = binding(&m);
+    let shared = Arc::new(Shared::default());
+    let _control = State::new(binding, a(0), shared.clone(), &b).unwrap();
+    let mut ns = 0;
+    let mut trace = CallTrace::new(
+        binding,
+        0,
+        Phase::Warmup,
+        a(0),
+        || {
+            ns += 1000;
+            Some(a(ns))
+        },
+        || false,
+        &b,
+    )
+    .unwrap();
+    trace.bind_control(shared.clone()).unwrap();
+    trace.before(Operation::Query).unwrap();
+    assert!(trace.after(Operation::Readback, 0).is_err());
+    assert!(shared.admission().pending());
+    assert!(shared.admission().stopped());
+    assert!(trace.before(Operation::Query).is_err());
+    assert!(shared.admission().pending());
+    let shared = Arc::new(Shared::default());
+    let mut control = State::new(binding, a(0), shared.clone(), &b).unwrap();
+    control.event(Some(a(0)));
+    let mut trace = CallTrace::new(
+        binding,
+        0,
+        Phase::Warmup,
+        a(999_999_000),
+        || Some(a(1_000_000_000)),
+        || false,
+        &b,
+    )
+    .unwrap();
+    trace.bind_control(shared.clone()).unwrap();
+    assert!(trace.before(Operation::Query).is_err());
+    assert_eq!(trace.fault(), Some(Fault::Stopped));
+    assert!(!shared.admission().pending());
+}

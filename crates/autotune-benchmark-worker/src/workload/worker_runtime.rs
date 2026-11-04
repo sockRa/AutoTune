@@ -6,7 +6,7 @@ use super::{
     gate::{Action, Gate},
     producer::{Driver, FrameSink, NativeAdmission, PrepareFailure, Producer},
     transport::WorkerReceived,
-    wire::{Message, WorkerBinding},
+    wire::{Channel, Direction, Message, WorkerBinding},
 };
 use crate::{
     monitor::Anchor,
@@ -17,6 +17,8 @@ use crate::{
     worker::Identity,
 };
 use std::sync::Arc;
+#[path = "worker_receive.rs"]
+mod receive;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
     Binding,
@@ -49,6 +51,9 @@ pub struct Session<B, C, S> {
     deadline: u64,
     worker_digest: crate::evidence::Digest,
     history: super::bootstrap::EntryClock,
+    receiver: Channel,
+    transport_fault: Option<(Option<i32>, Option<Anchor>)>,
+    input_finished: bool,
     _metadata: Reservation,
 }
 pub(super) fn handshake(
@@ -90,19 +95,31 @@ impl<
             let metadata = budget
                 .reserve(std::mem::size_of::<Self>())
                 .map_err(|_| super::producer::Fault::Capacity)?;
-            let history = super::bootstrap::EntryClock::new(
+            let tick = autotune_fma_reference::profile::Profile::approved_design()
+                .limits
+                .controller_tick_ns;
+            let capacity = (binding.plan.envelope_ns / tick)
+                .checked_mul(2)
+                .and_then(|n| n.checked_add(128))
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or(super::producer::Fault::Capacity)?;
+            let history = super::bootstrap::EntryClock::with_capacity(
                 binding.monitor().qpc_frequency,
                 binding.epoch,
                 bootstrap.receipt(),
+                capacity,
                 budget,
             )
             .map_err(|e| match e {
                 super::bootstrap::Error::Capacity => super::producer::Fault::Capacity,
                 _ => super::producer::Fault::Clock,
             })?;
-            Ok((gate, metadata, history))
+            let receiver =
+                Channel::new(binding, Lane::Ordinary, Direction::ToWorker, budget.clone())
+                    .map_err(|_| super::producer::Fault::Capacity)?;
+            Ok((gate, metadata, history, receiver))
         })();
-        let (gate, metadata, history) = match resources {
+        let (gate, metadata, history, receiver) = match resources {
             Ok(v) => v,
             Err(fault) => {
                 shared.close();
@@ -140,6 +157,9 @@ impl<
             deadline: bootstrap.deadline_ns(),
             worker_digest: bootstrap.run().worker_digest(),
             history,
+            receiver,
+            transport_fault: None,
+            input_finished: false,
             _metadata: metadata,
         })
     }
@@ -295,7 +315,9 @@ impl<
     }
     pub fn advance(&mut self, sink: &mut impl FrameSink) {
         if self.started && self.fault.is_none() {
-            if self.shared.admission().stopped() {
+            if self.shared.admission().stopped()
+                && !matches!(self.shared.stop_window(self.binding), Ok(Some(_)))
+            {
                 self.fail(Fault::Control);
                 return;
             }

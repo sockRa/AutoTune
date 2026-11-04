@@ -95,6 +95,11 @@ pub struct StopObservation {
     pub elapsed_ns: u64,
     pub window: StopWindow,
 }
+#[derive(Clone, Copy, Default)]
+pub struct StopHistory {
+    pub entries: [Option<StopObservation>; 8],
+    pub overflow: Option<StopObservation>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClockFailure {
     pub dispatch: u32,
@@ -120,6 +125,11 @@ struct Context<C, S> {
     control_failure: Option<StopWindow>,
     run_end: u64,
     drain: bool,
+    binding: WorkerBinding,
+    shared: Option<Arc<super::control::Shared>>,
+    shared_unknown: bool,
+    shared_invalid: bool,
+    control_history: StopHistory,
 }
 impl<C: FnMut() -> Option<Anchor>, S: FnMut() -> Option<StopWindow>> Context<C, S> {
     fn capture(&mut self) -> Option<Anchor> {
@@ -127,6 +137,12 @@ impl<C: FnMut() -> Option<Anchor>, S: FnMut() -> Option<StopWindow>> Context<C, 
             return None;
         }
         let raw = (self.clock)();
+        self.observe(raw)
+    }
+    fn observe(&mut self, raw: Option<Anchor>) -> Option<Anchor> {
+        if self.failure.is_some() {
+            return None;
+        }
         let value = raw
             .filter(|a| a.qpc_before >= self.last.qpc_after)
             .and_then(|a| self.validator.observe(a).ok());
@@ -149,35 +165,70 @@ impl<C: FnMut() -> Option<Anchor>, S: FnMut() -> Option<StopWindow>> Context<C, 
         }
     }
     fn control(&mut self) -> bool {
-        if self.requested.is_none() && self.control_failure.is_none() {
+        if self.control_failure.is_none() && self.control_history.overflow.is_none() {
             if let Some(window) = (self.stop)() {
-                let p = Profile::approved_design().limits;
-                if window.trigger_ns > self.now
-                    || window.cooperative_ns
-                        != window
-                            .trigger_ns
-                            .saturating_add(p.cooperative_stop_ns)
-                            .min(self.run_end)
-                    || window.exit_ns
-                        != window
-                            .trigger_ns
-                            .saturating_add(p.exit_observation_ns)
-                            .min(self.run_end)
-                {
-                    self.control_failure = Some(window);
-                } else {
-                    self.requested = Some(StopObservation {
-                        anchor: self.last,
-                        elapsed_ns: self.now,
-                        window,
-                    });
+                self.observe_window(window);
+            }
+            if let Some(shared) = &self.shared {
+                let window = shared.stop_window(self.binding);
+                let closed = shared.admission().stopped();
+                self.shared_unknown = closed && matches!(window, Ok(None));
+                self.shared_invalid |= window.is_err();
+                if let Ok(Some(window)) = window {
+                    self.observe_window(window);
                 }
             }
         }
         self.control_failure.is_some()
+            || self.control_history.overflow.is_some()
+            || self.shared_unknown
+            || self.shared_invalid
+            || self
+                .shared
+                .as_ref()
+                .is_some_and(|s| self.last.interrupt_100ns >= s.cooperative_raw())
             || self
                 .requested
                 .is_some_and(|r| !self.drain || self.now >= r.window.cooperative_ns)
+    }
+    fn observe_window(&mut self, window: StopWindow) {
+        let p = Profile::approved_design().limits;
+        if window.trigger_ns > self.now
+            || window.cooperative_ns
+                != window
+                    .trigger_ns
+                    .saturating_add(p.cooperative_stop_ns)
+                    .min(self.run_end)
+            || window.exit_ns
+                != window
+                    .trigger_ns
+                    .saturating_add(p.exit_observation_ns)
+                    .min(self.run_end)
+        {
+            self.control_failure = Some(window);
+        } else {
+            let observation = StopObservation {
+                anchor: self.last,
+                elapsed_ns: self.now,
+                window,
+            };
+            if self
+                .requested
+                .is_none_or(|r| window.trigger_ns < r.window.trigger_ns)
+            {
+                if let Some(slot) = self
+                    .control_history
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.is_none())
+                {
+                    *slot = Some(observation);
+                    self.requested = Some(observation);
+                } else {
+                    self.control_history.overflow.get_or_insert(observation);
+                }
+            }
+        }
     }
 }
 type RunTrace = CallTrace<Box<dyn FnMut() -> Option<Anchor>>, Box<dyn FnMut() -> bool>>;
@@ -300,6 +351,11 @@ impl<
             control_failure: None,
             run_end: binding.run_end(),
             drain: false,
+            binding,
+            shared: None,
+            shared_unknown: false,
+            shared_invalid: false,
+            control_history: StopHistory::default(),
         }));
         let prepared = PreparedReference::new(Recipe::new(binding.plan.seed, binding.plan.shape));
         Ok(Self {
@@ -358,6 +414,7 @@ impl<
             return Err(Fault::Binding);
         }
         self.control = Some(shared);
+        self.context.borrow_mut().shared = self.control.clone();
         Ok(())
     }
     pub fn start_native(
@@ -391,14 +448,16 @@ impl<
             .elapsed(start.issued)
             .map_err(|_| Fault::Clock)?;
         if start.issued.qpc_after > start.receipt.qpc_before
-            || start.receipt.qpc_before < c.last.qpc_after
+            || (start.receipt != c.last && start.receipt.qpc_before < c.last.qpc_after)
         {
             return Err(Fault::Clock);
         }
-        c.now = c
-            .validator
-            .observe(start.receipt)
-            .map_err(|_| Fault::Clock)?;
+        if start.receipt != c.last {
+            c.now = c
+                .validator
+                .observe(start.receipt)
+                .map_err(|_| Fault::Clock)?;
+        }
         c.last = start.receipt;
         self.entry = start.issued;
         let entered = self.binding.elapsed(self.entry).map_err(|_| Fault::Clock)?;
@@ -432,6 +491,23 @@ impl<
         let c = self.context.borrow();
         c.failure.map_or(Some(c.last), |f| f.anchor)
     }
+    #[cfg(windows)]
+    pub(super) fn poll_clock(&mut self) -> Option<Anchor> {
+        let mut c = self.context.borrow_mut();
+        if c.failure.is_some() {
+            None
+        } else {
+            (c.clock)()
+        }
+    }
+    pub(super) fn observe_poll(&mut self, anchor: Option<Anchor>) -> Result<u64, Fault> {
+        let mut c = self.context.borrow_mut();
+        c.observe(anchor).ok_or(Fault::Clock)?;
+        if c.now >= c.run_end {
+            return Err(Fault::Deadline);
+        }
+        Ok(c.now)
+    }
     pub fn reports_sent(&self) -> u32 {
         self.reports_sent
     }
@@ -452,6 +528,9 @@ impl<
     }
     pub fn stop_observation(&self) -> Option<StopObservation> {
         self.context.borrow().requested
+    }
+    pub fn stop_history(&self) -> StopHistory {
+        self.context.borrow().control_history
     }
     pub fn control_failure(&self) -> Option<StopWindow> {
         self.context.borrow().control_failure
@@ -520,6 +599,12 @@ impl<
         c.control();
         if c.control_failure.is_some() {
             return Err(Fault::Protocol);
+        }
+        if c.control_history.overflow.is_some() {
+            return Err(Fault::Capacity);
+        }
+        if c.shared_unknown || c.shared_invalid {
+            return Err(Fault::Admission);
         }
         if self.end.is_some() {
             if let Some(request) = c.requested {
@@ -616,7 +701,13 @@ impl<
         self.native_idle = false;
         let end = match self.trace.as_ref().and_then(|t| t.fault()) {
             Some(TraceFault::Stopped) => {
-                if self.context.borrow().control_failure.is_some() {
+                if self.context.borrow().control_history.overflow.is_some() {
+                    End::Fault(Fault::Capacity)
+                } else if self.context.borrow().shared_unknown
+                    || self.context.borrow().shared_invalid
+                {
+                    End::Fault(Fault::Admission)
+                } else if self.context.borrow().control_failure.is_some() {
                     End::Fault(Fault::Protocol)
                 } else {
                     End::Stopped
@@ -635,13 +726,10 @@ impl<
         self.context.borrow_mut().dispatch = self.dispatch;
         let clock = self.context.clone();
         let stop = self.context.clone();
-        let control = self.control.clone();
         let clock: Box<dyn FnMut() -> Option<Anchor>> =
             Box::new(move || clock.borrow_mut().capture());
-        let stop: Box<dyn FnMut() -> bool> = Box::new(move || {
-            control.as_ref().is_some_and(|s| s.admission().stopped()) || stop.borrow_mut().control()
-        });
-        let trace = CallTrace::new(
+        let stop: Box<dyn FnMut() -> bool> = Box::new(move || stop.borrow_mut().control());
+        let mut trace = CallTrace::new(
             self.binding,
             self.dispatch,
             self.phase,
@@ -657,6 +745,11 @@ impl<
             TraceFault::Capacity => Fault::Capacity,
             _ => Fault::Protocol,
         })?;
+        if let Some(shared) = &self.control {
+            trace
+                .bind_control(shared.clone())
+                .map_err(|_| Fault::Binding)?;
+        }
         self.trace = Some(trace);
         let p = self.binding.plan;
         self.summary = Some(Record {
@@ -995,9 +1088,6 @@ impl<
         if self.cleanup.is_some() || !self.started || self.end.is_none() {
             return;
         }
-        if let Some(shared) = &self.control {
-            shared.close();
-        }
         let mut observation = Cleanup {
             attempted: false,
             before: None,
@@ -1031,6 +1121,11 @@ impl<
         let deadline = self.exit_deadline.unwrap_or(self.binding.run_end());
         let context = self.context.clone();
         let control = self.control.clone();
+        // Terminal compute already forbids successors. Close the serial lane
+        // after checking original control, before any explicit resource release.
+        if let Some(shared) = &control {
+            shared.close();
+        }
         let mut check = || {
             let mut c = context.borrow_mut();
             let anchor = c.capture();

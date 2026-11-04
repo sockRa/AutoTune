@@ -371,4 +371,279 @@ mod worker_runtime_tests {
         );
         assert_eq!(stats.submits.load(Ordering::SeqCst), 0);
     }
+    #[test]
+    fn known_shared_stop_drains_only_the_existing_dispatch_then_cleans_up() {
+        for pending in [0, 2] {
+            let b = Budget::new(24 * 1024 * 1024).unwrap();
+            let m = manifest(&b);
+            let mut p = parts(&b, &m);
+            p.driver.pending = pending;
+            let binding = p.bootstrap.binding();
+            let stats = p.stats.clone();
+            let time = p.time.clone();
+            let shared = p.shared.clone();
+            let mut control = State::new(binding, a(300), shared.clone(), &b).unwrap();
+            let mut s = runtime(p, &b);
+            let mut sink = Sink::default();
+            s.announce(facts(binding), &mut sink).unwrap();
+            assert!(s.packet(start_packet(binding, 12_000, 13_000, &b)).is_ok());
+            s.start_fixture().unwrap();
+            time.store(14_000, Ordering::SeqCst);
+            s.advance(&mut sink);
+            let trigger = time.load(Ordering::SeqCst);
+            assert!(control.event(Some(a(trigger))).is_some());
+            for _ in 0..8 {
+                s.advance(&mut sink);
+            }
+            assert_eq!(s.fault(), None);
+            assert_eq!(s.producer().end(), Some(End::Stopped));
+            assert_eq!(stats.submits.load(Ordering::SeqCst), 1);
+            assert_eq!(stats.queries.load(Ordering::SeqCst), pending + 1);
+            let record = s.producer().last_record().unwrap().record();
+            assert!(!record.pending);
+            assert_eq!(record.checked_lanes, 65536);
+            assert_eq!(
+                s.producer().exit_deadline_ns(),
+                Some(trigger + 3_000_000_000)
+            );
+            assert_eq!(
+                s.producer().stop_history().entries.iter().flatten().count(),
+                1
+            );
+            s.cleanup();
+            s.cleanup();
+            assert_eq!(stats.closes.load(Ordering::SeqCst), 1);
+            assert_eq!(s.producer().teardown_ledger().fault(), None);
+        }
+    }
+    #[test]
+    fn delayed_original_shared_stop_expires_drain_without_query_or_new_grace() {
+        let b = Budget::new(24 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let p = parts(&b, &m);
+        let binding = p.bootstrap.binding();
+        let stats = p.stats.clone();
+        let time = p.time.clone();
+        let shared = p.shared.clone();
+        let mut control = State::new(binding, a(300), shared.clone(), &b).unwrap();
+        let mut s = runtime(p, &b);
+        let mut sink = Sink::default();
+        s.announce(facts(binding), &mut sink).unwrap();
+        assert!(s.packet(start_packet(binding, 12_000, 13_000, &b)).is_ok());
+        s.start_fixture().unwrap();
+        time.store(999_900_000, Ordering::SeqCst);
+        s.advance(&mut sink);
+        assert!(control
+            .local_stop(Some(a(0)), Some(a(time.load(Ordering::SeqCst))))
+            .is_some());
+        time.store(1_000_000_000, Ordering::SeqCst);
+        s.advance(&mut sink);
+        assert_eq!(s.producer().end(), Some(End::Stopped));
+        assert_eq!(stats.submits.load(Ordering::SeqCst), 1);
+        assert_eq!(stats.queries.load(Ordering::SeqCst), 0);
+        assert!(s.producer().last_record().unwrap().record().pending);
+        assert_eq!(s.producer().exit_deadline_ns(), Some(3_000_000_000));
+        s.cleanup();
+        assert_eq!(stats.closes.load(Ordering::SeqCst), 0);
+        assert!(!s.producer().cleanup_observation().unwrap().attempted);
+    }
+    #[test]
+    fn earlier_shared_trigger_tightens_drain_and_preserves_each_observed_window() {
+        let b = Budget::new(24 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let mut p = parts(&b, &m);
+        p.driver.pending = 2;
+        let binding = p.bootstrap.binding();
+        let stats = p.stats.clone();
+        let time = p.time.clone();
+        let shared = p.shared.clone();
+        let mut control = State::new(binding, a(300), shared, &b).unwrap();
+        let mut s = runtime(p, &b);
+        let mut sink = Sink::default();
+        s.announce(facts(binding), &mut sink).unwrap();
+        assert!(s.packet(start_packet(binding, 12_000, 13_000, &b)).is_ok());
+        s.start_fixture().unwrap();
+        time.store(14_000, Ordering::SeqCst);
+        s.advance(&mut sink);
+        let first = time.load(Ordering::SeqCst);
+        control.event(Some(a(first)));
+        s.advance(&mut sink);
+        control.local_stop(Some(a(0)), Some(a(time.load(Ordering::SeqCst))));
+        for _ in 0..4 {
+            s.advance(&mut sink);
+        }
+        let history = s.producer().stop_history();
+        assert_eq!(history.entries.iter().flatten().count(), 2);
+        assert_eq!(history.entries[0].unwrap().window.trigger_ns, first);
+        assert_eq!(history.entries[1].unwrap().window.trigger_ns, 0);
+        assert!(
+            history.entries[1].unwrap().anchor.qpc_before
+                > history.entries[0].unwrap().anchor.qpc_before
+        );
+        assert_eq!(s.producer().exit_deadline_ns(), Some(3_000_000_000));
+        assert_eq!(s.producer().end(), Some(End::Stopped));
+        assert_eq!(stats.submits.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn bounded_stop_history_exhaustion_retains_overflow_and_blocks_successors() {
+        let b = Budget::new(24 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let mut p = parts(&b, &m);
+        p.driver.pending = 20;
+        let binding = p.bootstrap.binding();
+        let stats = p.stats.clone();
+        let time = p.time.clone();
+        let shared = p.shared.clone();
+        let mut control = State::new(binding, a(300), shared, &b).unwrap();
+        let mut s = runtime(p, &b);
+        let mut sink = Sink::default();
+        s.announce(facts(binding), &mut sink).unwrap();
+        assert!(s.packet(start_packet(binding, 12_000, 13_000, &b)).is_ok());
+        s.start_fixture().unwrap();
+        time.store(10_000_000, Ordering::SeqCst);
+        s.advance(&mut sink);
+        for i in 0..9 {
+            control.local_stop(
+                Some(a(1_000_000 - i * 1000)),
+                Some(a(time.load(Ordering::SeqCst))),
+            );
+            s.advance(&mut sink);
+        }
+        assert_eq!(s.producer().end(), Some(End::Fault(Fault::Capacity)));
+        let history = s.producer().stop_history();
+        assert_eq!(history.entries.iter().flatten().count(), 8);
+        assert_eq!(history.overflow.unwrap().window.trigger_ns, 992_000);
+        assert_eq!(stats.submits.load(Ordering::SeqCst), 1);
+        assert_eq!(stats.queries.load(Ordering::SeqCst), 8);
+        s.advance(&mut sink);
+        assert_eq!(stats.queries.load(Ordering::SeqCst), 8);
+    }
+    #[test]
+    fn owned_raw_receive_uses_one_decoder_and_preserves_bracketed_start_receipt() {
+        let b = Budget::new(24 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let p = parts(&b, &m);
+        let binding = p.bootstrap.binding();
+        let time = p.time.clone();
+        let stats = p.stats.clone();
+        let mut s = runtime(p, &b);
+        let mut sink = Sink::default();
+        s.announce(facts(binding), &mut sink).unwrap();
+        let mut tx = Channel::new(binding, Lane::Ordinary, Direction::ToWorker, b.clone()).unwrap();
+        let frame = tx.encode(&Message::Start { issued: a(12_000) }).unwrap();
+        let mut receipt = a(13_000);
+        receipt.qpc_before = 12_900;
+        receipt.qpc_after = 13_100;
+        let raw = RawReceived::new(
+            Lane::Ordinary,
+            Framer::new(b.clone())
+                .unwrap()
+                .read(&mut Bytes(frame.as_bytes())),
+            Some(receipt),
+        );
+        assert!(s.raw_packet(raw).is_ok());
+        assert_eq!(s.history().raw().last(), Some(&receipt));
+        s.start_fixture().unwrap();
+        time.store(14_000, Ordering::SeqCst);
+        s.advance(&mut sink);
+        s.advance(&mut sink);
+        assert_eq!(stats.submits.load(Ordering::SeqCst), 1);
+        assert_eq!(s.producer().reports_sent(), 1);
+        assert_eq!(s.start_packet().unwrap().raw().receipt(), Some(receipt));
+        #[cfg(windows)]
+        {
+            let _poll: fn(
+                &mut Runtime,
+                &autotune_benchmark_worker::workload::windows_transport::InheritedTransport,
+            ) -> Result<(), WorkerReceived> = Runtime::poll_native;
+        }
+    }
+    #[test]
+    fn idle_receive_keeps_original_setup_deadline_and_missing_or_regressing_clocks() {
+        for mode in 0..3 {
+            let b = Budget::new(24 * 1024 * 1024).unwrap();
+            let m = manifest(&b);
+            let p = parts(&b, &m);
+            let deadline = p.bootstrap.deadline_ns();
+            let shared = p.shared.clone();
+            let mut s = runtime(p, &b);
+            s.idle(Some(a(1000))).unwrap();
+            let anchor = match mode {
+                0 => Some(a(deadline)),
+                1 => None,
+                _ => Some(a(500)),
+            };
+            assert_eq!(
+                s.idle(anchor),
+                Err(RuntimeFault::Producer(if mode == 0 {
+                    Fault::Deadline
+                } else {
+                    Fault::Clock
+                }))
+            );
+            if let Some(anchor) = anchor {
+                assert_eq!(s.history().raw().last(), Some(&anchor));
+            } else {
+                assert!(s.history().missing());
+            }
+            assert!(shared.admission().stopped());
+            assert!(s.start_fixture().is_err());
+        }
+    }
+    #[test]
+    fn receive_os_failure_and_eof_remain_separate_from_clock_or_child_completion() {
+        for eof in [false, true] {
+            let b = Budget::new(24 * 1024 * 1024).unwrap();
+            let m = manifest(&b);
+            let p = parts(&b, &m);
+            let binding = p.bootstrap.binding();
+            let stats = p.stats.clone();
+            let mut s = runtime(p, &b);
+            s.announce(facts(binding), &mut Sink::default()).unwrap();
+            if eof {
+                s.receive_finished();
+                assert!(s.input_finished());
+                assert_eq!(s.transport_fault(), None);
+                assert_eq!(s.fault(), Some(RuntimeFault::Protocol));
+            } else {
+                s.receive_failed(Some(-32), None);
+                assert_eq!(s.transport_fault(), Some((Some(-32), None)));
+                assert_eq!(s.fault(), Some(RuntimeFault::Producer(Fault::Clock)));
+                assert!(s.history().missing());
+            }
+            assert!(s.start_fixture().is_err());
+            s.advance(&mut Sink::default());
+            assert_eq!(stats.submits.load(Ordering::SeqCst), 0);
+            assert!(s.producer().end().is_none());
+        }
+    }
+    #[test]
+    fn full_original_run_receive_history_fits_without_growth_or_new_epoch() {
+        let b = Budget::new(24 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let p = parts(&b, &m);
+        let binding = p.bootstrap.binding();
+        let end = p.bootstrap.run().plan().envelope_ns;
+        let mut s = runtime(p, &b);
+        s.announce(facts(binding), &mut Sink::default()).unwrap();
+        assert!(s.packet(start_packet(binding, 12_000, 13_000, &b)).is_ok());
+        s.start_fixture().unwrap();
+        let tick = autotune_fma_reference::profile::Profile::approved_design()
+            .limits
+            .controller_tick_ns;
+        let baseline = b.used();
+        for n in 1..end / tick {
+            s.idle(Some(a(n * tick))).unwrap();
+            s.idle(Some(a(n * tick))).unwrap();
+        }
+        assert_eq!(b.used(), baseline);
+        assert_eq!(s.fault(), None);
+        assert!(s.history().overflow().is_none());
+        assert_eq!(
+            s.idle(Some(a(end))),
+            Err(RuntimeFault::Producer(Fault::Deadline))
+        );
+        assert_eq!(s.history().raw().last(), Some(&a(end)));
+        assert_eq!(b.used(), baseline);
+    }
 }

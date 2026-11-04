@@ -86,6 +86,43 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 original shared stop/drain and concrete receive: Shared now retains
+  the actual original trigger separately from its clipped raw cooperative cap.
+  State, native/local stop and setup expiry publish one monotonic earliest
+  trigger; full binding and unresolved/invalid control remain explicit. Producer
+  polls that exact original window directly, alongside injected control, and
+  retains each earlier observed window in eight prepaid inline slots plus an
+  overflow owner. Later stops cannot renew the earliest window. A known shared
+  stop now permits only the existing submitted dispatch's finite query/readback/
+  check/hash under original stream/cycle/phase/cooperative ceilings, then terminal
+  stopped reporting and explicit teardown; unknown/invalid control still freezes
+  native progression. History exhaustion stops without eviction. CallTrace now
+  marks every native host entry/return in the same serial Shared gate. Host-call
+  pending and GPU-stream pending remain separate; only query/readback can use
+  begin_drain after stop, and unmatched returns never clear unknown pending.
+  Native raw returns are retained before pending completion/post-clock checking.
+  Session owns its ordinary decoder and concrete Windows poll_native receive
+  bridge, retaining OS error/EOF/idle/raw packet and original clock facts. Idle
+  polls enforce the frozen setup deadline, and bracketed Start receipt is consumed
+  once rather than treated as a second overlapping clock observation. Thirteen
+  added CPU cases cover clipped/nonzero-epoch windows, earlier/later triggers,
+  completed/pending drain, original expiry/no query, bounded history, actual
+  encoded raw reception, missing/regressing clocks, OS/EOF, host-vs-stream pending
+  and unresolved/mismatched calls. Receive history is prepaid for two observations
+  per approved control tick across the full original run envelope; a complete
+  simulated run retains constant charged memory and expires at the original end.
+  Review corrected its initial setup-only capacity before the final manifest;
+  earlier worker-drain-final evidence remains separately retained. Initial Clippy
+  caught a collapsible condition;
+  corrected before final checks. Exact final verification/publication: ROADMAP.md.
+  A focused name-filtered command ran runtime tests but filtered control tests;
+  the later explicit control/trace command ran all of those cases. Native pipe
+  polling is compile/link only; no actual pipe/process/native/GPU execution or
+  independent-agent review. Fixed executable/Context/control/native composition,
+  final output/control/I/O drain, aggregate raw export, complete parent facts/
+  consent, workload admission issuance and real qualification remain open. No
+  reset, replacement, retry or physical-quiescence claim. Actions stays disabled.
+
 - 2026-11-04 worker preparation/Ready/Start composition: worker_runtime::Session
   now composes the original bootstrap Gate, exact frozen Shared setup binding,
   retained producer preparation, fresh Ready, one output sequence and strict
