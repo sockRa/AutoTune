@@ -1707,11 +1707,11 @@ passed to an actual library-release call; those fixtures only forget the token.
 No real driver/DLL/process/GPU execution occurs. The first fixture compile error
 was an HMODULE type mismatch and was fixed before final verification.
 
-The worker still needs a bound clock/control observer and must reuse its frozen
-producer exit/cooperative deadline, not start a new grace on cleanup entry. The
-direct producer Driver close currently follows the legacy unobserved path; no
-worker-entry, native admission, physical quiescence or baseline qualification
-follows from this source seam. Actions remains disabled; verification is local.
+The producer-bound integration below now supplies the frozen clock/control
+checks for Driver close. The standalone legacy close remains unobserved and
+retains its external execution prerequisites. No worker-entry, native admission,
+physical quiescence or baseline qualification follows from this source seam.
+Actions remains disabled; verification is local.
 
 ### Bound CUDA setup clock and control — 2026-11-04
 
@@ -1738,3 +1738,36 @@ This is source integration, with no actual driver load or GPU execution. Actual
 loader/entry/export ownership, teardown under the producer's original exit
 window, complete parent facts/consent and native admission remain open. Exact
 verification evidence is retained in ROADMAP.md.
+
+### Producer-bound per-call teardown — 2026-11-04
+
+`producer::Driver::close` now requires the portable `teardown::Observer`; the
+actual CUDA bridge forwards it to `close_observed`. `Producer::cleanup` uses its
+existing continuous Context clock and frozen exit deadline at each of the seven
+CUDA releases and optional DLL release. Its original control window can tighten
+that ceiling. There is no new epoch, grace period or evidence allocation during
+cleanup: eight inline entries and bounded rejection/overflow slots are charged
+inside the producer's preparation reservation.
+
+`bind_control` attaches the exact independent Shared state before Start and
+cannot replace it. Native Start requires attached, open control and completed
+setup, in addition to the still-unissued workload NativeAdmission. Cleanup closes
+work admission and checks the shared raw cooperative ceiling at every pre/post
+boundary, even without a delivered stop mailbox. Each release uses the shared
+serial cleanup gate; an unresolved pending call blocks cleanup and stays pending.
+
+Raw returns are owned before post-clock checking, and successful CUDA/OS releases
+remain distinct from validation failures. `cleanup_observation().result` retains
+the actual Driver result; `teardown_ledger()` separately exposes per-call clocks,
+attempted state, raw CUDA/library outcomes, first validation fault, pending state
+and rejected/overflow evidence. A returned success without observed releases is
+a protocol failure. Callback unwind retains raw and pending evidence; the
+producer and actual backend remain one-shot and perform no implicit native Drop.
+
+Six added CPU regressions cover every release/final boundary, original exit and
+cooperative deadline equality, late shared stop without mailbox delivery, every
+native/library failure, silent Driver success, mismatch/unwind, pending/rebind
+rejection and no retry. The actual CUDA Driver forwarding test uses typed ABI
+fakes only. Current source-bound verification is in ROADMAP.md. Worker executable
+composition, complete parent facts/consent, native admission, aggregate raw export
+and real process/native qualification remain open; no live run was performed.

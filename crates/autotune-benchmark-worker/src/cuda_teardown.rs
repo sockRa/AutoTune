@@ -1,26 +1,7 @@
 // Explicit bounded teardown seam. Library results are OS results, not CUDA codes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TeardownOperation {
-    Stream,
-    Buffer(u8),
-    Module,
-    Context,
-    Library,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TeardownReturn {
-    Cuda(i32),
-    Library {
-        released: bool,
-        error_code: Option<i32>,
-    },
-}
-/// Hooks must retain the result before taking a post-clock observation. They
-/// perform no native work. Any rejection ends teardown without a successor.
-pub trait TeardownObserver {
-    fn before(&mut self, operation: TeardownOperation) -> Result<(), Fault>;
-    fn returned(&mut self, operation: TeardownOperation, raw: TeardownReturn) -> Result<(), Fault>;
-}
+pub use crate::workload::teardown::{
+    Observer as TeardownObserver, Operation as TeardownOperation, Return as TeardownReturn,
+};
 struct UnobservedTeardown;
 impl TeardownObserver for UnobservedTeardown {
     fn before(&mut self, _: TeardownOperation) -> Result<(), Fault> {

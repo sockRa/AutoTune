@@ -163,8 +163,8 @@ impl crate::workload::producer::Driver for CudaBackend {
     ) -> Result<usize, Fault> {
         self.readback_observed(output, observer)
     }
-    fn close(&mut self) -> Result<(), Fault> {
-        CudaBackend::close(self)
+    fn close(&mut self, observer: &mut impl TeardownObserver) -> Result<(), Fault> {
+        self.close_observed(observer)
     }
 }
 impl CudaBackend {
@@ -528,7 +528,9 @@ mod tests {
             observed.events.last(),
             Some(&(Operation::Readback, Some(0)))
         );
-        Driver::close(&mut backend).unwrap();
+        let mut cleanup = CloseRecorded::default();
+        Driver::close(&mut backend, &mut cleanup).unwrap();
+        assert_eq!(cleanup.raw.len(), 7);
     }
     #[derive(Default)]
     struct Recorded {

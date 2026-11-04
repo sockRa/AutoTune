@@ -62,6 +62,13 @@ struct Stats {
     submits: AtomicUsize,
     queries: AtomicUsize,
     closes: AtomicUsize,
+    cleanup_calls: AtomicUsize,
+    cleanup_fail_at: AtomicUsize,
+    silent_close: AtomicBool,
+    clock_reads: AtomicUsize,
+    fail_clock_at: AtomicUsize,
+    jump_clock_at: AtomicUsize,
+    jump_clock_ns: AtomicU64,
 }
 struct Fake {
     identity: Identity,
@@ -137,8 +144,42 @@ impl Driver for Fake {
         o.after(Operation::Readback, 0)?;
         Ok(out.len())
     }
-    fn close(&mut self) -> Result<(), NativeFault> {
-        self.stats.closes.fetch_add(1, Ordering::SeqCst);
+    fn close(
+        &mut self,
+        o: &mut impl autotune_benchmark_worker::workload::teardown::Observer,
+    ) -> Result<(), NativeFault> {
+        use autotune_benchmark_worker::workload::teardown::{Operation as Op, Return};
+        if self.stats.silent_close.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        for op in [
+            Op::Stream,
+            Op::Buffer(0),
+            Op::Buffer(1),
+            Op::Buffer(2),
+            Op::Buffer(3),
+            Op::Module,
+            Op::Context,
+            Op::Library,
+        ] {
+            o.before(op)?;
+            let call = self.stats.cleanup_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if op == Op::Stream {
+                self.stats.closes.fetch_add(1, Ordering::SeqCst);
+            }
+            let failed = self.stats.cleanup_fail_at.load(Ordering::SeqCst) == call;
+            o.returned(
+                op,
+                if op == Op::Library {
+                    Return::Library {
+                        released: !failed,
+                        error_code: failed.then_some(5),
+                    }
+                } else {
+                    Return::Cuda(if failed { -91 } else { 0 })
+                },
+            )?;
+        }
         Ok(())
     }
 }
@@ -237,7 +278,18 @@ fn fixture_run(b: &Budget, m: &PilotManifest, mode: u8, index: usize) -> Fixture
     let tick = time.clone();
     let wrong = bad.clone();
     let signal = stop.clone();
+    let clock_stats = stats.clone();
     let clock: Box<dyn FnMut() -> Option<Anchor>> = Box::new(move || {
+        let read = clock_stats.clock_reads.fetch_add(1, Ordering::SeqCst) + 1;
+        if read == clock_stats.fail_clock_at.load(Ordering::SeqCst) {
+            return None;
+        }
+        if read == clock_stats.jump_clock_at.load(Ordering::SeqCst) {
+            tick.store(
+                clock_stats.jump_clock_ns.load(Ordering::SeqCst),
+                Ordering::SeqCst,
+            );
+        }
         if wrong.load(Ordering::SeqCst) {
             Some(a(0))
         } else {
@@ -309,6 +361,9 @@ fn complete_prepared_plan_flows_through_actual_codec_and_parent_audit() {
         f.producer.cleanup_observation().unwrap().result,
         Some(Ok(()))
     );
+    assert_eq!(f.producer.teardown_ledger().entries().count(), 8);
+    assert_eq!(f.producer.teardown_ledger().fault(), None);
+    assert!(!f.producer.teardown_ledger().pending());
 }
 #[test]
 fn producer_uses_windows_handoff_path_and_retains_frame_on_queue_failure() {
@@ -675,4 +730,274 @@ fn failure_export_capacity_and_late_last_handoff_cannot_be_retried_into_success(
         assert_eq!(f.producer.retained_output().len(), 65536);
         assert_eq!(f.producer.end(), Some(End::Fault(Fault::Incorrect)));
     }
+}
+
+#[test]
+fn per_call_cleanup_uses_continuous_clock_and_original_exit_or_cooperative_cap() {
+    use autotune_benchmark_worker::workload::teardown::Fault as CleanupFault;
+    for mode in 0..3 {
+        for boundary in 0..17_usize {
+            let b = Budget::new(16 * 1024 * 1024).unwrap();
+            let m = manifest(&b);
+            let mut f = fixture(&b, &m, 0);
+            f.producer.start_fixture(start(&m, f.binding)).unwrap();
+            if mode == 1 {
+                let mut sink = Sink {
+                    reject: true,
+                    ..Default::default()
+                };
+                f.producer.advance(&mut sink);
+                f.producer.advance(&mut sink);
+                assert_eq!(f.producer.end(), Some(End::Fault(Fault::Transport)));
+            } else {
+                f.stop.store(true, Ordering::SeqCst);
+                f.producer.advance(&mut Sink::default());
+                assert_eq!(f.producer.end(), Some(End::Stopped));
+            }
+            let original_exit = f.producer.exit_deadline_ns().unwrap();
+            let target = f.stats.clock_reads.load(Ordering::SeqCst) + 2 + boundary;
+            if mode == 0 {
+                f.stats.fail_clock_at.store(target, Ordering::SeqCst);
+            } else {
+                f.stats.jump_clock_at.store(target, Ordering::SeqCst);
+                f.stats.jump_clock_ns.store(
+                    if mode == 1 {
+                        original_exit
+                    } else {
+                        1_000_010_000
+                    },
+                    Ordering::SeqCst,
+                );
+            }
+            f.producer.cleanup();
+            let count = boundary.div_ceil(2);
+            assert_eq!(f.stats.cleanup_calls.load(Ordering::SeqCst), count);
+            assert_eq!(
+                f.producer.teardown_ledger().fault(),
+                Some(if mode == 0 {
+                    CleanupFault::Clock
+                } else {
+                    CleanupFault::Deadline
+                })
+            );
+            assert!(!f.producer.teardown_ledger().pending());
+            assert!(f.producer.exit_deadline_ns().unwrap() <= original_exit);
+            if boundary < 16 {
+                assert!(f
+                    .producer
+                    .cleanup_observation()
+                    .unwrap()
+                    .result
+                    .unwrap()
+                    .is_err());
+            } else {
+                // The driver really returned success; final observation is a
+                // separate failure, never a fabricated native error.
+                assert_eq!(
+                    f.producer.cleanup_observation().unwrap().result,
+                    Some(Ok(()))
+                );
+            }
+            if boundary % 2 == 1 {
+                assert!(f
+                    .producer
+                    .teardown_ledger()
+                    .entries()
+                    .last()
+                    .unwrap()
+                    .raw
+                    .is_some());
+            }
+            f.producer.cleanup();
+            assert_eq!(f.stats.cleanup_calls.load(Ordering::SeqCst), count);
+        }
+    }
+}
+#[test]
+fn per_call_cleanup_native_and_library_errors_keep_raw_outcomes_without_retry() {
+    use autotune_benchmark_worker::workload::teardown::{Fault as CleanupFault, Return};
+    for failed in 1..=8 {
+        let b = Budget::new(16 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let mut f = fixture(&b, &m, 0);
+        f.producer.start_fixture(start(&m, f.binding)).unwrap();
+        f.stop.store(true, Ordering::SeqCst);
+        f.producer.advance(&mut Sink::default());
+        f.stats.cleanup_fail_at.store(failed, Ordering::SeqCst);
+        f.producer.cleanup();
+        assert_eq!(f.stats.cleanup_calls.load(Ordering::SeqCst), failed);
+        let ledger = f.producer.teardown_ledger();
+        assert_eq!(
+            ledger.entries().last().unwrap().raw,
+            Some(if failed == 8 {
+                Return::Library {
+                    released: false,
+                    error_code: Some(5),
+                }
+            } else {
+                Return::Cuda(-91)
+            })
+        );
+        assert_eq!(
+            ledger.fault(),
+            Some(if failed == 8 {
+                CleanupFault::Library(Some(5))
+            } else {
+                CleanupFault::Native(-91)
+            })
+        );
+        assert!(!ledger.pending());
+        f.producer.cleanup();
+        assert_eq!(f.stats.cleanup_calls.load(Ordering::SeqCst), failed);
+    }
+}
+#[test]
+fn driver_success_without_observed_releases_cannot_satisfy_cleanup() {
+    use autotune_benchmark_worker::workload::teardown::Fault as CleanupFault;
+    let b = Budget::new(16 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let mut f = fixture(&b, &m, 0);
+    f.producer.start_fixture(start(&m, f.binding)).unwrap();
+    f.stop.store(true, Ordering::SeqCst);
+    f.producer.advance(&mut Sink::default());
+    f.stats.silent_close.store(true, Ordering::SeqCst);
+    f.producer.cleanup();
+    assert_eq!(
+        f.producer.cleanup_observation().unwrap().result,
+        Some(Ok(()))
+    );
+    assert_eq!(
+        f.producer.teardown_ledger().fault(),
+        Some(CleanupFault::Protocol)
+    );
+    assert_eq!(f.producer.teardown_ledger().entries().count(), 0);
+}
+#[test]
+fn teardown_mismatched_returns_and_post_clock_panic_retain_original_owners() {
+    use autotune_benchmark_worker::workload::teardown::{
+        Check, Fault as CleanupFault, Ledger, Observer as _, Operation as Op, Return,
+    };
+    let check = || Check {
+        anchor: Some(a(1000)),
+        fault: None,
+    };
+    let mut ledger = Ledger::default();
+    let mut observer = ledger.observer(check);
+    observer.before(Op::Stream).unwrap();
+    assert!(observer.returned(Op::Context, Return::Cuda(-22)).is_err());
+    drop(observer);
+    assert!(ledger.pending());
+    assert_eq!(ledger.entries().next().unwrap().raw, None);
+    assert_eq!(ledger.rejected_return().unwrap().1, Return::Cuda(-22));
+    assert_eq!(ledger.fault(), Some(CleanupFault::Protocol));
+    let mut ledger = Ledger::default();
+    let mut reads = 0;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut observer = ledger.observer(|| {
+            reads += 1;
+            if reads == 2 {
+                panic!("fixture post-clock panic");
+            }
+            check()
+        });
+        observer.before(Op::Stream).unwrap();
+        let _ = observer.returned(Op::Stream, Return::Cuda(0));
+    }));
+    assert!(result.is_err());
+    assert_eq!(ledger.entries().next().unwrap().raw, Some(Return::Cuda(0)));
+    assert!(!ledger.pending());
+}
+
+#[test]
+fn independent_shared_cap_limits_each_cleanup_call_without_stop_mailbox_delivery() {
+    use autotune_benchmark_worker::workload::{
+        control::{Shared, State},
+        teardown::Fault as CleanupFault,
+    };
+    for boundary in 0..16_usize {
+        let b = Budget::new(16 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let mut f = fixture(&b, &m, 0);
+        let shared = Arc::new(Shared::default());
+        let mut control = State::new(f.binding, a(0), shared.clone(), &b).unwrap();
+        shared.configure_setup(f.binding, 1_000_000_000).unwrap();
+        shared.complete_setup(f.binding, a(1000)).unwrap();
+        f.producer.bind_control(shared.clone()).unwrap();
+        f.producer.start_fixture(start(&m, f.binding)).unwrap();
+        let mut sink = Sink {
+            reject: true,
+            ..Default::default()
+        };
+        f.producer.advance(&mut sink);
+        f.producer.advance(&mut sink);
+        assert!(control.event(Some(a(10_000))).is_some());
+        assert!(f.producer.stop_observation().is_none());
+        f.stats.jump_clock_at.store(
+            f.stats.clock_reads.load(Ordering::SeqCst) + 2 + boundary,
+            Ordering::SeqCst,
+        );
+        f.stats.jump_clock_ns.store(1_000_010_000, Ordering::SeqCst);
+        f.producer.cleanup();
+        assert_eq!(
+            f.stats.cleanup_calls.load(Ordering::SeqCst),
+            boundary.div_ceil(2)
+        );
+        assert_eq!(
+            f.producer.teardown_ledger().fault(),
+            Some(CleanupFault::Deadline)
+        );
+        assert!(!shared.admission().pending());
+        assert!(shared.admission().stopped());
+        assert_eq!(shared.cooperative_raw(), a(1_000_010_000).interrupt_100ns);
+    }
+}
+#[test]
+fn cleanup_shared_pending_is_never_cleared_or_bypassed_and_control_cannot_rebind() {
+    use autotune_benchmark_worker::workload::{
+        control::{Shared, State},
+        teardown::Fault as CleanupFault,
+    };
+    for pending in [false, true] {
+        let b = Budget::new(16 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let mut f = fixture(&b, &m, 0);
+        let shared = Arc::new(Shared::default());
+        let _state = State::new(f.binding, a(0), shared.clone(), &b).unwrap();
+        f.producer.bind_control(shared.clone()).unwrap();
+        f.producer.start_fixture(start(&m, f.binding)).unwrap();
+        f.stop.store(true, Ordering::SeqCst);
+        f.producer.advance(&mut Sink::default());
+        if pending {
+            shared.admission().begin().unwrap();
+        }
+        f.producer.cleanup();
+        assert_eq!(
+            f.stats.cleanup_calls.load(Ordering::SeqCst),
+            if pending { 0 } else { 8 }
+        );
+        assert_eq!(shared.admission().pending(), pending);
+        assert!(shared.admission().stopped());
+        assert_eq!(
+            f.producer.teardown_ledger().fault(),
+            if pending {
+                Some(CleanupFault::Protocol)
+            } else {
+                None
+            }
+        );
+    }
+    let b = Budget::new(16 * 1024 * 1024).unwrap();
+    let m = manifest(&b);
+    let mut f = fixture(&b, &m, 0);
+    let foreign = Arc::new(Shared::default());
+    assert_eq!(
+        f.producer.bind_control(foreign.clone()),
+        Err(Fault::Binding)
+    );
+    assert!(foreign.admission().stopped());
+    let shared = Arc::new(Shared::default());
+    let _state = State::new(f.binding, a(0), shared.clone(), &b).unwrap();
+    f.producer.bind_control(shared.clone()).unwrap();
+    assert_eq!(f.producer.bind_control(shared.clone()), Err(Fault::Binding));
+    assert!(shared.admission().stopped());
 }

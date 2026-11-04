@@ -86,6 +86,33 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 producer-bound teardown: Driver close now requires a portable
+  per-call observer, and the actual CUDA Driver bridge delegates to
+  close_observed. Producer cleanup owns eight inline prepaid raw entries and
+  uses its existing continuous Context clock, already frozen exit deadline and
+  original stop window for every release and final observation. No new clock
+  epoch, allocation or grace is introduced at cleanup entry. Actual close result
+  stays separate from clock/deadline/protocol validation; even returned success
+  cannot pass without the required observed releases. CUDA and OS library
+  outcomes, pending/mismatched returns and overflow stay distinct and retained.
+  Optional exact bind_control attaches the independent Shared state before
+  Start; native Start requires this state and completed setup, but still has no
+  workload NativeAdmission issuer. Cleanup closes the work lane, checks its raw
+  cooperative cap at every boundary and serializes releases with begin_cleanup/
+  complete. Existing unresolved shared pending state is neither cleared nor
+  bypassed. Unwind retains raw/pending evidence, marks observer uncertainty and
+  the producer's one-shot attempt prevents retry. Six new CPU cases cover all
+  release/final clock boundaries against original exit/cooperative caps, every
+  CUDA/library failure, unobserved-success rejection, mismatch/panic, independent
+  shared expiry without mailbox delivery, unresolved pending and rebind rejection.
+  Actual CUDA Driver forwarding is checked by the feature-library ABI fake.
+  Initial focused compile caught the old one-argument Driver close test and was
+  corrected; focused tests and Clippy then passed. Exact final verification and
+  publication are recorded in ROADMAP.md. Actual worker entry must still bind
+  setup/control/preparation/Ready/Start and driver dispatch admission, finish
+  required parent facts/consent, export raw owners and qualify real execution.
+  No DLL/native/GPU/owned-process execution; Actions stays removed/disabled.
+
 - 2026-11-04 bound CUDA setup observation: `cuda_setup_trace::Ledger` now
   implements the actual adapter's SetupObserver against the full worker binding,
   original shared epoch/frequency, control state's already frozen setup deadline

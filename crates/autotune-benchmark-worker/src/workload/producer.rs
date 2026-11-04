@@ -3,6 +3,7 @@
 use super::{
     dispatch::{FailureChunk, FirstFailure, Operation, Phase, Record, CHUNK_LANES},
     gate::{StartObservation, StopWindow},
+    teardown,
     trace::{CallTrace, Fault as TraceFault, Observer, TracedRecord},
     wire::{Channel, Direction, EncodedFrame, Message, WorkerBinding},
 };
@@ -21,6 +22,7 @@ use autotune_fma_reference::{
     reference::PreparedReference,
 };
 use sha2::{Digest as _, Sha256};
+use std::sync::Arc;
 use std::{cell::RefCell, rc::Rc};
 
 pub struct Inputs<'a> {
@@ -47,7 +49,7 @@ pub trait Driver {
         output: &mut [f32],
         observer: &mut impl Observer,
     ) -> Result<usize, NativeFault>;
-    fn close(&mut self) -> Result<(), NativeFault>;
+    fn close(&mut self, observer: &mut impl teardown::Observer) -> Result<(), NativeFault>;
 }
 /// Immediate bounded queue handoff. Success means accepted ownership, not peer
 /// receipt/durability. Failure must return the exact frame, never retry/reconnect.
@@ -212,6 +214,8 @@ pub struct Producer<B, C, S> {
     transport_failed: bool,
     export_fault: Option<Fault>,
     cleanup: Option<Cleanup>,
+    teardown: teardown::Ledger,
+    control: Option<Arc<super::control::Shared>>,
     reports_sent: u32,
 }
 impl<
@@ -299,6 +303,8 @@ impl<
             transport_failed: false,
             export_fault: None,
             cleanup: None,
+            teardown: teardown::Ledger::default(),
+            control: None,
             reports_sent: 0,
         })
     }
@@ -309,12 +315,30 @@ impl<
         }
         self.start(start)
     }
+    /// Attach the exact independent control state before Start. This grants no
+    /// workload admission and cannot replace an existing control binding.
+    pub fn bind_control(&mut self, shared: Arc<super::control::Shared>) -> Result<(), Fault> {
+        if self.started || self.control.is_some() || !shared.matches(self.binding) {
+            shared.close();
+            if let Some(existing) = &self.control {
+                existing.close();
+            }
+            return Err(Fault::Binding);
+        }
+        self.control = Some(shared);
+        Ok(())
+    }
     pub fn start_native(
         &mut self,
         start: StartObservation,
         admission: NativeAdmission,
     ) -> Result<(), Fault> {
-        if admission.binding != self.binding || self.driver.provenance() != Provenance::Native {
+        if admission.binding != self.binding
+            || self.driver.provenance() != Provenance::Native
+            || self.control.as_ref().is_none_or(|shared| {
+                shared.admission().stopped() || shared.setup_observations().1.is_none()
+            })
+        {
             self.end.get_or_insert(End::Fault(Fault::Admission));
             return Err(Fault::Admission);
         }
@@ -404,6 +428,9 @@ impl<
     }
     pub fn cleanup_observation(&self) -> Option<Cleanup> {
         self.cleanup
+    }
+    pub fn teardown_ledger(&self) -> &teardown::Ledger {
+        &self.teardown
     }
     fn guard(&mut self, deadline: u64) -> Result<(), Fault> {
         let mut c = self.context.borrow_mut();
@@ -883,6 +910,9 @@ impl<
         if self.cleanup.is_some() || !self.started || self.end.is_none() {
             return;
         }
+        if let Some(shared) = &self.control {
+            shared.close();
+        }
         let mut observation = Cleanup {
             attempted: false,
             before: None,
@@ -913,13 +943,49 @@ impl<
         observation.attempted = true;
         self.native_idle = false;
         self.cleanup = Some(observation);
-        let result = self.driver.close();
+        let deadline = self.exit_deadline.unwrap_or(self.binding.run_end());
+        let context = self.context.clone();
+        let control = self.control.clone();
+        let mut check = || {
+            let mut c = context.borrow_mut();
+            let anchor = c.capture();
+            let fault = if anchor.is_none() {
+                Some(teardown::Fault::Clock)
+            } else if c.control_failure.is_some() {
+                Some(teardown::Fault::Protocol)
+            } else if c.now >= deadline
+                || control.as_ref().is_some_and(|shared| {
+                    anchor.is_none_or(|a| a.interrupt_100ns >= shared.cooperative_raw())
+                })
+                || c.requested
+                    .is_some_and(|r| c.now >= r.window.cooperative_ns || c.now >= r.window.exit_ns)
+            {
+                Some(teardown::Fault::Deadline)
+            } else {
+                None
+            };
+            teardown::Check {
+                anchor: anchor.or(c.failure.and_then(|f| f.anchor)),
+                fault,
+            }
+        };
+        let result = self.driver.close(&mut self.teardown.controlled(
+            &mut check,
+            control.as_ref().map(|shared| shared.admission()),
+        ));
         self.cleanup
             .as_mut()
             .expect("cleanup entry retained")
             .result = Some(result);
-        let after = self.context.borrow_mut().capture();
-        self.cleanup.as_mut().expect("cleanup entry retained").after = after;
+        let final_check = check();
+        self.cleanup.as_mut().expect("cleanup entry retained").after = final_check.anchor;
+        self.teardown.finish(result.is_ok(), final_check);
+        if let Some(request) = self.context.borrow().requested {
+            self.exit_deadline = Some(deadline.min(request.window.exit_ns));
+            self.end_trigger = Some(self.end_trigger.map_or(request.window.trigger_ns, |n| {
+                n.min(request.window.trigger_ns)
+            }));
+        }
     }
 }
 fn hash(slices: &[&[f32]]) -> Digest {
