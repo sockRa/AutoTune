@@ -32,6 +32,7 @@ pub mod starting_entry;
 pub mod starting_export;
 pub mod starting_receive;
 pub mod starting_runtime;
+pub mod starting_session;
 pub mod telemetry;
 pub mod trace;
 pub mod transport;

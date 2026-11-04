@@ -166,14 +166,17 @@ pub struct Poll {
     /// A rejected packet stays caller-owned; it never replaces accepted bytes.
     pub rejected: Option<RawReceived>,
 }
-/// Drive one nonblocking owned-pipe poll into the strict receiver. Idle polls
-/// still advance the original-epoch deadline; a closed or faulty peer closes
-/// reception instead of waiting without a bound.
+/// Drive one nonblocking owned-pipe poll into the strict receiver. The observed
+/// anchor is converted to the receiver's elapsed-ns domain before any deadline
+/// check, so a raw QPC reading can never be compared against an elapsed bound.
+/// Idle polls still advance the original-epoch deadline; a closed or faulty peer
+/// closes reception instead of waiting without a bound.
 #[cfg(windows)]
 pub fn poll_native(
     receiver: &mut Receiver,
     transport: &InheritedTransport,
     mut clock: impl FnMut() -> Option<Anchor>,
+    mut elapsed: impl FnMut(Anchor) -> Option<u64>,
 ) -> Poll {
     if transport.inputs_finished() && !receiver.complete() {
         receiver.stop();
@@ -185,7 +188,7 @@ pub fn poll_native(
                 receiver.stop();
                 Err(())
             } else {
-                match anchor.map(|a| a.qpc_before) {
+                match anchor.and_then(&mut elapsed) {
                     Some(now) => receiver
                         .accept(now, raw.packet().bytes())
                         .map(|_| ())
@@ -207,7 +210,7 @@ pub fn poll_native(
             }
         }
         Receive::Idle { anchor } => {
-            match anchor.map(|a| a.qpc_before) {
+            match anchor.and_then(&mut elapsed) {
                 Some(now) => {
                     let _ = receiver.tick(now);
                 }

@@ -1513,3 +1513,46 @@ SHA-256 `289a5578061c2315d2fd6c058a1aec8e7f2eefef7097059575c9f73e7144ae8f`.
 Both pinned old matrix images remain byte-identical. No independent-agent review
 or process/native execution is claimed; this is source composition, not E3/Gate B
 acceptance or qualification of the internal native-call groups.
+
+### Parent-side starting session — 2026-11-04
+
+`workload::starting_session::Session` composes the single starting reception under
+the parent's original epoch. It freezes the declaration/scope binding and reserves
+the receiver capacity before any chunk, derives the arrival bound from the approved
+profile (preflight plus the cooperative-stop and exit-observation allowances,
+capped by the pilot session), and exposes the launched process only by reference:
+the session creates no process, issues no workload `NativeAdmission` and proves
+neither peer exit nor qualification.
+
+Every driver poll converts the observed anchor to elapsed nanoseconds from the
+original epoch before a deadline or clock check, so a raw QPC reading can never be
+compared against an elapsed bound. `poll_native` now takes that conversion
+explicitly and keeps lane/framing rejection, a closed peer and an OS error distinct
+from the receiver's own sticky chunk/clock/deadline fault. `Session::settle` merges
+those supervision facts: a verified completion always wins and cannot be withdrawn
+by a later transport or supervision observation, the first OS cause is retained,
+and a closed peer without completion becomes an explicit stopped outcome. A stray
+chunk after completion, an idle deadline, clock regression or missing clock remain
+sticky and expose no payload.
+
+Six added cases cover the exact verified payload/outcome, transport-fault retention
+without payload exposure, closed-peer stop, idle-deadline and missing-clock faults,
+scope/capacity rejection before reception, and Windows compile-only driver wiring.
+No launched process, native entry, GPU execution, admission token or live
+qualification occurs in these tests. The arrival bound is a reception bound, not a
+granted runtime or an approved phase extension.
+
+Final source-bound checks at baseline `b8bb700` plus unchanged before/after source
+inventories pass 481 CPU-only tests (400 integration across 40 test binaries,
+including 19 reception/session cases; 32 probe ABI fakes, 24 worker feature-library
+fakes/static, 25 reference/prepared), formatting, scoped all-feature warning-denied
+Clippy and full-workspace/all-target/all-feature compile/link. Manifest
+`target/workload-verification/starting-session2-manifest.json`, SHA-256
+`7e961e87fe1478fb07439a4f19b1919fd15686a34a90f8bf1ae3b3e36fa8296c`; the
+cross-target `x86_64-unknown-linux-gnu` workspace/all-target check passes in an
+isolated `target/linux-check` root. A first attempt failed only the formatting gate
+and remains recorded. Both pinned matrix images remain byte-identical. No
+independent-agent review, launched process, native entry/load, driver or GPU
+execution is claimed; E3 remains partial and Gate B unmet. The child worker
+entry/driver/setup, complete consent/environment facts, the Start/native admission
+issuer and aggregate live export remain missing.

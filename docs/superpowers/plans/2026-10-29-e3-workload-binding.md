@@ -86,6 +86,41 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 parent-side starting session and original-epoch clock conversion:
+  `workload::starting_session::Session` composes one started reception under the
+  parent's original epoch. It binds the declaration/scope before any chunk,
+  reserves the receiver capacity in the constructor, derives the arrival bound
+  from the approved profile (preflight plus cooperative-stop and
+  exit-observation allowances, capped by the pilot session) and exposes the
+  launched process only by reference, so no process, native admission or
+  qualification is created here. `poll_native` now converts the observed anchor
+  to elapsed nanoseconds before any deadline/clock check (a raw QPC reading is no
+  longer compared against an elapsed bound) and keeps lane/framing rejection, a
+  closed peer and an OS error distinct from the receiver's sticky fault.
+  `Session::settle` merges those supervision facts: a verified completion is
+  checked first and cannot be withdrawn by a later transport observation, the
+  first OS cause is retained, and a closed peer without completion becomes an
+  explicit stopped outcome. Six added cases cover the verified payload/outcome,
+  transport-fault retention without payload exposure, closed-peer stop,
+  idle-deadline/missing-clock faults, scope/capacity rejection before reception
+  and Windows compile-only driver wiring. CPU-only verification binds baseline
+  `b8bb700` plus unchanged before/after source inventories: **481 tests** (400
+  integration across 40 test binaries including 19 reception/session cases, 32
+  probe ABI fakes, 24 worker feature-library fakes/static, 25 reference/prepared),
+  formatting, warning-denied scoped Clippy and full-workspace/all-target/
+  all-feature compile/link. Manifest
+  `target/workload-verification/starting-session2-manifest.json`, SHA-256
+  `7e961e87fe1478fb07439a4f19b1919fd15686a34a90f8bf1ae3b3e36fa8296c`;
+  cross-target `x86_64-unknown-linux-gnu` workspace/all-target check passes
+  (`target/workload-verification/starting-session2-linux-manual.log`, isolated
+  `target/linux-check` root). The first verification attempt failed only the
+  formatting gate (unformatted test edits) and stays recorded as
+  `starting-session1-format`; the correction needs its own observed hosted run.
+  Both pinned matrix images remain byte-identical. No launched process, native
+  entry, GPU execution or live qualification is claimed; the child-side worker
+  entry/driver/setup, complete consent/environment facts, the Start/native
+  admission issuer and aggregate live export remain open.
+
 - 2026-11-03 executable starting-mode routing and bounded response delivery:
   the fixed `autotune-pilot-sampler` main now dispatches only on the exact
   `--pilot-starting-v1` first token to `starting_entry::entry`; every other

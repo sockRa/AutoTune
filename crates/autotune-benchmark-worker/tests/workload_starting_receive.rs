@@ -12,6 +12,7 @@ use autotune_benchmark_worker::{
         starting_export::{Binding, ControlFacts, Facts, Response},
         starting_receive::{Fault, Receiver},
         starting_runtime::Trace,
+        starting_session::{arrival_bound_ns, Outcome, Session, Step, Supervision},
     },
 };
 use autotune_probe::{
@@ -369,9 +370,131 @@ fn concrete_poll_path_is_compiled_without_pipe_io() {
             windows_transport::InheritedTransport,
         },
     };
+    let check = |receiver: &mut Receiver,
+                 transport: &InheritedTransport,
+                 clock: fn() -> Option<Anchor>,
+                 elapsed: fn(Anchor) -> Option<u64>| {
+        let _ = poll_native(receiver, transport, clock, elapsed);
+    };
+    let _ = check;
+}
+
+fn session(f: &Fixture) -> Session {
+    Session::new(&f.decl, &f.s, &f.b).unwrap()
+}
+
+#[test]
+fn session_retains_a_verified_completion_and_its_exact_payload() {
+    let f = fixture();
+    let (frames, response) = frames(&f);
+    let mut s = session(&f);
+    assert_eq!(s.deadline_ns(), arrival_bound_ns());
+    assert!(s.deadline_ns() > 10_000_000_000);
+    let mut last = Step::Idle;
+    for (index, frame) in frames.iter().enumerate() {
+        last = s.accept(1_000 + index as u64, frame);
+        if index + 1 < frames.len() {
+            assert!(matches!(last, Step::Accepted { .. }));
+        }
+    }
+    assert_eq!(
+        last,
+        Step::Complete {
+            received: frames.len() as u32
+        }
+    );
+    assert!(matches!(
+        s.outcome(),
+        Some(Outcome::Complete { bytes, digest, .. })
+            if bytes == response.canonical().len() && digest == response.digest()
+    ));
+    assert_eq!(s.canonical(), Some(response.canonical().as_bytes()));
+    // A stray chunk after verification is rejected without withdrawing it.
+    assert!(matches!(s.accept(2_000, &frames[0]), Step::Complete { .. }));
+    assert_eq!(s.canonical(), Some(response.canonical().as_bytes()));
+}
+
+#[test]
+fn session_transport_fault_is_retained_and_hides_any_payload() {
+    let f = fixture();
+    let (frames, _) = frames(&f);
+    let mut s = session(&f);
+    assert!(matches!(s.accept(1_000, &frames[0]), Step::Accepted { .. }));
+    let step = s.settle(Supervision {
+        transport_fault: true,
+        os_code: Some(109),
+        closed: true,
+        accepted: false,
+    });
+    assert_eq!(step, Step::Transport { os_code: Some(109) });
+    assert_eq!(s.outcome(), Some(Outcome::Transport { os_code: Some(109) }));
+    assert_eq!(s.transport_fault(), Some(Some(109)));
+    assert_eq!(s.canonical(), None);
+    // A later poll cannot clear or replace the retained transport failure.
+    assert!(matches!(
+        s.settle(Supervision::default()),
+        Step::Transport { .. }
+    ));
+    assert_eq!(s.canonical(), None);
+}
+
+#[test]
+fn session_closed_peer_without_completion_is_a_stopped_outcome() {
+    let f = fixture();
+    let (frames, _) = frames(&f);
+    let mut s = session(&f);
+    assert!(matches!(s.accept(1_000, &frames[0]), Step::Accepted { .. }));
+    assert_eq!(
+        s.settle(Supervision {
+            closed: true,
+            ..Supervision::default()
+        }),
+        Step::Fault(Fault::Stopped)
+    );
+    assert_eq!(s.outcome(), Some(Outcome::Faulted(Fault::Stopped)));
+    assert_eq!(s.canonical(), None);
+    assert_eq!(s.accept(1_001, &frames[1]), Step::Fault(Fault::Stopped));
+}
+
+#[test]
+fn session_idle_deadline_and_missing_clock_are_sticky_faults() {
+    let f = fixture();
+    let mut s = session(&f);
+    assert_eq!(s.tick(9_999_999_999), Step::Idle);
+    assert_eq!(s.tick(arrival_bound_ns()), Step::Fault(Fault::Deadline));
+    assert_eq!(s.outcome(), Some(Outcome::Faulted(Fault::Deadline)));
+    let mut lost = session(&f);
+    assert_eq!(lost.clock_lost(), Step::Fault(Fault::Clock));
+    assert_eq!(lost.outcome(), Some(Outcome::Faulted(Fault::Clock)));
+    assert_eq!(lost.canonical(), None);
+}
+
+#[test]
+fn session_binds_the_declaration_scope_before_accepting_chunks() {
+    let mine = fixture();
+    let other = fixture_with(320, 9);
+    assert_eq!(
+        Session::new(&other.decl, &mine.s, &mine.b).err(),
+        Some(Fault::Assembly(
+            autotune_benchmark_worker::workload::starting_delivery::Fault::Scope
+        ))
+    );
+    let tiny = Budget::new(1024).unwrap();
+    assert_eq!(
+        Session::new(&mine.decl, &mine.s, &tiny).err(),
+        Some(Fault::Assembly(
+            autotune_benchmark_worker::workload::starting_delivery::Fault::Capacity
+        ))
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn concrete_session_driver_is_compiled_without_process_execution() {
+    use autotune_benchmark_worker::workload::windows_process::Process;
     let check =
-        |receiver: &mut Receiver, transport: &InheritedTransport, clock: fn() -> Option<Anchor>| {
-            let _ = poll_native(receiver, transport, clock);
+        |session: &mut Session, process: &Process<Declaration>, clock: fn() -> Option<Anchor>| {
+            let _ = session.poll_process(process, clock);
         };
     let _ = check;
 }

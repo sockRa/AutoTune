@@ -260,6 +260,11 @@ impl<D: FixedDeclaration> Process<D> {
     pub fn receive(&self, clock: impl FnMut() -> Option<crate::monitor::Anchor>) -> Receive {
         self.transport.receive(clock)
     }
+    /// Read-only inherited transport owner for a poll driver. The process keeps
+    /// sole ownership; the driver may not create a second sender.
+    pub(crate) fn inherited(&self) -> &InheritedTransport {
+        &self.transport
+    }
     pub fn observe(&self) -> ProcessObservation {
         observe_process(
             &self.process,
