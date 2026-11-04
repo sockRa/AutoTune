@@ -86,6 +86,35 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 parent-side starting launch handoff and portable epoch accessor:
+  `workload::starting_launch::Handoff` (Windows only) composes the session, the
+  frozen encoded starting frame and the one-shot starting sender: `send` makes at
+  most one attempt, re-stores the exact unsent frame and first `SendFailure` on
+  failure, and never re-acquires a sender; `poll` delegates to
+  `Session::poll_process` so deadline, epoch conversion and sticky faults stay
+  the session's. `Session::observe` exposes the original-epoch anchor conversion
+  portably, returning `None` for a mismatched token, regression or missing
+  observation instead of a restarted base, which removes the cross-target
+  dead-code warnings without a target-specific allow. Three compile-only cases
+  cover the handoff and session driver wiring; one portable case covers anchor
+  conversion and rejection. No process is created, no sender touches a real pipe
+  and no native entry, GPU execution or live qualification occurs. The initial
+  slice stays recorded as `starting-handoff1` (482 tests). CPU-only verification
+  binds baseline `c17ac64` plus unchanged before/after source inventories:
+  **483 tests** (402 integration across 40 test binaries including 21
+  reception/session/handoff cases, 32 probe ABI fakes, 24 worker feature-library
+  fakes/static, 25 reference/prepared), formatting, warning-denied scoped Clippy
+  and full-workspace/all-target/all-feature compile/link. Manifest
+  `target/workload-verification/starting-handoff2-manifest.json`, SHA-256
+  `add9dab0777591e4dcc149343514ca153a1118dcabc12abc68c28eb3c5b0321e`;
+  cross-target `x86_64-unknown-linux-gnu` workspace/all-target check passes
+  warning-free (`target/workload-verification/starting-handoff2-linux-manual.log`,
+  isolated `target/linux-check` root). Both pinned matrix images remain
+  byte-identical. No launched process, native entry, GPU execution or live
+  qualification is claimed; the strict parent-side starting-response reader, the
+  child worker entry/driver/setup, complete consent/environment facts, the
+  Start/native admission issuer and aggregate live export remain open.
+
 - 2026-11-04 parent-side starting session and original-epoch clock conversion:
   `workload::starting_session::Session` composes one started reception under the
   parent's original epoch. It binds the declaration/scope before any chunk,

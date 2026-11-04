@@ -470,6 +470,19 @@ fn session_idle_deadline_and_missing_clock_are_sticky_faults() {
 }
 
 #[test]
+fn session_converts_parent_anchors_into_the_original_epoch() {
+    let f = fixture();
+    let mut s = session(&f);
+    assert_eq!(s.observe(a(0)), Some(0));
+    assert_eq!(s.observe(a(2_500)), Some(2_500));
+    let mut foreign = a(3_000);
+    foreign.clock_token = [4; 16];
+    assert_eq!(s.observe(foreign), None);
+    // A regressed observation is rejected instead of restarting the base.
+    assert_eq!(s.observe(a(1_000)), None);
+}
+
+#[test]
 fn session_binds_the_declaration_scope_before_accepting_chunks() {
     let mine = fixture();
     let other = fixture_with(320, 9);
@@ -496,5 +509,22 @@ fn concrete_session_driver_is_compiled_without_process_execution() {
         |session: &mut Session, process: &Process<Declaration>, clock: fn() -> Option<Anchor>| {
             let _ = session.poll_process(process, clock);
         };
+    let _ = check;
+}
+
+#[cfg(windows)]
+#[test]
+fn concrete_starting_handoff_is_compiled_without_process_execution() {
+    use autotune_benchmark_worker::workload::{starting_launch::Handoff, windows_process::Process};
+    let check = |process: &Process<Declaration>, scope: &Scope, budget: &Budget| {
+        if let Ok(mut handoff) = Handoff::open(process, scope, budget) {
+            let _ = handoff.frame();
+            let _ = handoff.send();
+            let _ = handoff.send();
+            let _ = handoff.poll(process, || None);
+            let _ = handoff.session().outcome();
+            let _ = handoff.send_fault();
+        }
+    };
     let _ = check;
 }

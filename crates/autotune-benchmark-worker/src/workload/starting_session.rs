@@ -100,6 +100,13 @@ impl Session {
     pub fn polls(&self) -> u64 {
         self.polls
     }
+    /// Convert one parent clock observation into this session's original-epoch
+    /// elapsed nanoseconds. A missing, regressed or mismatched observation
+    /// yields `None` and never a restarted base; the driver must retain that as
+    /// a clock fault instead of treating it as on time.
+    pub fn observe(&mut self, anchor: Anchor) -> Option<u64> {
+        self.clock.observe(anchor).ok()
+    }
     /// First transport/OS cause observed while reception was still open.
     pub fn transport_fault(&self) -> Option<Option<i32>> {
         self.transport

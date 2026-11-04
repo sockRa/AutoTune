@@ -1556,3 +1556,42 @@ independent-agent review, launched process, native entry/load, driver or GPU
 execution is claimed; E3 remains partial and Gate B unmet. The child worker
 entry/driver/setup, complete consent/environment facts, the Start/native admission
 issuer and aggregate live export remain missing.
+
+### Parent-side starting launch handoff — 2026-11-04
+
+`workload::starting_launch::Handoff` (Windows only) composes the two parent-side
+pieces established above: it builds the `Session`, freezes the encoded starting
+`Frame`, then acquires the one-shot starting sender and sends exactly that frame.
+`Handoff::send` reports at most one attempt: a failed send re-stores the exact
+unsent frame and the first `SendFailure`, and a repeated send never re-acquires a
+new sender. `Handoff::poll` delegates a nonblocking process poll to
+`Session::poll_process`, so the reception deadline, original-epoch conversion and
+sticky fault handling are the session's, not a second copy.
+
+`Session::observe` exposes that epoch conversion as a portable accessor: one parent
+`Anchor` becomes original-epoch elapsed nanoseconds, while a mismatched token,
+regression or missing observation yields `None` instead of a restarted base and
+must be retained as a clock fault by the driver. This keeps the session clock
+domain meaningful on non-Windows targets and removes the cross-target dead-code
+warnings without a target-specific allow.
+
+Three compile-only cases cover the handoff composition and the session driver
+wiring, and one portable case covers anchor conversion and rejection. No process is
+created, no sender is exercised against a real pipe, and no native entry, GPU
+execution, admission token or live qualification occurs. The handoff proves only
+parent-side composition; the launched process stays owned by its caller.
+
+An initial slice (`starting-handoff1`, 482 tests) is recorded. The amended slice at
+baseline `c17ac64` plus unchanged before/after source inventories passes 483
+CPU-only tests (402 integration across 40 test binaries, including 21
+reception/session/handoff cases; 32 probe ABI fakes, 24 worker feature-library
+fakes/static, 25 reference/prepared), formatting, scoped all-feature
+warning-denied Clippy and full-workspace/all-target/all-feature compile/link.
+Manifest `target/workload-verification/starting-handoff2-manifest.json`, SHA-256
+`add9dab0777591e4dcc149343514ca153a1118dcabc12abc68c28eb3c5b0321e`; the
+cross-target `x86_64-unknown-linux-gnu` workspace/all-target check passes
+warning-free in the isolated `target/linux-check` root. Both pinned matrix images
+remain byte-identical. No independent-agent review, launched process, native
+entry/load, driver or GPU execution is claimed; E3 remains partial and Gate B
+unmet. The child worker entry/driver/setup, complete consent/environment facts,
+the Start/native admission issuer and aggregate live export remain missing.
