@@ -86,6 +86,29 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 observed CUDA startup and retained failure owner: the opt-in actual
+  CUDA adapter now supplies `open_observed` with per-call pre/return callbacks
+  for initialization/version, full unique UUID/PCI/capability selection, context
+  device verification, fixed PTX/function loading, headroom, four buffers and
+  stream creation. Status and integer/UUID/memory outputs or opaque-token
+  presence reach the observer before post-clock validation. Any observer/native
+  failure aborts before a successor call. The original backend/library and raw
+  nonzero resource tokens remain privately owned by SetupFailure, including
+  failures after successful context/allocation creation. There is no automatic
+  cleanup or safe-retry inference; nonzero failed outputs do not prove valid
+  resources. Legacy unsafe open delegates to this same setup with an unobserved
+  observer, retaining its old execution/consent restrictions. Four ABI-fake tests
+  cover success order, every pre/post rejection over all 20 one-device calls,
+  signed native failure at every step through the actual owner-transfer path,
+  ambiguity/count/context/headroom rejection and no implicit teardown/compute.
+  The initial Clippy large-error lint is explicitly allowed to avoid fallible
+  allocation after native entry. Final evidence/publication is in ROADMAP.md.
+  No loader, driver, process or GPU execution or independent-agent review is
+  claimed. A bound clock/control setup observer, observed teardown and actual
+  worker entry/complete required environment/consent facts still must compose
+  this source before native execution. Workload NativeAdmission has no issuer.
+  GitHub Actions stays removed and disabled; local verification only.
+
 - 2026-11-04 strict parent response reader: `starting_read::Receipt` now checks
   the canonical exporter schema, exact parent scope/declaration/digest, original
   epoch/frequency and parent-entry/child-entry/bootstrap-receipt clock chain.

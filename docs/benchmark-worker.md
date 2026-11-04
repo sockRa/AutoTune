@@ -1634,3 +1634,44 @@ Local Linux workspace/all-target check passes; log starting-read-linux.log SHA-2
 No process/native/GPU execution or independent-agent review. Both pinned images
 remain unchanged. GitHub Actions workflows were removed and repository Actions
 permissions were also verified disabled (enabled:false) at the owner's request.
+
+### Observed CUDA setup and retained failure — 2026-11-04
+
+The opt-in Windows CUDA adapter's unsafe open_observed now checks an observer
+before every actual setup call and reports actual signed status and initialized
+output fields before post-clock validation. It covers driver init/version/count,
+unique UUID/PCI/capability selection, context/current-device check, fixed PTX and
+function, memory headroom, four buffers and the single stream. No observer or
+hash grants execution consent. Integer, UUID and memory values are recorded;
+opaque pointers stay in the original owner and are exposed only as null/zero
+presence metadata, which does not prove failed outputs are valid resources.
+
+A failed setup retains the loaded library, expected/observed paths and the
+partially initialized backend in SetupFailure. Its resource view is read-only;
+there is no speculative cleanup/retry method. No native call occurs during Drop.
+The same owner-transfer helper is used by production and typed failure tests.
+Legacy unsafe open delegates to the same implementation with an unobserved
+observer; its existing execution prerequisites still apply.
+
+Four new typed ABI-fake cases exercise all 20 one-device setup operations: every
+pre/post observer rejection, every native error, exact statuses/partial ownership,
+identity ambiguity, count bound, null context and headroom, and absence of compute
+or implicit teardown. No public loader/native entry is invoked. The setup observer
+still must be bound to the original worker clock/control/phase deadlines; observed
+teardown and actual worker entry, complete parent facts/consent, admission and
+aggregate export remain open. No workload NativeAdmission issuer is added.
+
+Final source-bound verification at baseline a723d207e36803d7456466d46089ce44e7a3d646
+plus unchanged inventories passes 496 CPU-only tests (411 integration, 32 probe
+ABI fakes, 28 worker feature-library fakes/static, 25 reference/prepared), formatting,
+scoped all-feature warning-denied Clippy and full-workspace/all-target/all-feature
+compile/link. Manifest target/workload-verification/cuda-setup-retained-manifest.json
+SHA-256 68f1a5f37dc28465a526ffdb480d430d6cbd1c8e29279231851e2b341bd37a43.
+Local Linux workspace/all-target check passes; log cuda-setup-retained-linux.log
+SHA-256 6c209f588f83a4d31f84d7ebb728b26d4f51b3c7c7f519f492b972b034c41786.
+The included Rust source/tests pass explicit rustfmt checks. The initial large
+error lint is explicitly allowed to transfer original partial ownership without
+fallible allocation after native entry. Earlier checks preceded the final
+production owner-transfer test path. No independent-agent review or actual DLL
+loader/native/process/GPU execution. Pinned old matrix images unchanged. Actions
+remains removed and disabled; local verification only.

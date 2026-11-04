@@ -175,161 +175,7 @@ impl CudaBackend {
     /// isolation, monitor, clock and exact-manifest execution authority. The
     /// shipped fake binary never calls this; this change grants no such authority.
     pub unsafe fn open(identity: Identity, shape: Shape) -> Result<Self, Fault> {
-        if !identity.valid() {
-            return Err(invalid("identity"));
-        }
-        let mut directory = [0u16; 32768];
-        let length = GetSystemDirectoryW(directory.as_mut_ptr(), directory.len() as u32) as usize;
-        if length == 0 || length >= directory.len() {
-            return Err(invalid("GetSystemDirectoryW"));
-        }
-        let path = PathBuf::from(OsString::from_wide(&directory[..length])).join("nvcuda.dll");
-        if !path.is_absolute() {
-            return Err(invalid("system driver path"));
-        }
-        let library = Library::load_with_flags(&path, 0x100 | 0x800)
-            .map_err(|_| invalid("load system nvcuda"))?;
-        let raw = library.into_raw();
-        // Retain the loaded module from the first successful load: every later
-        // early error leaks it instead of unloading after `cuInit`.
-        let library = ManuallyDrop::new(Library::from_raw(raw));
-        let mut loaded = [0u16; 32768];
-        let length =
-            GetModuleFileNameW(raw as *mut c_void, loaded.as_mut_ptr(), loaded.len() as u32)
-                as usize;
-        if length == 0 || length >= loaded.len() {
-            return Err(invalid("loaded module path"));
-        }
-        let loaded = PathBuf::from(OsString::from_wide(&loaded[..length]));
-        if loaded
-            .canonicalize()
-            .map_err(|_| invalid("loaded path canonicalization"))?
-            != path
-                .canonicalize()
-                .map_err(|_| invalid("trusted path canonicalization"))?
-        {
-            return Err(invalid("loaded path mismatch"));
-        }
-        let api = Api::load(&library)?; // all exports before any CUDA call
-        checked("cuInit", (api.init)(0))?;
-        let mut version = -1;
-        checked("cuDriverGetVersion", (api.version)(&mut version))?;
-        if version < 10010 {
-            return Err(invalid("driver version"));
-        }
-        let mut count = -1;
-        checked("cuDeviceGetCount", (api.count)(&mut count))?;
-        if !(1..=64).contains(&count) {
-            return Err(invalid("device count"));
-        }
-        let mut selected = None;
-        for ordinal in 0..count {
-            let mut device = -1;
-            checked("cuDeviceGet", (api.device)(&mut device, ordinal))?;
-            if device < 0 {
-                return Err(invalid("device"));
-            }
-            let mut uuid = Uuid::default();
-            checked("cuDeviceGetUuid_v2", (api.uuid)(&mut uuid, device))?;
-            if uuid.bytes == identity.uuid {
-                if selected.is_some() {
-                    return Err(invalid("ambiguous UUID"));
-                }
-                for (attribute, expected) in [
-                    (50, i32::from(identity.domain)),
-                    (33, i32::from(identity.bus)),
-                    (34, i32::from(identity.device)),
-                    (75, 7),
-                    (76, 5),
-                ] {
-                    let mut actual = -1;
-                    checked(
-                        "cuDeviceGetAttribute",
-                        (api.attr)(&mut actual, attribute, device),
-                    )?;
-                    if actual != expected {
-                        return Err(invalid("PCI/capability mismatch"));
-                    }
-                }
-                selected = Some(device);
-            }
-        }
-        let device = selected.ok_or_else(|| invalid("UUID not found"))?;
-        let mut session = Self {
-            _library: Some(library),
-            api,
-            identity,
-            shape,
-            context: null_mut(),
-            module: null_mut(),
-            function: null_mut(),
-            stream: null_mut(),
-            buffers: [0; 4],
-            state: State::Poisoned,
-            _thread_affinity: PhantomData,
-            driver_path: loaded,
-            driver_version: version,
-        };
-        // From this point, an error leaks rather than invoking speculative cleanup.
-        checked(
-            "cuCtxCreate_v2",
-            (api.ctx_create)(&mut session.context, 0, device),
-        )?;
-        if session.context.is_null() {
-            return Err(invalid("null context"));
-        }
-        let mut current = -1;
-        checked("cuCtxGetDevice", (api.ctx_device)(&mut current))?;
-        if current != device {
-            return Err(invalid("context device mismatch"));
-        }
-        let ptx = std::ffi::CString::new(PTX).map_err(|_| invalid("PTX NUL"))?;
-        checked(
-            "cuModuleLoadData",
-            (api.module_load)(&mut session.module, ptx.as_ptr().cast()),
-        )?;
-        if session.module.is_null() {
-            return Err(invalid("null module"));
-        }
-        checked(
-            "cuModuleGetFunction",
-            (api.function)(
-                &mut session.function,
-                session.module,
-                c"autotune_fma".as_ptr(),
-            ),
-        )?;
-        if session.function.is_null() {
-            return Err(invalid("null function"));
-        }
-        let (mut free, mut total) = (0, 0);
-        checked("cuMemGetInfo_v2", (api.mem_info)(&mut free, &mut total))?;
-        let limits = Profile::approved_design().limits;
-        let (free, total, planned) = (free as u64, total as u64, shape.application_buffer_bytes());
-        if free > total
-            || free < planned + limits.free_gpu_headroom_bytes
-            || planned > limits.application_gpu_bytes
-        {
-            return Err(invalid("memory headroom"));
-        }
-        for buffer in &mut session.buffers {
-            checked(
-                "cuMemAlloc_v2",
-                (api.alloc)(buffer, shape.lanes() as usize * 4),
-            )?;
-            if *buffer == 0 {
-                return Err(invalid("null allocation"));
-            }
-        }
-        checked(
-            "cuStreamCreate",
-            (api.stream_create)(&mut session.stream, 1),
-        )?;
-        if session.stream.is_null() {
-            return Err(invalid("null stream"));
-        }
-        session.state = State::Ready;
-        Ok(session)
+        Self::open_observed(identity, shape, &mut UnobservedSetup).map_err(|failure| failure.fault)
     }
     pub fn driver_path(&self) -> &std::path::Path {
         &self.driver_path
@@ -514,6 +360,7 @@ impl CudaBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("cuda_setup_tests.rs");
     use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
     use std::sync::Mutex;
     static SERIAL: Mutex<()> = Mutex::new(());
@@ -964,3 +811,5 @@ mod tests {
         );
     }
 }
+
+include!("cuda_setup.rs");
