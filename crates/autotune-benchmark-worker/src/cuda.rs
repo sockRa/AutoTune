@@ -186,24 +186,7 @@ impl CudaBackend {
     /// Explicit teardown only after observed stream idle; raw cleanup failures
     /// leave remaining resources retained, never retried or called from Drop.
     pub fn close(&mut self) -> Result<(), Fault> {
-        if !matches!(self.state, State::Ready | State::Complete) {
-            return Err(invalid("cleanup without idle"));
-        }
-        self.state = State::Poisoned;
-        unsafe {
-            checked("cuStreamDestroy_v2", (self.api.stream_destroy)(self.stream))?;
-            for buffer in self.buffers {
-                checked("cuMemFree_v2", (self.api.free)(buffer))?;
-            }
-            checked("cuModuleUnload", (self.api.module_unload)(self.module))?;
-            checked("cuCtxDestroy_v2", (self.api.ctx_destroy)(self.context))?;
-            self.state = State::Closed;
-            if let Some(library) = &mut self._library {
-                ManuallyDrop::drop(library);
-            }
-            self._library = None;
-        }
-        Ok(())
+        self.close_observed(&mut UnobservedTeardown)
     }
 }
 impl Backend for CudaBackend {
@@ -361,6 +344,7 @@ impl CudaBackend {
 mod tests {
     use super::*;
     include!("cuda_setup_tests.rs");
+    include!("cuda_teardown_tests.rs");
     use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
     use std::sync::Mutex;
     static SERIAL: Mutex<()> = Mutex::new(());
@@ -813,3 +797,5 @@ mod tests {
 }
 
 include!("cuda_setup.rs");
+
+include!("cuda_teardown.rs");

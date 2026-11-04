@@ -86,6 +86,29 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 observed CUDA teardown: `close_observed` now exposes a before/return
+  pair around stream destroy, each of four buffer frees, module unload, context
+  destroy and the consuming library close. CUDA status and OS library result/
+  optional code are distinct types; no CUDA zero is fabricated for FreeLibrary.
+  A successful native release clears its stored token before a post-clock hook;
+  any observer/native/library failure leaves the session poisoned and retains
+  remaining/uncertain tokens with no retry. Failed DLL close reconstructs only
+  the retained opaque owner, without a second OS call or a validity claim.
+  Legacy close uses the same path with an unobserved observer. Ready/Complete
+  remain prerequisites; in-flight, failed and already-closed states never enter
+  teardown. Four ABI-fake cases cover all eight pre/post boundaries, every CUDA
+  cleanup failure, library failure with known/unknown OS code, cleared/retained
+  tokens, rejected retry, no implicit Drop calls and normal observed-idle close.
+  The fixture HMODULE compile mismatch was corrected to the installed library's
+  isize handle type. No actual DLL load/release, CUDA/process/GPU execution or
+  independent-agent review is claimed. Final source-bound evidence/publication:
+  ROADMAP.md. Next bind startup/teardown observers to original worker clocks,
+  shared control and the already frozen producer exit deadline; cleanup must
+  not acquire a fresh grace window on entry. The producer's direct Driver close
+  still uses the unobserved compatibility path until that composition exists.
+  Actual worker entry, full required facts/consent, admission and aggregate live
+  export/qualification remain open. Actions stays removed and disabled.
+
 - 2026-11-04 observed CUDA startup and retained failure owner: the opt-in actual
   CUDA adapter now supplies `open_observed` with per-call pre/return callbacks
   for initialization/version, full unique UUID/PCI/capability selection, context

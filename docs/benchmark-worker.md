@@ -1675,3 +1675,40 @@ fallible allocation after native entry. Earlier checks preceded the final
 production owner-transfer test path. No independent-agent review or actual DLL
 loader/native/process/GPU execution. Pinned old matrix images unchanged. Actions
 remains removed and disabled; local verification only.
+
+### Observed CUDA teardown — 2026-11-04
+
+Source-bound local verification passes 500 CPU-only tests (411 integration,
+32 probe ABI fakes, 32 feature-library fakes/static and 25 reference/prepared),
+formatting, scoped warning-denied Clippy, full-workspace/all-target/all-feature
+linking and a Linux workspace/all-target check. The exact baseline, manifest
+and hashes are retained in the current ROADMAP.md handoff. Included source/test
+files pass explicit rustfmt checks; both pinned old matrix images are unchanged.
+
+CudaBackend::close_observed now places pre/return hooks around stream destruction,
+each of the four buffer frees, module unload, context destruction and library
+release. CUDA return codes and library OS outcomes are separate typed facts;
+FreeLibrary is never reported as a fabricated CUDA status. Hooks retain the raw
+return before checking a post-call clock, and a rejection prevents every successor.
+
+Teardown accepts only Ready/Complete and poisons the backend before its first
+attempt. A successful release clears its token before the return hook. A failed
+call preserves its uncertain token and all remaining owners; any later close is
+rejected, including after a late successful return whose observer failed. DLL
+close uses the installed library's consuming close API; a failure retains only
+the original opaque owner without a second OS call or a safety/validity claim.
+No automatic native cleanup occurs in Drop. Legacy close delegates to the same
+path with an unobserved observer.
+
+Four new typed ABI-fake cases cover all eight pre/post boundaries, every cleanup
+native error, known/unknown library errors, no successor/retry/implicit Drop,
+resource token state and idle-state requirements. Fake DLL tokens are never
+passed to an actual library-release call; those fixtures only forget the token.
+No real driver/DLL/process/GPU execution occurs. The first fixture compile error
+was an HMODULE type mismatch and was fixed before final verification.
+
+The worker still needs a bound clock/control observer and must reuse its frozen
+producer exit/cooperative deadline, not start a new grace on cleanup entry. The
+direct producer Driver close currently follows the legacy unobserved path; no
+worker-entry, native admission, physical quiescence or baseline qualification
+follows from this source seam. Actions remains disabled; verification is local.
