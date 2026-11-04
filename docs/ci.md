@@ -5,6 +5,9 @@ entirely. Pushes, pull requests and manual dispatch no longer start hosted check
 Use the local verification commands below; historical hosted results remain
 dated evidence and do not verify later commits. No replacement workflow or
 automatic remote trigger is configured.
+The repository-wide Actions setting is also disabled: a GET of
+`repos/sockRa/AutoTune/actions/permissions` verified `enabled: false` after the
+owner-authorized update on the same date.
 
 The retired workflow checked the package-declared Rust
 1.99.1 baseline on Ubuntu 24.04 and Windows Server 2025 (default MSVC target).

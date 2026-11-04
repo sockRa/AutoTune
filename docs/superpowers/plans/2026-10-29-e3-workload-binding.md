@@ -86,6 +86,41 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 strict parent response reader: `starting_read::Receipt` now checks
+  the canonical exporter schema, exact parent scope/declaration/digest, original
+  epoch/frequency and parent-entry/child-entry/bootstrap-receipt clock chain.
+  Serialized anchor tokens are restored from the frozen scope, not zero-filled
+  in exposed facts. The immutable 10 s read deadline is distinct from chunk
+  arrival allowance; equality rejects. Fixed ABI raw widths/buffer shapes,
+  operation order, enum spellings and nested runtime schema are checked. A wider
+  bounded structure scanner supports this 2 MiB response while old wire limits
+  remain unchanged. Codec scratch is reserved before decoding; embedded runtime
+  complexity is bounded before serde allocation. The nested Snapshot is read
+  through the existing strict ReportedSnapshot parser, source/digest/request
+  consistency is checked and the resulting reported artifact remains owned for
+  later reference/readability checks. Raw failed facts, absence, bad readings,
+  simulated source and reported native claims are not promoted to qualification.
+  Session::read_report is available only after verified chunk delivery and
+  rechecks its immutable digest; failed or incomplete reception exposes no report.
+  Nine added CPU cases exercise actual exporter/reader/session composition,
+  bound/tampered/nested schemas, absent/raw failure facts, max 3,077-call ledger,
+  memory/complexity bounds and nonzero-epoch/deadline equality. Initial compile
+  caught the old u16 complexity-counter width; the widened implementation keeps
+  existing u16 caller bounds and adds the response's explicit wider bound.
+  Exact final evidence is retained in ROADMAP.md. No process/native/GPU execution
+  or independent-agent review is claimed. Hosted d2e9cae run 41883529717 passed
+  both platforms before the owner's explicit retirement of all Actions workflows
+  in 0b342c7; do not recreate workflows or expect hosted checks on later pushes.
+
+- 2026-11-04 hosted Linux gate failure for `c17ac64` and its correction: hosted
+  [run 41882617874](https://github.com/sockRa/AutoTune/actions/runs/41882617874)
+  completed **failed** on the Linux job: warning-denied Clippy rejected the unused
+  `Anchor` import and the never-read `Session::clock` field on non-Windows targets
+  (the same two cross-target warnings the isolated Linux `cargo check` had shown).
+  The correction is `Session::observe`, which makes the original-epoch conversion
+  portable and is contained in commit `d2e9cae`; that commit needs its own observed
+  hosted run. The failure stays recorded and is not rewritten as a pass.
+
 - 2026-11-04 parent-side starting launch handoff and portable epoch accessor:
   `workload::starting_launch::Handoff` (Windows only) composes the session, the
   frozen encoded starting frame and the one-shot starting sender: `send` makes at

@@ -1595,3 +1595,42 @@ remain byte-identical. No independent-agent review, launched process, native
 entry/load, driver or GPU execution is claimed; E3 remains partial and Gate B
 unmet. The child worker entry/driver/setup, complete consent/environment facts,
 the Start/native admission issuer and aggregate live export remain missing.
+
+### Strict parent starting-response reader — 2026-11-04
+
+`starting_read::Receipt` validates the bounded canonical response against the
+parent's frozen scope/declaration, delivered digest, original epoch/frequency
+and read deadline. The child's first/receipt anchors receive the scope's original
+clock token; parent-entry ordering, clock agreement and deadline equality are
+checked. The read deadline is the original 10 s preflight ceiling, separately
+from the receiver/session's chunk arrival bound.
+
+The reader checks exact nested schema/order, fixed ABI scalar widths and raw
+buffer sizes, declared fault variants and embedded Runtime serialization. It
+reserves codec storage before decoding and bounds structural/runtime complexity.
+Nested starting artifacts use the existing ReportedSnapshot reader, verify their
+own digest/request/source consistency and remain owned for subsequent manifest
+reference and readability checks. Raw failures, invalid values, missing facts
+and simulated/reported-native sources stay explicit. A typed receipt grants no
+native execution, peer authenticity, process-exit or baseline qualification.
+
+Session::read_report exposes this reader only after verified chunk delivery and
+uses the session's retained digest. It returns Incomplete for pending/failed
+reception. Nine CPU tests cover actual exporter/reader/session composition,
+maximal ledger count, original/nonzero epochs, deadline equality, schema/digest/
+source tampering, raw signed failures, absent fields and capacity/complexity.
+Local verification is authoritative for its declared scope; GitHub Actions was
+removed entirely at the owner's request on 2026-11-04.
+
+Final source-bound verification for the strict parent reader at baseline
+0b342c7aeb6905dab95ae48d1703199f01b9359c plus unchanged inventories passes 492
+CPU-only tests (411 integration, 32 probe ABI fakes, 24 feature-library fakes/static,
+25 reference/prepared), formatting, scoped all-feature Clippy and full-workspace/
+all-target/all-feature compile/link. Manifest
+ target/workload-verification/starting-read-closed-manifest.json SHA-256
+ 1bce9c333040be4db7b37a117283a8b1c7e5e5053ee20e7e3d3ecb711b6639e1.
+Local Linux workspace/all-target check passes; log starting-read-linux.log SHA-256
+89bdd1406dabc9807a5e45d2680ffe8e371d7849f1b039276e2ea8ee90439596.
+No process/native/GPU execution or independent-agent review. Both pinned images
+remain unchanged. GitHub Actions workflows were removed and repository Actions
+permissions were also verified disabled (enabled:false) at the owner's request.

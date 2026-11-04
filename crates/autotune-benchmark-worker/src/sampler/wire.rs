@@ -230,7 +230,10 @@ pub(crate) fn validate_complexity(bytes: &[u8]) -> Result<(), WireError> {
     validate_complexity_limit(bytes, 256)
 }
 pub(crate) fn validate_complexity_limit(bytes: &[u8], limit: u16) -> Result<(), WireError> {
-    let (mut quoted, mut escaped, mut structures) = (false, false, 0u16);
+    validate_complexity_limit_wide(bytes, u32::from(limit))
+}
+pub(crate) fn validate_complexity_limit_wide(bytes: &[u8], limit: u32) -> Result<(), WireError> {
+    let (mut quoted, mut escaped, mut structures) = (false, false, 0u32);
     for b in bytes {
         if quoted {
             if escaped {

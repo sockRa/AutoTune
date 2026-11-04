@@ -126,6 +126,31 @@ impl Session {
             None
         }
     }
+    /// Strictly read the one verified delivered response. Reception completion
+    /// binds bytes only; reading still issues no native or qualification permit.
+    pub fn read_report(
+        &self,
+        scope: &Scope,
+        declaration: &Declaration,
+        budget: &Budget,
+    ) -> Result<super::starting_read::Receipt, super::starting_read::Fault> {
+        let Some(Outcome::Complete { digest, .. }) = self.outcome else {
+            return Err(super::starting_read::Fault::Incomplete);
+        };
+        let bytes = self
+            .canonical()
+            .ok_or(super::starting_read::Fault::Incomplete)?;
+        super::starting_read::Receipt::read(
+            bytes,
+            scope,
+            declaration,
+            digest,
+            autotune_fma_reference::profile::Profile::approved_design()
+                .limits
+                .preflight_ns,
+            budget,
+        )
+    }
     /// Explicit stop closes reception for every successor chunk. A stop after a
     /// verified completion is redundant and cannot withdraw that payload.
     pub fn stop(&mut self) -> Step {
