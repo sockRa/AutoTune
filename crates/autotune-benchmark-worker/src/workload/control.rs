@@ -44,6 +44,30 @@ impl Default for Shared {
     }
 }
 impl Shared {
+    pub(super) fn matches(&self, binding: WorkerBinding) -> bool {
+        self.scope.get() == Some(&binding)
+    }
+    /// Tighten from the frozen setup deadline, including when the native lane
+    /// returns late before the independent control thread is scheduled again.
+    pub(super) fn expire_setup(&self, binding: WorkerBinding) {
+        self.close();
+        let deadline = self.setup_deadline_raw.load(Ordering::Acquire);
+        let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+        let cap = self
+            .matches(binding)
+            .then_some(deadline)
+            .filter(|d| *d != u64::MAX)
+            .and_then(|d| d.checked_add(p.cooperative_stop_ns / 100))
+            .zip(
+                binding
+                    .epoch
+                    .interrupt_100ns
+                    .checked_add(binding.run_end() / 100),
+            )
+            .map(|(a, b)| a.min(b))
+            .unwrap_or(0);
+        self.cooperative_raw.fetch_min(cap, Ordering::AcqRel);
+    }
     pub fn setup_observations(&self) -> (Option<u64>, Option<u64>) {
         let d = self.setup_deadline_raw.load(Ordering::Acquire);
         let c = self.setup_completed_raw.load(Ordering::Acquire);
@@ -87,19 +111,7 @@ impl Shared {
             return Err(Fault::Protocol);
         }
         if receipt.interrupt_100ns >= deadline {
-            self.close();
-            let p = autotune_fma_reference::profile::Profile::approved_design().limits;
-            let cap = deadline
-                .checked_add(p.cooperative_stop_ns / 100)
-                .zip(
-                    binding
-                        .epoch
-                        .interrupt_100ns
-                        .checked_add(binding.run_end() / 100),
-                )
-                .map(|(a, b)| a.min(b))
-                .unwrap_or(0);
-            self.cooperative_raw.fetch_min(cap, Ordering::AcqRel);
+            self.expire_setup(binding);
             return Err(Fault::Deadline);
         }
         if self.admission.stopped() {

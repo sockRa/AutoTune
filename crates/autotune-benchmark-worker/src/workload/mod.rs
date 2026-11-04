@@ -6,6 +6,8 @@ pub mod child_windows;
 pub mod control;
 #[cfg(windows)]
 pub mod control_windows;
+#[cfg(all(windows, target_arch = "x86_64", feature = "native-cuda"))]
+pub mod cuda_setup_trace;
 pub mod dispatch;
 pub mod gate;
 pub mod launch;

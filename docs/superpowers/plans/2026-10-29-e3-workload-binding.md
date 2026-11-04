@@ -86,6 +86,30 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 bound CUDA setup observation: `cuda_setup_trace::Ledger` now
+  implements the actual adapter's SetupObserver against the full worker binding,
+  original shared epoch/frequency, control state's already frozen setup deadline
+  and serial pending/stop gate. It reserves all 146 possible ABI-call entries
+  before startup (64-device maximum), retains each attempted call/raw return and
+  rejected/overflow evidence, and closes successors on clock/control/native/
+  protocol/capacity failure. Raw return ownership precedes the post-clock hook;
+  unwind closes admission without clearing unresolved native pending state.
+  A late setup return now shares `Shared::expire_setup` with Ready completion,
+  tightening grace from the original deadline even before control next ticks.
+  No synthetic clock anchor or late-return-based new grace is introduced.
+  Eight typed-fake tests compose the real setup engine and bound observer,
+  including all 40 stop/missing-clock boundaries, the full 64-device ledger,
+  every native failure, equality/late returns, nonzero epoch, raw-return panic,
+  mismatched pending return, capacity/regression/completed-state and constructor
+  budget/binding rejection. Initial checks caught observer Drop borrow lifetimes
+  and a div_ceil test lint; both were corrected before final verification.
+  Exact source-bound verification/publication is recorded in ROADMAP.md.
+  This does not compose loader ownership/export or the actual executable entry,
+  Ready, preparation, parent facts/consent, Start or native-admission issuance.
+  Next bind explicit teardown to the producer's already frozen exit deadline
+  and shared cooperative cap, then compose the worker path. No DLL/native/GPU
+  or owned-process execution; Actions remains removed and disabled.
+
 - 2026-11-04 observed CUDA teardown: `close_observed` now exposes a before/return
   pair around stream destroy, each of four buffer frees, module unload, context
   destroy and the consuming library close. CUDA status and OS library result/

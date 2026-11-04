@@ -344,6 +344,7 @@ impl CudaBackend {
 mod tests {
     use super::*;
     include!("cuda_setup_tests.rs");
+    include!("cuda_setup_trace_tests.rs");
     include!("cuda_teardown_tests.rs");
     use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
     use std::sync::Mutex;

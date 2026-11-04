@@ -1712,3 +1712,29 @@ producer exit/cooperative deadline, not start a new grace on cleanup entry. The
 direct producer Driver close currently follows the legacy unobserved path; no
 worker-entry, native admission, physical quiescence or baseline qualification
 follows from this source seam. Actions remains disabled; verification is local.
+
+### Bound CUDA setup clock and control — 2026-11-04
+
+`workload::cuda_setup_trace::Ledger` implements the actual opt-in adapter's
+`SetupObserver`. Construction requires an exact control binding and its existing
+one-shot bootstrap setup deadline, retains the original epoch/frequency, and
+reserves the maximum 146 ABI-call entries before any native call. Each entry
+retains attempted/not-entered state, raw return and both clock observations.
+Rejected returns and capacity overflow have separate retained slots. The shared
+serial gate marks native entry/return and preserves pending uncertainty across a
+mismatched return; a concurrent stop prevents any successor.
+
+Raw results are owned before the post-clock callback. Missing/regressing clocks,
+deadline equality, native errors, stop, protocol and capacity faults close
+admission. A callback unwind also closes admission, retains the available raw
+result and never clears a native call that has not returned. The ledger does not
+mark Ready or setup completion; the existing receipt step still owns that.
+`Shared::expire_setup` is shared with late Ready completion so a late native
+return tightens grace from the frozen setup deadline rather than its return time.
+
+Eight CPU/ABI-fake tests compose the production setup engine with this observer,
+including all 40 per-call stop/clock-loss boundaries and 64-device enumeration.
+This is source integration, with no actual driver load or GPU execution. Actual
+loader/entry/export ownership, teardown under the producer's original exit
+window, complete parent facts/consent and native admission remain open. Exact
+verification evidence is retained in ROADMAP.md.
