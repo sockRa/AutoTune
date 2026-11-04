@@ -1,6 +1,12 @@
 # Rust workspace verification — E1.1
 
-The [workflow](../.github/workflows/ci.yml) checks the package-declared Rust
+**2026-11-04 owner decision:** GitHub Actions workflows have been removed
+entirely. Pushes, pull requests and manual dispatch no longer start hosted checks.
+Use the local verification commands below; historical hosted results remain
+dated evidence and do not verify later commits. No replacement workflow or
+automatic remote trigger is configured.
+
+The retired workflow checked the package-declared Rust
 1.99.1 baseline on Ubuntu 24.04 and Windows Server 2025 (default MSVC target).
 It uses the committed lockfile, read-only repository permissions and no stored
 checkout credentials. It does not publish, upload artifacts or run executables
@@ -50,7 +56,7 @@ These commands never authorize installing missing tools or fetching dependencies
 locally. Missing prerequisites are failures/blockers, not permission to bypass a
 check. Local Windows GNU results do not verify either hosted Linux or Windows
 MSVC execution. See [ROADMAP.md](../ROADMAP.md) for current evidence and handoff;
-configured CI is not an observed remote pass.
+local verification is not an observed hosted Linux/MSVC pass.
 
 ## Verification evidence
 
