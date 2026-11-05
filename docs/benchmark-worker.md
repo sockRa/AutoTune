@@ -1909,10 +1909,40 @@ generic entry by taking its function pointer through black_box; the pointer is
 never called. Actual entry/threads/pipes/DLL/GPU execution has not been tested.
 The original fake-process matrix remains separately unapproved.
 
-Before-Start denial/failure keeps the prepared/partial native owner and reports
-cleanup absent; no speculative pre-Start teardown or physical-release claim is
-added. Required pre-Start resource disposition, the complete pre-setup parent
-facts/consent chain, fresh safety/re-entry/Start and workload admission issuance,
-fixed main, bounded aggregate raw export and real qualification remain open.
+The November 5 continuation below adds disposition of successful preparation
+before Start. Partial or failed CUDA setup remains opaque and retained. The
+complete pre-setup parent facts/consent chain, fresh safety/re-entry/Start and
+workload admission issuance, fixed main, bounded aggregate raw export and real
+qualification remain open.
 Exact source-bound verification and publication are in ROADMAP.md. Hosted Actions
 stays removed and disabled; all current verification is local.
+
+### Prepared-before-Start resource disposition — 2026-11-05
+
+Session cleanup now handles an idle prepared owner stopped or denied before
+Start. A prepaid inline `prestart::Report` retains the exact binding, raw clock
+seed, original Shared stop window, summary and eight per-call teardown entries.
+There is no Start fabrication or compute admission. A prior Start rejection
+remains the first terminal fault; a failed Session's unknown control cannot be
+reopened by a later valid stop observation. One-shot
+bookkeeping is set before callbacks; retry cannot enter another release call.
+
+The same engine handles successful observed CUDA setup followed by failed CPU
+Session preparation, using the returned driver/clock owners and last setup
+anchor. The actual native branch is compile/link only. Failed or partial CUDA
+setup is deliberately excluded: nonzero/uncertain outputs do not establish valid
+resource tokens or safe destruction. Those owners remain retained and unresolved.
+
+Release entry requires the exact full Shared binding, known original trigger,
+closed admission, no pending host call, valid continuous original clock and time
+strictly below the original cooperative/exit/run ceilings. No current-time grace
+or allocation is introduced. Unknown control, deadline equality, clock failure
+or uncertain pending prevents release; native and library failures retain their
+raw returns and prohibit successors/retry. Released host handles and DLL returns
+do not prove GPU quiescence or physical memory release.
+
+Six CPU regressions cover stop before/after Ready, denied/rejected encoded Start,
+first-fault retention, absent/expired/failed control, pending calls, every release
+failure, exhausted prepaid budget, no retry/compute and earliest original exit.
+Source-bound checks/publication are recorded in ROADMAP.md. No native loader,
+entry, process/pipe, GPU execution or hardware qualification was performed.

@@ -566,6 +566,48 @@ impl<
     pub fn cleanup_observation(&self) -> Option<Cleanup> {
         self.cleanup
     }
+    pub(super) fn dispose_before_start(&mut self, report: &mut super::prestart::Report) {
+        if report.requested() {
+            return;
+        }
+        let seed = self.latest_observation();
+        if self.started || self.in_flight || !self.native_idle {
+            report.reject(self.binding, seed, Fault::Protocol);
+            return;
+        }
+        let Some(shared) = self.control.clone() else {
+            report.reject(self.binding, seed, Fault::Admission);
+            return;
+        };
+        let context = self.context.clone();
+        report.run(self.binding, shared, &mut self.driver, seed, move || {
+            let mut c = context.borrow_mut();
+            let anchor = c.capture();
+            let fault = if anchor.is_none() {
+                Some(teardown::Fault::Clock)
+            } else if c.control_failure.is_some()
+                || c.control_history.overflow.is_some()
+                || c.shared_invalid
+            {
+                Some(teardown::Fault::Protocol)
+            } else {
+                None
+            };
+            teardown::Check {
+                anchor: anchor.or(c.failure.and_then(|f| f.anchor)),
+                fault,
+            }
+        });
+        self.end
+            .get_or_insert(report.fault.map_or(End::Stopped, End::Fault));
+        if let Some(window) = report.window {
+            self.exit_deadline = Some(window.exit_ns);
+            self.end_trigger = Some(window.trigger_ns);
+        }
+        if report.cleanup.attempted {
+            self.native_idle = false;
+        }
+    }
     pub fn teardown_ledger(&self) -> &teardown::Ledger {
         &self.teardown
     }

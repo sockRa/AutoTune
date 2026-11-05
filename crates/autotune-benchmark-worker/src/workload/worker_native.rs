@@ -31,7 +31,25 @@ pub struct Prepared<C, S> {
     pub first: Anchor,
     pub setup: Ledger,
     pub result: Preparation<C, S>,
+    pub prestart: super::prestart::Report,
+    binding: super::wire::WorkerBinding,
     _metadata: Reservation,
+}
+impl<C: FnMut() -> Option<Anchor>, S> Prepared<C, S> {
+    /// Only a successful CUDA open followed by failed CPU preparation qualifies.
+    /// Failed/partial setup remains opaque and is never guessed safe to destroy.
+    pub fn cleanup_unprepared(&mut self, shared: Arc<Shared>) {
+        if let Preparation::PrepareFailed(f) = &mut self.result {
+            let seed = self.setup.entries().last().and_then(|e| e.after);
+            self.prestart
+                .run(self.binding, shared, &mut f.driver, seed, || {
+                    super::teardown::Check {
+                        anchor: (f.clock)(),
+                        fault: None,
+                    }
+                });
+        }
+    }
 }
 pub struct Failure<C, S> {
     pub fault: super::cuda_setup_trace::Fault,
@@ -159,6 +177,8 @@ pub unsafe fn prepare<
         first: anchor,
         setup,
         result,
+        prestart: super::prestart::Report::default(),
+        binding: b,
         _metadata: metadata,
     })
 }

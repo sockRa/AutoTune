@@ -86,6 +86,34 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 prepared-before-Start disposition: Session now explicitly disposes
+  an idle successfully prepared owner under the existing original Shared stop
+  window, without fabricating Start or issuing compute admission. The inline
+  report/teardown ledger is prepaid, one-shot before callbacks, and preserves
+  full binding, raw clock seed, original window and raw native/library returns.
+  Successful CUDA open followed by failed CPU Session preparation uses the same
+  engine with the returned driver/clock owners and final setup anchor. Failed or
+  partial CUDA setup remains opaque/retained; no guessed teardown is introduced.
+  Unknown/expired control, invalid clocks and pending host calls prohibit entry;
+  failures prohibit successors/retry. Six CPU regressions cover Ready/Start
+  denial, original windows, every release failure, full budget pressure and zero
+  compute. Review removed an overly broad terminal-state rejection: a rejected
+  Start can leave an idle owner, and disposition must preserve its first fault.
+  The added regression initially expected cleanup after Session failure; it
+  correctly failed because that failure publishes unknown control. The test was
+  corrected to require retained unknown control/no native release, even after a
+  later valid stop. This safety rule was not relaxed. Initial Clippy found a
+  redundant closure, corrected without suppression.
+  A shell PATH miss affected explicit formatting commands; the retained runner
+  uses absolute tool paths. Final source-bound evidence/publication: ROADMAP.md.
+  Actual native failure-branch composition is compile/link only, not executed.
+  No independent review, entry/threads/pipes/process/DLL/GPU execution or physical
+  resource-release qualification. Parent facts/consent/pre-setup authority,
+  fresh safety/re-entry/Start, admission issuance, fixed main, bounded aggregate
+  raw export and real qualification remain open. E3 partial/Gate B unmet;
+  full automatic benchmark/search/validation remains the product goal. Actions
+  remains removed/disabled; local checks and milestone pushes continue.
+
 - 2026-11-04 worker entry/finalization composition: the opt-in worker_entry::entry
   now adopts parsed fixed worker Arguments once through Context, starts the split
   independent control owner and freezes bootstrap setup before composing actual

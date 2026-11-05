@@ -14,6 +14,7 @@ pub mod launch;
 pub mod manifest;
 pub mod nvml_trace;
 pub mod parent_sampler;
+pub mod prestart;
 pub mod producer;
 pub mod sampler_dispatch;
 #[cfg(windows)]

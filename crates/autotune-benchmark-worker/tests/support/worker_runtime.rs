@@ -646,4 +646,191 @@ mod worker_runtime_tests {
         assert_eq!(s.history().raw().last(), Some(&a(end)));
         assert_eq!(b.used(), baseline);
     }
+    #[test]
+    fn before_start_stop_disposes_ready_resources_without_start_or_compute() {
+        for ready_sent in [false, true] {
+            let b = Budget::new(24 * 1024 * 1024).unwrap();
+            let m = manifest(&b);
+            let p = parts(&b, &m);
+            let binding = p.bootstrap.binding();
+            let shared = p.shared.clone();
+            let stats = p.stats.clone();
+            let mut control = State::new(binding, a(300), shared.clone(), &b).unwrap();
+            let mut s = runtime(p, &b);
+            if ready_sent {
+                s.announce(facts(binding), &mut Sink::default()).unwrap();
+            }
+            control.event(Some(a(1000)));
+            s.cleanup();
+            let report = s.prestart_disposition();
+            assert!(report.requested());
+            assert_eq!(report.fault, None);
+            assert!(report.cleanup.attempted);
+            assert_eq!(report.cleanup.result, Some(Ok(())));
+            assert_eq!(report.ledger.entries().count(), 8);
+            assert_eq!(s.producer().end(), Some(End::Stopped));
+            assert_eq!(s.producer().exit_deadline_ns(), Some(3_000_001_000));
+            assert_eq!(stats.submits.load(Ordering::SeqCst), 0);
+            assert_eq!(stats.queries.load(Ordering::SeqCst), 0);
+            assert_eq!(stats.cleanup_calls.load(Ordering::SeqCst), 8);
+            s.cleanup();
+            assert_eq!(stats.cleanup_calls.load(Ordering::SeqCst), 8);
+            assert!(s.start_fixture().is_err());
+            s.advance(&mut Sink::default());
+            assert_eq!(stats.submits.load(Ordering::SeqCst), 0);
+            assert!(!shared.admission().pending());
+            assert!(shared.admission().stopped());
+        }
+    }
+    #[test]
+    fn denied_start_can_release_resources_after_raw_start_without_fabricating_admission() {
+        let b = Budget::new(24 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let p = parts(&b, &m);
+        let binding = p.bootstrap.binding();
+        let shared = p.shared.clone();
+        let stats = p.stats.clone();
+        let time = p.time.clone();
+        let mut control = State::new(binding, a(300), shared, &b).unwrap();
+        let mut s = runtime(p, &b);
+        s.announce(facts(binding), &mut Sink::default()).unwrap();
+        assert!(s.packet(start_packet(binding, 12_000, 13_000, &b)).is_ok());
+        time.store(14_000, Ordering::SeqCst);
+        control.event(Some(a(13_000)));
+        s.cleanup();
+        assert!(s.start_packet().is_some());
+        assert_eq!(s.prestart_disposition().fault, None);
+        assert_eq!(s.cleanup_observation().unwrap().result, Some(Ok(())));
+        assert_eq!(s.teardown_fault(), None);
+        assert_eq!(stats.submits.load(Ordering::SeqCst), 0);
+        assert_eq!(s.producer().reports_sent(), 0);
+        assert_eq!(stats.closes.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn rejected_start_keeps_unknown_control_closed_and_preserves_first_fault() {
+        let b = Budget::new(24 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let mut p = parts(&b, &m);
+        let binding = p.bootstrap.binding();
+        let shared = p.shared.clone();
+        let stats = p.stats.clone();
+        let time = p.time.clone();
+        p.driver.provenance = Provenance::Native;
+        let mut control = State::new(binding, a(300), shared, &b).unwrap();
+        let mut s = runtime(p, &b);
+        s.announce(facts(binding), &mut Sink::default()).unwrap();
+        assert!(s.packet(start_packet(binding, 12_000, 13_000, &b)).is_ok());
+        assert_eq!(
+            s.start_fixture(),
+            Err(RuntimeFault::Producer(Fault::Admission))
+        );
+        time.store(14_000, Ordering::SeqCst);
+        control.event(Some(a(13_000)));
+        s.cleanup();
+        assert_eq!(s.prestart_disposition().fault, Some(Fault::Admission));
+        assert!(!s.cleanup_observation().unwrap().attempted);
+        assert_eq!(s.producer().end(), Some(End::Fault(Fault::Admission)));
+        assert_eq!(s.fault(), Some(RuntimeFault::Producer(Fault::Admission)));
+        assert_eq!(stats.submits.load(Ordering::SeqCst), 0);
+        assert_eq!(stats.closes.load(Ordering::SeqCst), 0);
+        s.cleanup();
+        assert_eq!(stats.closes.load(Ordering::SeqCst), 0);
+    }
+    #[test]
+    fn unknown_expired_or_host_pending_before_start_never_enters_cleanup() {
+        for mode in 0..4 {
+            let b = Budget::new(24 * 1024 * 1024).unwrap();
+            let m = manifest(&b);
+            let p = parts(&b, &m);
+            let binding = p.bootstrap.binding();
+            let shared = p.shared.clone();
+            let stats = p.stats.clone();
+            let time = p.time.clone();
+            let mut control = State::new(binding, a(300), shared.clone(), &b).unwrap();
+            let mut s = runtime(p, &b);
+            if mode == 0 {
+                shared.close();
+            } else {
+                if mode == 1 {
+                    shared.admission().begin().unwrap();
+                }
+                control.event(Some(a(1000)));
+                if mode == 2 {
+                    time.store(1_000_001_000, Ordering::SeqCst);
+                }
+                if mode == 3 {
+                    control.fail(autotune_benchmark_worker::workload::control::Fault::Clock);
+                }
+            }
+            s.cleanup();
+            assert!(s.prestart_disposition().fault.is_some());
+            assert!(!s.cleanup_observation().unwrap().attempted);
+            assert_eq!(stats.closes.load(Ordering::SeqCst), 0);
+            assert_eq!(stats.submits.load(Ordering::SeqCst), 0);
+            if mode == 1 {
+                assert!(shared.admission().pending());
+            }
+            time.store(20_000, Ordering::SeqCst);
+            s.cleanup();
+            assert_eq!(stats.closes.load(Ordering::SeqCst), 0);
+        }
+    }
+    #[test]
+    fn prestart_teardown_is_prepaid_and_preserves_failure_without_retry() {
+        for failed in 0..=8 {
+            let b = Budget::new(24 * 1024 * 1024).unwrap();
+            let m = manifest(&b);
+            let p = parts(&b, &m);
+            let binding = p.bootstrap.binding();
+            let shared = p.shared.clone();
+            let stats = p.stats.clone();
+            let mut control = State::new(binding, a(300), shared, &b).unwrap();
+            let mut s = runtime(p, &b);
+            control.event(Some(a(1000)));
+            stats.cleanup_fail_at.store(failed, Ordering::SeqCst);
+            let _pressure = b.reserve(24 * 1024 * 1024 - b.used()).unwrap();
+            let baseline = b.used();
+            s.cleanup();
+            assert_eq!(b.used(), baseline);
+            assert_eq!(
+                stats.cleanup_calls.load(Ordering::SeqCst),
+                if failed == 0 { 8 } else { failed }
+            );
+            assert_eq!(s.prestart_disposition().fault.is_some(), failed != 0);
+            if failed != 0 {
+                assert!(s
+                    .prestart_disposition()
+                    .ledger
+                    .entries()
+                    .last()
+                    .unwrap()
+                    .raw
+                    .is_some());
+            }
+            s.cleanup();
+            assert_eq!(
+                stats.cleanup_calls.load(Ordering::SeqCst),
+                if failed == 0 { 8 } else { failed }
+            );
+            assert_eq!(stats.submits.load(Ordering::SeqCst), 0);
+        }
+    }
+    #[test]
+    fn earliest_original_window_not_a_late_disposition_attempt_sets_exit() {
+        let b = Budget::new(24 * 1024 * 1024).unwrap();
+        let m = manifest(&b);
+        let p = parts(&b, &m);
+        let binding = p.bootstrap.binding();
+        let shared = p.shared.clone();
+        let time = p.time.clone();
+        let mut control = State::new(binding, a(300), shared, &b).unwrap();
+        let mut s = runtime(p, &b);
+        control.event(Some(a(1000)));
+        control.local_stop(Some(a(10_000)), Some(a(20_000)));
+        time.store(900_000_000, Ordering::SeqCst);
+        s.cleanup();
+        assert_eq!(s.prestart_disposition().fault, None);
+        assert_eq!(s.prestart_disposition().window.unwrap().trigger_ns, 1000);
+        assert_eq!(s.producer().exit_deadline_ns(), Some(3_000_001_000));
+    }
 }

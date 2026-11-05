@@ -416,11 +416,27 @@ fn run<A: FnOnce(&NativeSession) -> Result<NativeAdmission, Reason>>(out: &mut O
             FinishFault::Protocol
         });
     }
-    let cleanup = match out.prepared.as_mut().map(|p| &mut p.result) {
-        Some(Preparation::Ready { session, .. }) => {
+    if let Some(prepared) = out.prepared.as_mut() {
+        prepared.cleanup_unprepared(shared.clone());
+    }
+    let cleanup = match out.prepared.as_mut() {
+        Some(prepared) if matches!(prepared.result, Preparation::PrepareFailed(_)) => {
+            let raw = prepared
+                .prestart
+                .requested()
+                .then_some(prepared.prestart.cleanup);
+            if let Some(f) = &mut out.finish {
+                f.record_cleanup(raw, prepared.prestart.ledger.fault());
+            }
+            raw
+        }
+        Some(Prepared {
+            result: Preparation::Ready { session, .. },
+            ..
+        }) => {
             session.cleanup();
-            let raw = session.producer().cleanup_observation();
-            let fault = session.producer().teardown_ledger().fault();
+            let raw = session.cleanup_observation();
+            let fault = session.teardown_fault();
             if let Some(f) = &mut out.finish {
                 f.record_cleanup(raw, fault);
             }

@@ -54,6 +54,7 @@ pub struct Session<B, C, S> {
     receiver: Channel,
     transport_fault: Option<(Option<i32>, Option<Anchor>)>,
     input_finished: bool,
+    prestart: super::prestart::Report,
     _metadata: Reservation,
 }
 pub(super) fn handshake(
@@ -160,6 +161,7 @@ impl<
             receiver,
             transport_fault: None,
             input_finished: false,
+            prestart: super::prestart::Report::default(),
             _metadata: metadata,
         })
     }
@@ -325,7 +327,28 @@ impl<
         }
     }
     pub fn cleanup(&mut self) {
-        self.producer.cleanup();
+        if self.started {
+            self.producer.cleanup();
+        } else {
+            self.producer.dispose_before_start(&mut self.prestart);
+        }
+    }
+    pub fn prestart_disposition(&self) -> &super::prestart::Report {
+        &self.prestart
+    }
+    pub fn cleanup_observation(&self) -> Option<super::producer::Cleanup> {
+        if self.prestart.requested() {
+            Some(self.prestart.cleanup)
+        } else {
+            self.producer.cleanup_observation()
+        }
+    }
+    pub fn teardown_fault(&self) -> Option<super::teardown::Fault> {
+        if self.prestart.requested() {
+            self.prestart.ledger.fault()
+        } else {
+            self.producer.teardown_ledger().fault()
+        }
     }
     pub fn export_failure_step(
         &mut self,
