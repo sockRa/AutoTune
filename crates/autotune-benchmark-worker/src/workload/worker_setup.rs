@@ -260,12 +260,16 @@ impl Artifact {
     }
 }
 pub struct Receipt {
+    binding: WorkerBinding,
     canonical: String,
     digest: Digest,
     reported: Reported,
     _allocation: Reservation,
 }
 impl Receipt {
+    pub fn binding(&self) -> WorkerBinding {
+        self.binding
+    }
     pub fn read(
         bytes: &[u8],
         binding: WorkerBinding,
@@ -407,6 +411,7 @@ impl Receipt {
             module_loading_mode: read_int(get(o, "module_loading_mode")?)?,
         };
         Ok(Self {
+            binding,
             canonical: std::str::from_utf8(bytes)
                 .map_err(|_| Fault::Shape)?
                 .to_owned(),

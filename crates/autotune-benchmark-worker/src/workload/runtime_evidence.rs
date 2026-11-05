@@ -95,76 +95,7 @@ impl Reported {
             return Err(Fault::Initialization);
         }
         let file = self.file.as_ref().ok_or(Fault::Missing)?;
-        if file.kind != Kind::Nvml {
-            return Err(Fault::Kind);
-        }
-        let first = file.report.before.and_then(Result::ok).ok_or(Fault::File)?;
-        if file.fault.is_some()
-            || !file.bound
-            || !file.held
-            || file.requested.is_none()
-            || file.loaded.is_none()
-            || file.open != Some(Ok(()))
-            || file.loaded_open != Some(Ok(()))
-            || !file.report.complete()
-            || !file.report.matches_identity(first)
-            || file.loaded_identity != Some(Ok(first))
-            || file.report.bytes != first.bytes
-            || first.bytes == 0
-            || first.bytes > MAX_FILE_BYTES
-            || file.report.reads == 0
-            || file.report.reads > MAX_READS
-            || file.report.last_read != Some(Ok(0))
-            || first.file_type != 1
-            || first.file_type_error.is_some()
-            || first.attributes & (0x10 | 0x400) != 0
-            || !file.requested.as_ref().is_some_and(|p| absolute_path(p))
-            || !file.loaded.as_ref().is_some_and(|p| absolute_path(p))
-            || !file
-                .directory
-                .is_some_and(|p| p.error.is_none() && p.length > 0 && p.length < 4096)
-            || !file.module_path.is_some_and(|p| {
-                p.error.is_none()
-                    && p.length > 0
-                    && p.length < 4096
-                    && file
-                        .loaded
-                        .as_ref()
-                        .is_some_and(|v| v.len() == p.length as usize)
-            })
-        {
-            return Err(Fault::File);
-        }
-        let prefix = [
-            Stage::DirectoryBefore,
-            Stage::DirectoryAfter,
-            Stage::OpenBefore,
-            Stage::OpenAfter,
-            Stage::MetadataBefore,
-            Stage::MetadataAfter,
-        ];
-        let suffix = [
-            Stage::FinalMetadataBefore,
-            Stage::FinalMetadataAfter,
-            Stage::LibraryLoadBefore,
-            Stage::LibraryLoadAfter,
-            Stage::ModulePathBefore,
-            Stage::ModulePathAfter,
-            Stage::LoadedOpenBefore,
-            Stage::LoadedOpenAfter,
-            Stage::LoadedMetadataBefore,
-            Stage::LoadedMetadataAfter,
-        ];
-        if self.checks.len() != 16 + file.report.reads as usize * 2 {
-            return Err(Fault::Missing);
-        }
-        let expected = prefix
-            .into_iter()
-            .chain((0..file.report.reads).flat_map(|n| [Stage::ReadBefore(n), Stage::ReadAfter(n)]))
-            .chain(suffix);
-        if self.checks.iter().zip(expected).any(|(c, s)| c.stage != s) {
-            return Err(Fault::Shape);
-        }
+        check_file_record(file, Kind::Nvml, &self.checks)?;
         let d = scope.draft();
         let mut clock =
             Clock::temporal(d.frequency, d.clock_token, d.epoch).map_err(|_| Fault::Clock)?;
@@ -792,4 +723,82 @@ pub(super) fn runtime_load_error(
         }),
         _ => Err(Block::Scope),
     }
+}
+
+pub(super) fn check_file_record(
+    file: &FileRecord,
+    kind: Kind,
+    checks: &[FileCheck],
+) -> Result<(), Fault> {
+    if file.kind != kind {
+        return Err(Fault::Kind);
+    }
+    let first = file.report.before.and_then(Result::ok).ok_or(Fault::File)?;
+    if file.fault.is_some()
+        || !file.bound
+        || !file.held
+        || file.requested.is_none()
+        || file.loaded.is_none()
+        || file.open != Some(Ok(()))
+        || file.loaded_open != Some(Ok(()))
+        || !file.report.complete()
+        || !file.report.matches_identity(first)
+        || file.loaded_identity != Some(Ok(first))
+        || file.report.bytes != first.bytes
+        || first.bytes == 0
+        || first.bytes > MAX_FILE_BYTES
+        || file.report.reads == 0
+        || file.report.reads > MAX_READS
+        || file.report.last_read != Some(Ok(0))
+        || first.file_type != 1
+        || first.file_type_error.is_some()
+        || first.attributes & (0x10 | 0x400) != 0
+        || !file.requested.as_ref().is_some_and(|p| absolute_path(p))
+        || !file.loaded.as_ref().is_some_and(|p| absolute_path(p))
+        || !file
+            .directory
+            .is_some_and(|p| p.error.is_none() && p.length > 0 && p.length < 4096)
+        || !file.module_path.is_some_and(|p| {
+            p.error.is_none()
+                && p.length > 0
+                && p.length < 4096
+                && file
+                    .loaded
+                    .as_ref()
+                    .is_some_and(|v| v.len() == p.length as usize)
+        })
+    {
+        return Err(Fault::File);
+    }
+    let prefix = [
+        Stage::DirectoryBefore,
+        Stage::DirectoryAfter,
+        Stage::OpenBefore,
+        Stage::OpenAfter,
+        Stage::MetadataBefore,
+        Stage::MetadataAfter,
+    ];
+    let suffix = [
+        Stage::FinalMetadataBefore,
+        Stage::FinalMetadataAfter,
+        Stage::LibraryLoadBefore,
+        Stage::LibraryLoadAfter,
+        Stage::ModulePathBefore,
+        Stage::ModulePathAfter,
+        Stage::LoadedOpenBefore,
+        Stage::LoadedOpenAfter,
+        Stage::LoadedMetadataBefore,
+        Stage::LoadedMetadataAfter,
+    ];
+    if checks.len() != 16 + file.report.reads as usize * 2 {
+        return Err(Fault::Missing);
+    }
+    let expected = prefix
+        .into_iter()
+        .chain((0..file.report.reads).flat_map(|n| [Stage::ReadBefore(n), Stage::ReadAfter(n)]))
+        .chain(suffix);
+    if checks.iter().zip(expected).any(|(c, s)| c.stage != s) {
+        return Err(Fault::Shape);
+    }
+    Ok(())
 }

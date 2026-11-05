@@ -189,7 +189,7 @@ impl Receiver {
             .reserve(
                 worker_setup::CAP
                     + (MAX_CHUNKS as usize + 1) * std::mem::size_of::<Arrival>()
-                    + std::mem::size_of::<Self>(),
+                    + std::mem::size_of::<ReadyDelivery>(),
             )
             .map_err(|_| Fault::Capacity)?;
         let history = EntryClock::new(binding.monitor.qpc_frequency, binding.epoch, first, &budget)
@@ -385,7 +385,10 @@ impl Receiver {
     #[allow(clippy::result_large_err)] // Return the original partial transport owner without allocating an error path.
     pub fn into_ready(self) -> Result<ReadyDelivery, Self> {
         if self.fault.is_none() && self.ready.is_some() && self.receipt.is_some() {
-            Ok(ReadyDelivery { receiver: self })
+            Ok(ReadyDelivery {
+                receiver: self,
+                assessment: None,
+            })
         } else {
             Err(self)
         }
@@ -395,8 +398,40 @@ impl Receiver {
 /// caller still owes setup acceptance, peer/consent/safety and native admission.
 pub struct ReadyDelivery {
     receiver: Receiver,
+    assessment: Option<
+        Result<super::worker_setup_assessment::Summary, super::worker_setup_assessment::Rejection>,
+    >,
 }
 impl ReadyDelivery {
+    /// One retained assessment of reported assertions. A rejection poisons the
+    /// ordinary decoder; independent stop/control and native authority remain
+    /// the parent's responsibility. Calling again returns the original result.
+    pub fn assess_setup(
+        &mut self,
+    ) -> Result<super::worker_setup_assessment::Summary, super::worker_setup_assessment::Rejection>
+    {
+        if let Some(result) = self.assessment {
+            return result;
+        }
+        let result = super::worker_setup_assessment::screen(
+            self.receipt(),
+            self.receiver.binding,
+            self.ready().message().expect("decoded Ready"),
+            &self.receiver.arrivals,
+        );
+        if result.is_err() {
+            self.receiver.decoder.poison();
+        }
+        self.assessment = Some(result);
+        result
+    }
+    pub fn assessment(
+        &self,
+    ) -> Option<
+        Result<super::worker_setup_assessment::Summary, super::worker_setup_assessment::Rejection>,
+    > {
+        self.assessment
+    }
     pub fn receipt(&self) -> &Receipt {
         self.receiver.receipt.as_ref().expect("verified delivery")
     }

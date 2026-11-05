@@ -52,6 +52,7 @@ pub mod transport;
 #[cfg(windows)]
 pub mod windows_transport;
 pub mod worker_setup;
+pub mod worker_setup_assessment;
 pub mod worker_setup_delivery;
 #[cfg(windows)]
 pub use crate::sampler::windows::workload_launch as windows_process;

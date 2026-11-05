@@ -1,4 +1,5 @@
 mod worker_setup_tests {
+    include!("setup_assessment.rs");
     include!("worker_setup_delivery.rs");
     use super::*;
     use autotune_benchmark_worker::{

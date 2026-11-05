@@ -2272,9 +2272,55 @@ a redundant constant assertion was removed after warning-denied Clippy. Final
 source-bound verification/publication: ROADMAP.md. No real pipe, process, thread,
 DLL/environment API or GPU execution, independent-agent review or qualification.
 
-Reported setup consistency/required-fact assessment and complete parent
-host/starting/runtime/peer/image/process/consent/safety composition remain next.
+The continuation below adds reported setup consistency checks; complete parent
+host/starting/runtime/peer/image/process/consent/safety composition remains next.
 Failed/early preparation without a ready Session still retains its artifact/
 owners and needs separate aggregate failure export. Aggregate metadata and OS
 resources remain unqualified; byte/ledger reservations do not close those gates.
 E3 remains partial and Gate B unmet; the full automatic optimization goal remains.
+
+## Reported worker setup assessment — 2026-11-05
+
+`worker_setup_assessment::screen` now checks the immutable strict receipt against
+its exact parent binding and Ready/delivery observations. It rejects simulated
+source, unfinished/failed preparation, pending/overflow/rejected entries, loader
+or native/CPU failures, missing calls and every nonzero status. Rejections retain
+a typed cause and report/file/call/Ready/arrival site. Raw receipt bytes, return
+values and unknowns remain available; native status precedes a later post-clock
+failure rather than being overwritten by it.
+
+The screen requires the complete ordered environment/file/CUDA setup sequence,
+matching raw environment readback, API version and EAGER mode, bounded readable
+device enumeration and one exact target UUID/PCI match. Device handles and UUIDs
+must be readable and unique; reordered ordinals remain valid. Target attributes,
+context device, nonnull resource returns, planned allocation/headroom checks,
+all four buffers and final stream creation must agree. Extra calls are rejected.
+The shared file consistency check is reused without changing starting-response
+bytes or NVML assessment semantics. CUDA adds fixed DLL basename/path-join and
+logical read-count checks; hash/identity/held assertions still authenticate no file.
+
+The original clock/deadline spans both environment reads, all file checkpoints,
+every ABI entry/return and Ready. The parent receive timeline is validated as a
+separate branch from completed setup: reception can overlap the worker's Ready
+capture, but cannot precede completed setup, and final Ready receipt must follow
+the Ready capture. No phase deadline or grace window is recreated.
+
+`ReadyDelivery::assess_setup` retains one result and the exact receipt. Rejection
+poisons its ordinary decoder without losing evidence; independent stop/control
+remains the parent's responsibility. Successful Summary contains reported facts
+and the exact receipt digest, with no admission or qualification authority. Even
+a consistent native-source claim remains untrusted until peer/image/process and
+separate consent evidence are established. Cache storage is prepaid; screening
+uses bounded stack state and creates no new heap model.
+
+Eleven CPU regressions cover claimed-native versus simulated provenance, all
+sequence/return/clock failures, environment/mode/version, mapping/reordering,
+capability/context/memory, file lifecycle/path/read counts, causal timing, binding,
+full ledger pressure and retained delivery assessment/decoder poisoning. A test
+initially held redundant artifacts across the 32 MiB limit; it was corrected to
+reuse the same artifact, without increasing the quota. Source-bound final local
+verification/publication: ROADMAP.md. No independent-agent review, actual OS/
+environment API/DLL/process/pipe/thread/GPU invocation or hardware qualification.
+Complete parent fact composition, fresh safety/consent, qualified native issuance,
+aggregate resources/export, mains and real qualification remain open. E3 partial,
+Gate B unmet; full automatic benchmark/search/validation goal unchanged.

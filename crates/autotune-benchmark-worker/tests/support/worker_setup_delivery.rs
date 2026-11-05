@@ -42,7 +42,7 @@ mod delivery_tests {
             }
         }
     }
-    fn raw(bytes: &[u8], receipt: Option<Anchor>, b: &Budget) -> RawReceived {
+    pub(super) fn raw(bytes: &[u8], receipt: Option<Anchor>, b: &Budget) -> RawReceived {
         RawReceived::new(
             Lane::Ordinary,
             Framer::new(b.clone()).unwrap().read(&mut Bytes(bytes)),
@@ -62,7 +62,7 @@ mod delivery_tests {
     fn receiver(binding: WorkerBinding, b: &Budget) -> Receiver {
         Receiver::new(binding, a(100), 100_000_000, b.clone()).unwrap()
     }
-    fn channel(binding: WorkerBinding, b: &Budget) -> Channel {
+    pub(super) fn channel(binding: WorkerBinding, b: &Budget) -> Channel {
         Channel::new(binding, Lane::Ordinary, Direction::FromWorker, b.clone()).unwrap()
     }
     fn ready(binding: WorkerBinding) -> Message {
@@ -84,7 +84,7 @@ mod delivery_tests {
         bytes.extend_from_slice(text.as_bytes());
         bytes
     }
-    fn hex(bytes: &[u8]) -> String {
+    pub(super) fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|v| format!("{v:02x}")).collect()
     }
     #[test]

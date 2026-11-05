@@ -86,6 +86,29 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 reported worker setup assessment: strict receipts retain their
+  verified binding and a pure screen now checks complete environment/file/CUDA
+  ordering, statuses, original clocks/deadline, unique readable enumeration and
+  target UUID/PCI/capability/context, memory/resources and Ready metadata. Shared
+  file checks preserve NVML/starting semantics; CUDA adds fixed-name/path-join and
+  logical read-count screening. Reception and worker Ready use separate causal
+  clock branches from completed setup, avoiding a false ordering assumption.
+  Typed rejections retain exact site/cause and native status precedence; raw
+  receipt facts are untouched. ReadyDelivery caches one result and poisons its
+  ordinary decoder on failure, while keeping receipt/observations. This screen
+  has no consent/admission/qualification authority, even for a consistent native
+  claim. Cache storage is prepaid and bounded screening needs no new heap model.
+  Eleven CPU regressions cover failure/clock/binding/schema-derived consistency,
+  mapping/reordering, file/resources and actual retained delivery assessment. An
+  initial redundant-artifact fixture exceeded the unchanged 32 MiB quota; reusing
+  the same artifact fixed it, with historical log retained. Source-bound checks/
+  publication: ROADMAP.md. No independent-agent review or actual OS/environment/
+  DLL/process/pipe/thread/GPU invocation/qualification. Next: complete parent
+  host/starting/runtime references and peer/image/process/consent/safety before
+  native issuance/main; aggregate failed-setup export/resources and real
+  qualification remain open. E3 partial/Gate B unmet; frozen contracts/full
+  product goal retained, with hosted Actions removed/disabled.
+
 - 2026-11-05 setup delivery before Ready: bounded worker-only setup_chunk frames
   carry exact artifact digest/index/count/bytes on the producer's existing output
   sequence. Session makes one attempt under original setup clock/control checks
