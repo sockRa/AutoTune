@@ -2110,10 +2110,37 @@ DLL file proof. Full source-bound verification/publication is in ROADMAP.md.
 Actual filesystem/DLL loading, entry/threads/process/pipe/GPU execution and
 hardware qualification were not performed.
 
-The file/loader owners and file-clock history are retained in memory; the current
-canonical starting response does not yet include these new sections. A complete
-bound runtime/environment bundle and bounded aggregate raw export/reader are
-still required, together with effective child options, parent peer/image/consent
+The continuation below exports those facts in the starting response. A complete
+bound runtime/environment bundle and bounded aggregate export across roles still
+need composition, together with effective child options, parent peer/image/consent
 facts, fresh safety/re-entry/Start and workload admission. Application-ledger
-reservations do not qualify OS commit or the aggregate metadata/session limits.
+reservations do not qualify OS commit or aggregate metadata/session limits.
 No workload issuer/main or release-gate completion follows; E3 remains partial.
+
+## Starting runtime response v2 — 2026-11-05
+
+The starting entry now exports a version 2 canonical response with retained
+NVML file, loader and initialization results and the full file-check clock
+history, including its fixed overflow observation. File facts include requested
+and loaded paths encoded as exact UTF-16LE hex, before/after and loaded-path
+identities, streamed SHA-256, partial read/error facts and held/bound assertions.
+No filesystem or driver operation is needed to detach these retained facts.
+
+The parent reader accepts exact closed schemas for v1 and v2. Legacy v1 bytes
+and their meaning remain unchanged and expose no runtime section. V2 requires
+its explicit runtime section, retaining missing, failed and bad-clock facts
+without inventing success. Owned chunk delivery recognizes both versions and
+still binds the original scope, declaration and payload digest. The canonical
+cap remains 2 MiB; a full file history fits, while combined histories exceeding
+that cap fail explicitly without truncating either ledger. Codec reservations
+remain unchanged; the typed v2 receipt additionally reserves 2 MiB. The reader's
+bounded structure count accommodates the full 8218-check transcript.
+
+Recorded fixtures are labeled simulated. The separate runtime assessment checks
+reported file/identity/path/read and original-clock/deadline consistency; even a
+consistent native-source claim authenticates no read, peer, consent or native
+admission. Eleven CPU regressions cover version separation, strict schema and
+integer widths, raw failure retention, lone UTF-16 surrogates, transcript/clock
+rejection, maximum history, aggregate cap failure, budget release and owned
+delivery. Final source-bound local evidence is in ROADMAP.md. No actual file/DLL,
+entry/threads/process/pipe/GPU execution or qualification was performed.

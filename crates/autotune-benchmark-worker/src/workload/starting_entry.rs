@@ -99,7 +99,7 @@ impl Outcome {
                 .as_ref()
                 .and_then(|r| r.rejected.as_ref().and_then(|x| x.receipt())),
         };
-        Response::build(
+        Response::build_runtime(
             Binding {
                 scope: bootstrap.scope(),
                 declaration: bootstrap.declaration(),
@@ -124,6 +124,11 @@ impl Outcome {
                 control_error: self.control_error,
                 event_clone_error: self.event_clone_error,
                 unreported_completion: self.unreported_completion,
+            },
+            super::runtime_evidence::Input::Native {
+                file: self.runtime_file(),
+                load_error: self.runtime_load_error(),
+                initialization: self.initialization_status(),
             },
             budget,
         )

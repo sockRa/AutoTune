@@ -86,6 +86,27 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 starting runtime export v2: the actual starting Outcome now exports
+  retained NVML file/path/metadata/hash/read/loader/init facts and complete bounded
+  file-clock history into an explicit canonical v2 section. A portable detached
+  file record makes the strict parent reader testable without Windows operations.
+  V1 byte semantics stay unchanged and explicitly lack runtime facts; chunk
+  reception now recognizes both versions. Structural parsing retains failed,
+  missing and bad-clock facts; separate consistency assessment grants no consent,
+  authenticated read, peer identity or native admission. Paths preserve exact
+  UTF-16LE, including lone surrogates. The 2 MiB response cap is unchanged; full
+  file history fits, combined oversized histories fail without eviction, and v2
+  typed receipt storage is prepaid. Eleven new CPU regressions exercise these
+  boundaries. Initial full-history reader complexity and v1-only delivery checks
+  failed and were corrected; their logs remain retained. Final source-bound
+  verification/publication: ROADMAP.md. No independent-agent review or actual
+  filesystem/DLL/entry/threads/process/pipe/GPU invocation/qualification. Complete
+  cross-role runtime/environment and effective child options, aggregate metadata/
+  OS qualification, parent peer/image/process/consent, fresh safety/Start/re-entry,
+  admission/main and real qualification remain open. E3 partial/Gate B unmet;
+  frozen contracts and full automatic benchmark/search/validation goal unchanged.
+  Actions remains removed/disabled under the owner's decision.
+
 - 2026-11-05 observed NVML DLL file/failure ownership: open_observed now uses the
   shared retained fixed-system-file hash/identity and reported-module binding,
   under prepaid original-clock/deadline/stop checkpoints. Early stop, missing

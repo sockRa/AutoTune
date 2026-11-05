@@ -112,6 +112,23 @@ impl Response {
     /// Reject foreign/stale scope or declaration before encoding. Retained faults
     /// and a missing snapshot remain explicit evidence rather than success.
     pub fn build(binding: Binding<'_>, facts: Facts<'_>, budget: &Budget) -> Result<Self, Block> {
+        Self::build_inner(binding, facts, None, budget)
+    }
+    /// Explicit v2 runtime section. The legacy build keeps byte-exact v1 output.
+    pub fn build_runtime(
+        binding: Binding<'_>,
+        facts: Facts<'_>,
+        runtime: super::runtime_evidence::Input<'_>,
+        budget: &Budget,
+    ) -> Result<Self, Block> {
+        Self::build_inner(binding, facts, Some(runtime), budget)
+    }
+    fn build_inner(
+        binding: Binding<'_>,
+        facts: Facts<'_>,
+        runtime_input: Option<super::runtime_evidence::Input<'_>>,
+        budget: &Budget,
+    ) -> Result<Self, Block> {
         let scope = binding.scope;
         if binding.declaration.scope_digest() != scope.digest()
             || binding.declaration.tag().as_bytes() == &[0; 32]
@@ -130,13 +147,19 @@ impl Response {
             .reserve(CAP + std::mem::size_of::<Self>())
             .map_err(|_| Block::Capacity)?;
         let d = scope.draft();
+        let runtime_evidence = runtime_input
+            .map(|input| super::runtime_evidence::value(input, facts.ledger))
+            .transpose()?;
         let runtime = facts
             .info
             .map(|i| serde_json::to_string(&i.runtime))
             .transpose()
             .map_err(|_| Block::Scope)?;
-        let canonical = object([
-            ("version", Value::Text("1".into())),
+        let mut document = object([
+            (
+                "version",
+                Value::Text(if runtime_evidence.is_some() { "2" } else { "1" }.into()),
+            ),
             (
                 "scope",
                 Value::Text("pilot_starting_settings_response".into()),
@@ -261,8 +284,14 @@ impl Response {
                     .unreported_completion
                     .map_or(Value::Null, completion_value),
             ),
-        ])
-        .to_canonical();
+        ]);
+        if let Some(runtime) = runtime_evidence {
+            let Value::Object(ref mut o) = document else {
+                unreachable!("fixed response object")
+            };
+            o.insert("runtime", runtime).map_err(|_| Block::Scope)?;
+        }
+        let canonical = document.to_canonical();
         if canonical.len() > CAP {
             return Err(Block::Capacity);
         }

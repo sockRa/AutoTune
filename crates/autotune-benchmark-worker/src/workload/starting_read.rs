@@ -92,6 +92,7 @@ pub enum Fault {
 /// synthesized or treated as success.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Summary {
+    pub response_version: u64,
     pub frequency: u64,
     pub epoch: Anchor,
     pub first_entry: Anchor,
@@ -114,6 +115,7 @@ pub struct Summary {
 }
 /// One strictly read response bound to the parent's frozen scope/declaration.
 pub struct Receipt {
+    runtime: Option<super::runtime_evidence::Reported>,
     summary: Summary,
     snapshot: Option<super::starting::ReportedSnapshot>,
     canonical: String,
@@ -121,6 +123,7 @@ pub struct Receipt {
     scope: Digest,
     declaration: Digest,
     _allocation: Reservation,
+    _runtime_allocation: Option<Reservation>,
 }
 impl Receipt {
     /// Read at most `CAP` bytes. Capacity is reserved first, then the document is
@@ -149,7 +152,10 @@ impl Receipt {
             return Err(Fault::Deadline);
         }
         let _codec = budget.reserve(CAP * 8).map_err(|_| Fault::Capacity)?;
-        crate::sampler::wire::validate_complexity_limit_wide(bytes, 131072)
+        // V2 can retain all 8218 file checkpoints, each with a full raw anchor.
+        // This structure bound fits that transcript; CAP and codec reservations
+        // remain unchanged. Combined histories above CAP fail without eviction.
+        crate::sampler::wire::validate_complexity_limit_wide(bytes, 262144)
             .map_err(|_| Fault::Capacity)?;
         let allocation = budget
             .reserve(CAP + std::mem::size_of::<Self>())
@@ -159,9 +165,20 @@ impl Receipt {
             Value::Object(document) => document,
             _ => return Err(Fault::Shape),
         };
-        document.require_exact(&TOP).map_err(|_| Fault::Shape)?;
-        if text(&document, "version")? != "1"
-            || text(&document, "scope")? != "pilot_starting_settings_response"
+        let response_version = match text(&document, "version")? {
+            "1" => {
+                document.require_exact(&TOP).map_err(|_| Fault::Shape)?;
+                1
+            }
+            "2" => {
+                let mut keys = TOP.to_vec();
+                keys.push("runtime");
+                document.require_exact(&keys).map_err(|_| Fault::Shape)?;
+                2
+            }
+            _ => return Err(Fault::Scope),
+        };
+        if text(&document, "scope")? != "pilot_starting_settings_response"
             || text(&document, "request_digest")? != scope.digest().to_hex()
             || text(&document, "request")? != scope.canonical()
         {
@@ -204,6 +221,24 @@ impl Receipt {
             return Err(Fault::Deadline);
         }
         info(field(&document, "info")?, scope)?;
+        let runtime_allocation = if response_version == 2 {
+            Some(budget.reserve(CAP).map_err(|_| Fault::Capacity)?)
+        } else {
+            None
+        };
+        let runtime = if response_version == 2 {
+            Some(
+                super::runtime_evidence::read(field(&document, "runtime")?).map_err(|e| {
+                    if e == super::runtime_evidence::Fault::Capacity {
+                        Fault::Capacity
+                    } else {
+                        Fault::Shape
+                    }
+                })?,
+            )
+        } else {
+            None
+        };
         let native_calls = calls(field(&document, "native_calls")?)?;
         let native_fault = native_fault(field(&document, "native_fault")?)?;
         overflow(field(&document, "native_overflow")?)?;
@@ -225,6 +260,7 @@ impl Receipt {
         let trace_object = object(field(&document, "trace")?)?;
         let control_object = object(field(&document, "control")?)?;
         let summary = Summary {
+            response_version,
             frequency,
             epoch,
             first_entry,
@@ -252,6 +288,7 @@ impl Receipt {
             },
         };
         Ok(Self {
+            runtime,
             summary,
             snapshot,
             canonical: String::from_utf8(bytes.to_vec()).map_err(|_| Fault::Shape)?,
@@ -259,10 +296,14 @@ impl Receipt {
             scope: scope.digest(),
             declaration: declaration.tag(),
             _allocation: allocation,
+            _runtime_allocation: runtime_allocation,
         })
     }
     pub fn summary(&self) -> &Summary {
         &self.summary
+    }
+    pub fn runtime(&self) -> Option<&super::runtime_evidence::Reported> {
+        self.runtime.as_ref()
     }
     /// Strict reported artifact for subsequent reference/readability checks.
     /// Source claims authenticate no actual native read or consent.

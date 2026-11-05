@@ -6,7 +6,11 @@ use std::{
     fs::{File, OpenOptions},
     io::Read,
     mem::zeroed,
-    os::windows::{ffi::OsStringExt, fs::OpenOptionsExt, io::AsRawHandle},
+    os::windows::{
+        ffi::{OsStrExt, OsStringExt},
+        fs::OpenOptionsExt,
+        io::AsRawHandle,
+    },
     path::{Path, PathBuf},
 };
 use windows_sys::Win32::{
@@ -19,11 +23,7 @@ use windows_sys::Win32::{
 };
 /// Fixed path/UTF-16 scratch allowance, included in the worker's prepaid 512 KiB.
 pub const PATH_UNITS: usize = 4096;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    Cuda,
-    Nvml,
-}
+pub use super::{ImageFault as Fault, Kind, PathReturn};
 impl Kind {
     fn name(self) -> &'static str {
         match self {
@@ -32,24 +32,8 @@ impl Kind {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fault {
-    Guard,
-    Directory,
-    Open,
-    Measurement,
-    ModulePath,
-    LoadedOpen,
-    LoadedMetadata,
-    Identity,
-    Repeated,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PathReturn {
-    pub length: u32,
-    pub error: Option<u32>,
-}
 pub struct Image {
+    kind: Kind,
     requested: Option<PathBuf>,
     loaded: Option<PathBuf>,
     file: Option<File>,
@@ -98,6 +82,30 @@ fn open(path: &Path) -> std::io::Result<File> {
         .open(path)
 }
 impl Image {
+    /// Caller reserves bounded model/codec capacity before detaching facts.
+    /// No filesystem, module or driver call is made by this conversion.
+    pub fn record(&self) -> super::FileRecord {
+        super::FileRecord {
+            kind: self.kind,
+            requested: self
+                .requested
+                .as_ref()
+                .map(|p| p.as_os_str().encode_wide().collect()),
+            loaded: self
+                .loaded
+                .as_ref()
+                .map(|p| p.as_os_str().encode_wide().collect()),
+            directory: self.directory,
+            open: self.open,
+            report: self.report,
+            module_path: self.module_path,
+            loaded_open: self.loaded_open,
+            loaded_identity: self.loaded_identity,
+            fault: self.fault,
+            held: self.held(),
+            bound: self.bound,
+        }
+    }
     pub fn requested(&self) -> Option<&Path> {
         self.requested.as_deref()
     }
@@ -115,6 +123,7 @@ impl Image {
     }
     pub fn prepare(kind: Kind, mut guard: impl FnMut(Stage) -> bool) -> Self {
         let mut out = Self {
+            kind,
             requested: None,
             loaded: None,
             file: None,

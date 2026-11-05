@@ -416,7 +416,7 @@ fn verify_payload(canonical: &[u8], declaration: Digest, scope: Digest) -> Resul
     let value = decode(canonical, CAP).map_err(|_| Fault::Frame)?;
     let object = value.as_object().ok_or(Fault::Frame)?;
     let text = |key: &str| object.get(key).and_then(Value::as_text);
-    if text("version") != Some("1")
+    if !matches!(text("version"), Some("1" | "2"))
         || text("scope") != Some("pilot_starting_settings_response")
         || text("request_digest") != Some(scope.to_hex().as_str())
         || text("declaration") != Some(declaration.to_hex().as_str())

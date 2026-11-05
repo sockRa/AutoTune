@@ -18,6 +18,7 @@ use autotune_probe::{
     nvml::{SamplerCall, SamplerInfo, SamplerObserver, SamplerOutput, SamplerReturn},
     report::{Field, Runtime},
 };
+include!("support/starting_runtime_export.rs");
 
 fn d(n: u8) -> Digest {
     Digest::parse(&format!("{n:02x}").repeat(32)).unwrap()

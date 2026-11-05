@@ -19,6 +19,7 @@ pub mod nvml_trace;
 pub mod parent_sampler;
 pub mod prestart;
 pub mod producer;
+pub mod runtime_evidence;
 pub mod sampler_dispatch;
 #[cfg(windows)]
 pub mod sampler_entry;

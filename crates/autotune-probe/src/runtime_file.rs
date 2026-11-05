@@ -6,6 +6,46 @@ pub const CHUNK_BYTES: usize = 64 * 1024;
 pub const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 pub const MAX_READS: u32 = 4097;
 pub const MAX_CHECKS: usize = MAX_READS as usize * 2 + 24;
+pub const MAX_PATH_UNITS: usize = 4096 + 16;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Cuda,
+    Nvml,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageFault {
+    Guard,
+    Directory,
+    Open,
+    Measurement,
+    ModulePath,
+    LoadedOpen,
+    LoadedMetadata,
+    Identity,
+    Repeated,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PathReturn {
+    pub length: u32,
+    pub error: Option<u32>,
+}
+/// Detached raw facts only. Paths retain UTF-16 code units losslessly; no live
+/// file/module handles or assertion of mapped-page contents are serialized.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileRecord {
+    pub kind: Kind,
+    pub requested: Option<Vec<u16>>,
+    pub loaded: Option<Vec<u16>>,
+    pub directory: Option<PathReturn>,
+    pub open: Option<Io<()>>,
+    pub report: Report,
+    pub module_path: Option<PathReturn>,
+    pub loaded_open: Option<Io<()>>,
+    pub loaded_identity: Option<Io<Identity>>,
+    pub fault: Option<ImageFault>,
+    pub held: bool,
+    pub bound: bool,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
     DirectoryBefore,
