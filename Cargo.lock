@@ -45,7 +45,9 @@ dependencies = [
  "libloading",
  "serde",
  "serde_json",
+ "sha2",
  "time",
+ "windows-sys",
 ]
 
 [[package]]

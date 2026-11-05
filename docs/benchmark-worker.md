@@ -2006,3 +2006,64 @@ ABI/ownership sources reviewed for the adapter: [RtlGetVersion](https://learn.mi
 and [LocalFree](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-localfree).
 Exact source-bound verification/publication is recorded in ROADMAP.md. Actions
 remains removed/disabled; current checks are local.
+
+### Retained CUDA DLL file evidence — 2026-11-05
+
+Before loading the fixed system `nvcuda.dll`, the opt-in CUDA setup now opens and
+retains a read handle shared only for reads, then hashes the complete file with
+64 KiB scratch. `autotune_probe::runtime_file` retains initial/final file identity,
+size, write time, attributes/type, read count, last raw I/O return, partial byte
+progress and plain SHA-256 of the file bytes. Empty, directory/reparse/non-disk,
+oversized, truncated, growing, changed or unreadable input cannot complete.
+Fragmented reads have a fixed call ceiling; failure/unwind cannot retry the same
+report or turn a partial digest into a successful file observation.
+
+The file-observation implementation bounds are 128 MiB input, 4097 read calls
+(including the EOF check) and 4096 UTF-16 path-buffer units. These are fail-closed
+input/metadata capacities, not extra workload/session time, output quota or
+changes to the approved qualification profile. The worker prepays file-check
+history plus 512 KiB for bounded path/scratch work before native loading. File
+checks preserve raw stages/anchors in their own bounded history; overflow has a
+separate retained slot and cannot evict old evidence or allocate more storage.
+
+The actual setup observer checks the same continuous original clock, frozen
+setup deadline, Shared stop and pending state at each file/loader checkpoint.
+File I/O does not acquire compute admission or pretend to be a CUDA host call.
+Missing/bad clocks, stop, deadline equality, setup completion or an unknown
+pending call prevents successors. A blocked OS read/loader can still outlive a
+check; independent supervision remains necessary and no new grace is granted.
+
+After load, setup retains the library before the post-load callback, including
+the original libloading error on a failed load. The reported module path is
+opened and its volume/file index, size, write time, attributes and type must match
+the measured retained file; the existing trusted canonical-path check remains.
+These fields follow [GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle).
+Read sharing/locking follows [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew),
+and the module path follows [GetModuleFileNameW](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulefilenamew).
+`FILE_TYPE_UNKNOWN` retains its observed GetLastError value (including zero)
+under [GetFileType](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype);
+it never qualifies as a disk file. A truncated system-directory query retains
+its required length, without inventing an error code that the API does not
+specify for that case.
+
+The live backend and every setup-failure owner retain file facts and the read
+handle. A read-only producer accessor exposes those facts after Session
+preparation/explicit teardown as well. Typed CUDA fakes carry no file owner and
+cannot supply DLL evidence. The ordinary file handle lives with its owner; no
+new vendor teardown/retry or NativeAdmission issuer is introduced.
+
+This records file bytes and an OS-reported module-path/file relationship. It is
+not a hash of mapped image pages, attestation of an already loaded image,
+authentication of a remote claim, consent or runtime qualification. The NVML
+loader is not yet connected to this file owner. Complete NVML/build/version and
+effective child-option evidence, parent references/peer/consent admission,
+bounded aggregate raw export and real qualification remain open. No fixed main,
+native DLL/file observation, process/pipe or GPU execution was performed here.
+
+Eight portable file-engine regressions and four actual observer/typed-CUDA
+regressions cover golden hashes, all read/guard failures, metadata/file mismatch,
+bounded fragmentation, raw-return retention across unwind, original deadlines,
+stop/pending, fixed history overflow and exhausted prepaid budget. Initial
+unwind-test counter expectation was corrected to compare the existing shared
+fake counter baseline; no CUDA call had occurred. Exact source-bound checks and
+publication are recorded in ROADMAP.md. Actions remains removed/disabled.

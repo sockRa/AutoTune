@@ -86,6 +86,34 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 retained CUDA DLL file evidence: the actual CUDA startup now opens
+  and retains the fixed OS system DLL file before load, streams its complete
+  SHA-256 through fixed 64 KiB scratch, verifies before/after metadata and binds
+  the reported loaded-module path to the same observed file identity. Empty,
+  oversized, non-disk/reparse/directory, truncated/growing/changed/unreadable
+  inputs reject. Input capacities (128 MiB, 4097 reads, 4096 UTF-16 path-buffer
+  units) grant no extra qualification/workload/session budget. The worker
+  prepays bounded raw file-check history plus path/scratch capacity before load;
+  original continuous clock/setup/Shared stop/pending checks apply at each
+  checkpoint. Library ownership or original loader error is retained before
+  post-load observation, and file facts/handles remain in backend/failure owners
+  with a read-only producer view. No vendor teardown/retry, main or admission
+  issuer is added. File identity/path observations are not mapped-page hashes or
+  attestation. Eight portable engine and four observer/typed-CUDA CPU cases cover
+  golden hashes, metadata/read/guard errors, original expiry/stop/pending, fixed
+  history overflow, full budget pressure and post-read unwind. An initial test
+  expected a shared fake call counter to start at zero; corrected to compare its
+  unchanged baseline. Review also retained valid path returns before post-clock
+  checks, kept raw file-type errors and bounded path scratch under the prepaid
+  allowance. Only existing cached sha2/windows-sys dependencies were added to
+  probe; offline lockfile regeneration changed no versions. Final source-bound
+  verification/publication: ROADMAP.md. No independent review or actual vendor
+  DLL/file observation, entry/process/pipe/GPU execution/qualification. NVML
+  loader integration, effective child options, complete parent runtime/peer/
+  consent chain, aggregate export and real qualification remain open. Full
+  automatic benchmark/search/validation remains the goal; E3 partial/Gate B
+  unmet and Actions removed/disabled.
+
 - 2026-11-05 pre-manifest host environment: a separate bounded canonical artifact
   now retains five host-only raw groups (OS version/build, native/process
   architecture, parent token elevation, system power status and active scheme),

@@ -230,6 +230,8 @@ fn every_native_setup_failure_keeps_signed_status_and_partial_owner_without_clea
             library: None,
             expected_path: None,
             loaded_path: None,
+            runtime_file: None,
+            load_error: None,
         };
         let owned = CudaBackend::finish_setup(input, &mut o).err().unwrap();
         assert_eq!(owned.fault.raw_status, -71);

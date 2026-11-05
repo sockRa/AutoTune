@@ -33,6 +33,10 @@ pub struct SetupReturn {
 /// and initialized output fields before post-clock validation. Observer methods
 /// call no driver; any rejection aborts setup without a successor or cleanup.
 pub trait SetupObserver {
+    /// Host file/loader checkpoint, never a CUDA call or compute admission.
+    fn file_check(&mut self, _: autotune_probe::runtime_file::Stage) -> Result<(), Fault> {
+        Ok(())
+    }
     fn before(&mut self, operation: SetupOperation) -> Result<(), Fault>;
     fn returned(&mut self, operation: SetupOperation, raw: SetupReturn) -> Result<(), Fault>;
 }
@@ -61,8 +65,18 @@ pub struct SetupFailure {
     library: Option<ManuallyDrop<Library>>,
     expected_path: Option<PathBuf>,
     loaded_path: Option<PathBuf>,
+    runtime_file: Option<autotune_probe::runtime_file::windows::Image>,
+    load_error: Option<libloading::Error>,
 }
 impl SetupFailure {
+    pub fn runtime_file(&self) -> Option<&autotune_probe::runtime_file::windows::Image> {
+        self.runtime_file
+            .as_ref()
+            .or_else(|| self.backend.as_ref().and_then(CudaBackend::runtime_file))
+    }
+    pub fn load_error(&self) -> Option<&libloading::Error> {
+        self.load_error.as_ref()
+    }
     pub fn resources(&self) -> Option<SetupResources> {
         self.backend.as_ref().map(CudaBackend::setup_resources)
     }
@@ -106,34 +120,57 @@ impl CudaBackend {
             library: None,
             expected_path: None,
             loaded_path: None,
+            runtime_file: None,
+            load_error: None,
         };
         let result = (|| -> Result<(), Fault> {
             if !identity.valid() {
                 return Err(invalid("identity"));
             }
-            let mut directory = [0u16; 32768];
-            let length =
-                GetSystemDirectoryW(directory.as_mut_ptr(), directory.len() as u32) as usize;
-            if length == 0 || length >= directory.len() {
-                return Err(invalid("GetSystemDirectoryW"));
+            use autotune_probe::runtime_file::{
+                windows::{Image, Kind},
+                Stage,
+            };
+            failure.runtime_file = Some(Image::prepare(Kind::Cuda, |step| {
+                observer.file_check(step).is_ok()
+            }));
+            let measured = failure
+                .runtime_file
+                .as_ref()
+                .expect("retained file observation");
+            if !measured.measured() {
+                return Err(invalid("CUDA driver file observation"));
             }
-            let path = PathBuf::from(OsString::from_wide(&directory[..length])).join("nvcuda.dll");
+            let path = measured.requested().expect("measured path").to_path_buf();
             failure.expected_path = Some(path.clone());
             if !path.is_absolute() {
                 return Err(invalid("system driver path"));
             }
-            let library = Library::load_with_flags(&path, 0x100 | 0x800)
-                .map_err(|_| invalid("load system nvcuda"))?;
-            let raw = library.into_raw();
-            failure.library = Some(ManuallyDrop::new(Library::from_raw(raw)));
-            let mut loaded = [0u16; 32768];
-            let length =
-                GetModuleFileNameW(raw as *mut c_void, loaded.as_mut_ptr(), loaded.len() as u32)
-                    as usize;
-            if length == 0 || length >= loaded.len() {
-                return Err(invalid("loaded module path"));
+            observer.file_check(Stage::LibraryLoadBefore)?;
+            let raw = match Library::load_with_flags(&path, 0x100 | 0x800) {
+                Ok(library) => {
+                    let raw = library.into_raw();
+                    failure.library = Some(ManuallyDrop::new(Library::from_raw(raw)));
+                    Some(raw)
+                }
+                Err(error) => {
+                    failure.load_error = Some(error);
+                    None
+                }
+            };
+            observer.file_check(Stage::LibraryLoadAfter)?;
+            let raw = raw.ok_or_else(|| invalid("load system nvcuda"))?;
+            let image = failure
+                .runtime_file
+                .as_mut()
+                .expect("retained file observation");
+            image.bind_module(raw as *mut c_void, |step| observer.file_check(step).is_ok());
+            let loaded = image.loaded().map(std::path::Path::to_path_buf);
+            failure.loaded_path = loaded.clone();
+            if !image.bound() {
+                return Err(invalid("loaded CUDA driver file binding"));
             }
-            let loaded = PathBuf::from(OsString::from_wide(&loaded[..length]));
+            let loaded = loaded.expect("bound loaded path");
             failure.loaded_path = Some(loaded.clone());
             if loaded
                 .canonicalize()
@@ -159,6 +196,7 @@ impl CudaBackend {
                 _thread_affinity: PhantomData,
                 driver_path: loaded,
                 driver_version: -1,
+                runtime_file: failure.runtime_file.take(),
             });
             Ok(())
         })();

@@ -10,16 +10,8 @@ use crate::workload::{
 use autotune_fma_reference::{input::Shape, profile::Profile};
 use libloading::os::windows::Library;
 use std::{
-    ffi::{c_void, OsString},
-    marker::PhantomData,
-    mem::ManuallyDrop,
-    os::windows::ffi::OsStringExt,
-    path::PathBuf,
-    ptr::null_mut,
-    rc::Rc,
+    ffi::c_void, marker::PhantomData, mem::ManuallyDrop, path::PathBuf, ptr::null_mut, rc::Rc,
 };
-use windows_sys::Win32::System::LibraryLoader::GetModuleFileNameW;
-use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 
 type Handle = *mut c_void;
 type Init = unsafe extern "system" fn(u32) -> i32;
@@ -128,6 +120,7 @@ pub struct CudaBackend {
     _thread_affinity: PhantomData<Rc<()>>,
     driver_path: PathBuf,
     driver_version: i32,
+    runtime_file: Option<autotune_probe::runtime_file::windows::Image>,
 }
 impl crate::workload::producer::Driver for CudaBackend {
     fn provenance(&self) -> Provenance {
@@ -168,6 +161,9 @@ impl crate::workload::producer::Driver for CudaBackend {
     }
 }
 impl CudaBackend {
+    pub fn runtime_file(&self) -> Option<&autotune_probe::runtime_file::windows::Image> {
+        self.runtime_file.as_ref()
+    }
     /// Loads the system driver and creates an owned context/module/buffers.
     ///
     /// # Safety
@@ -492,6 +488,7 @@ mod tests {
             _thread_affinity: PhantomData,
             driver_path: PathBuf::from("typed-fake-not-a-DLL"),
             driver_version: 12090,
+            runtime_file: None,
         }
     }
     #[test]

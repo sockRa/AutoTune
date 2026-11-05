@@ -2,6 +2,7 @@ pub mod adapter;
 pub mod mock;
 pub mod nvml;
 pub mod report;
+pub mod runtime_file;
 
 pub fn run_live() -> report::Report {
     let timestamp = time::OffsetDateTime::now_utc()

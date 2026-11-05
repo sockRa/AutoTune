@@ -12,6 +12,12 @@ use std::sync::Arc;
 // Adapter permits at most 64 devices, two calls each, five attributes for the
 // unique match, three initial calls and ten context/module/buffer/stream calls.
 const CAP: usize = 3 + 64 * 2 + 5 + 10;
+use autotune_probe::runtime_file::{Stage, MAX_CHECKS};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileCheck {
+    pub stage: Stage,
+    pub anchor: Option<Anchor>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
     Binding,
@@ -41,6 +47,8 @@ pub struct Ledger {
     overflow: Option<(SetupOperation, Option<Anchor>)>,
     rejected_return: Option<(SetupOperation, SetupReturn, Option<Anchor>)>,
     _allocation: Reservation,
+    file_checks: Vec<FileCheck>,
+    file_overflow: Option<FileCheck>,
 }
 impl Ledger {
     /// Requires the control state's one-shot original bootstrap setup deadline.
@@ -71,15 +79,24 @@ impl Ledger {
                 return Err(Fault::Stopped);
             }
             let allocation = budget
-                .reserve(std::mem::size_of::<Self>() + CAP * std::mem::size_of::<Entry>())
+                .reserve(
+                    std::mem::size_of::<Self>()
+                        + CAP * std::mem::size_of::<Entry>()
+                        + MAX_CHECKS * std::mem::size_of::<FileCheck>()
+                        + 512 * 1024,
+                )
                 .map_err(|_| Fault::Capacity)?;
             let mut entries = Vec::new();
             entries
                 .try_reserve_exact(CAP)
                 .map_err(|_| Fault::Capacity)?;
-            Ok((clock, deadline_raw, allocation, entries))
+            let mut file_checks = Vec::new();
+            file_checks
+                .try_reserve_exact(MAX_CHECKS)
+                .map_err(|_| Fault::Capacity)?;
+            Ok((clock, deadline_raw, allocation, entries, file_checks))
         })();
-        let (clock, deadline_raw, allocation, entries) = match result {
+        let (clock, deadline_raw, allocation, entries, file_checks) = match result {
             Ok(v) => v,
             Err(f) => {
                 if f == Fault::Deadline {
@@ -102,10 +119,18 @@ impl Ledger {
             overflow: None,
             rejected_return: None,
             _allocation: allocation,
+            file_checks,
+            file_overflow: None,
         })
     }
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+    pub fn file_checks(&self) -> &[FileCheck] {
+        &self.file_checks
+    }
+    pub fn file_overflow(&self) -> Option<FileCheck> {
+        self.file_overflow
     }
     pub fn fault(&self) -> Option<Fault> {
         self.fault
@@ -176,6 +201,24 @@ impl<F> Drop for Observer<'_, F> {
     }
 }
 impl<F: FnMut() -> Option<Anchor>> SetupObserver for Observer<'_, F> {
+    fn file_check(&mut self, stage: Stage) -> Result<(), NativeFault> {
+        let anchor = (self.clock)();
+        let raw = FileCheck { stage, anchor };
+        if self.ledger.file_checks.len() == MAX_CHECKS {
+            self.ledger.file_overflow.get_or_insert(raw);
+            return Err(self.ledger.fail(Fault::Capacity, anchor));
+        }
+        self.ledger.file_checks.push(raw);
+        if self.ledger.pending.is_some() || self.ledger.shared.admission().pending() {
+            return Err(self.ledger.fail(Fault::Protocol, anchor));
+        }
+        if let Some(f) = self.ledger.fault {
+            return Err(self.ledger.fail(f, anchor));
+        }
+        self.ledger
+            .check(anchor)
+            .map_err(|f| self.ledger.fail(f, anchor))
+    }
     fn before(&mut self, operation: SetupOperation) -> Result<(), NativeFault> {
         let a = (self.clock)();
         if self.ledger.entries.len() == CAP {

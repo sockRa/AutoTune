@@ -277,6 +277,14 @@ pub struct Producer<B, C, S> {
     control: Option<Arc<super::control::Shared>>,
     reports_sent: u32,
 }
+#[cfg(all(windows, target_arch = "x86_64", feature = "native-cuda"))]
+impl<C, S> Producer<crate::cuda::CudaBackend, C, S> {
+    /// Read-only retained file observation, also available after explicit
+    /// teardown. It authenticates no mapped bytes, consent or qualification.
+    pub fn runtime_file(&self) -> Option<&autotune_probe::runtime_file::windows::Image> {
+        self.driver.runtime_file()
+    }
+}
 impl<
         B: Driver,
         C: FnMut() -> Option<Anchor> + 'static,

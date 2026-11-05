@@ -309,4 +309,155 @@ mod bound_setup_tests {
         ));
         assert!(shared.admission().stopped());
     }
+    struct FileBytes {
+        position: usize,
+    }
+    impl autotune_probe::runtime_file::Source for FileBytes {
+        fn identity(
+            &mut self,
+        ) -> autotune_probe::runtime_file::Io<autotune_probe::runtime_file::Identity> {
+            Ok(autotune_probe::runtime_file::Identity {
+                volume_serial: 1,
+                index: 2,
+                bytes: 3,
+                last_write: 4,
+                attributes: 0x20,
+                file_type: 1,
+                file_type_error: None,
+            })
+        }
+        fn read(&mut self, buffer: &mut [u8]) -> autotune_probe::runtime_file::Io<usize> {
+            let n = (3 - self.position).min(buffer.len());
+            buffer[..n].copy_from_slice(&b"abc"[self.position..self.position + n]);
+            self.position += n;
+            Ok(n)
+        }
+    }
+    #[test]
+    fn prepaid_file_measurement_and_cuda_setup_share_the_original_continuous_clock() {
+        use autotune_probe::runtime_file::{Report, Stage};
+        let _lock = serial();
+        let (budget, _, shared, mut ledger) = setup();
+        let mut backend = setup_fixture();
+        let mut file = Report::default();
+        let mut n = 0;
+        let _pressure = budget.reserve(16 * 1024 * 1024 - budget.used()).unwrap();
+        let used = budget.used();
+        let mut observer = ledger.observer(|| {
+            n += 1000;
+            Some(a(n))
+        });
+        file.measure(&mut FileBytes { position: 0 }, |s| {
+            observer.file_check(s).is_ok()
+        });
+        assert!(file.complete());
+        observer.file_check(Stage::LibraryLoadBefore).unwrap();
+        observer.file_check(Stage::LibraryLoadAfter).unwrap();
+        backend.setup_observed(&mut observer).unwrap();
+        drop(observer);
+        assert_eq!(budget.used(), used);
+        assert_eq!(ledger.file_checks().len(), 10);
+        assert_eq!(ledger.entries().len(), 20);
+        assert_eq!(ledger.entries()[0].before, Some(a(11_000)));
+        assert_eq!(ledger.fault(), None);
+        assert!(!shared.admission().pending());
+        assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 20);
+        assert!(backend.runtime_file().is_none()); // A typed fake supplies no DLL proof.
+    }
+    #[test]
+    fn bad_file_clock_deadline_control_or_pending_blocks_first_cuda_call() {
+        use autotune_probe::runtime_file::Stage;
+        let _lock = serial();
+        for mode in 0..6 {
+            let (_, binding, shared, mut ledger) = setup();
+            let mut backend = setup_fixture();
+            ledger
+                .observer(|| Some(a(1000)))
+                .file_check(Stage::MetadataBefore)
+                .unwrap();
+            if mode == 3 {
+                shared.close();
+            }
+            if mode == 4 {
+                shared.admission().begin().unwrap();
+            }
+            if mode == 5 {
+                shared.complete_setup(binding, a(1500)).unwrap();
+            }
+            let clock = match mode {
+                0 => None,
+                1 => Some(a(1_000_000_000)),
+                2 => Some(a(0)),
+                _ => Some(a(2000)),
+            };
+            let mut o = ledger.observer(|| clock);
+            assert!(o.file_check(Stage::MetadataAfter).is_err());
+            assert!(backend.setup_observed(&mut o).is_err());
+            drop(o);
+            let expected = match mode {
+                0 | 2 => TraceFault::Clock,
+                1 => TraceFault::Deadline,
+                3 => TraceFault::Stopped,
+                _ => TraceFault::Protocol,
+            };
+            assert_eq!(ledger.fault(), Some(expected));
+            assert_eq!(ledger.file_checks().last().unwrap().anchor, clock);
+            assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 0);
+            assert!(shared.admission().stopped());
+            if mode == 4 {
+                assert!(shared.admission().pending());
+            }
+        }
+    }
+    #[test]
+    fn fixed_file_history_capacity_retains_overflow_and_never_evicts_or_grows() {
+        use autotune_probe::runtime_file::{Stage, MAX_CHECKS};
+        let (budget, _, shared, mut ledger) = setup();
+        let used = budget.used();
+        let mut n = 0;
+        let mut o = ledger.observer(|| {
+            n += 100;
+            Some(a(n))
+        });
+        for i in 0..MAX_CHECKS {
+            o.file_check(Stage::ReadBefore(i as u32)).unwrap();
+        }
+        assert!(o.file_check(Stage::FinalMetadataAfter).is_err());
+        drop(o);
+        assert_eq!(budget.used(), used);
+        assert_eq!(ledger.file_checks().len(), MAX_CHECKS);
+        assert!(ledger.file_overflow().is_some());
+        assert_eq!(ledger.file_checks()[0].anchor, Some(a(100)));
+        assert_eq!(ledger.fault(), Some(TraceFault::Capacity));
+        assert!(shared.admission().stopped());
+    }
+    #[test]
+    fn file_post_read_clock_unwind_retains_raw_return_and_closes_without_cuda_entry() {
+        use autotune_probe::runtime_file::Report;
+        let _lock = serial();
+        let (_, _, shared, mut ledger) = setup();
+        let calls = SETUP_NATIVE.load(Ordering::SeqCst);
+        let mut report = Report::default();
+        let mut n = 0;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut observer = ledger.observer(|| {
+                let i = n;
+                n += 1;
+                if i == 3 {
+                    panic!("file post-read clock");
+                }
+                Some(a((n * 1000) as u64))
+            });
+            report.measure(&mut FileBytes { position: 0 }, |s| {
+                observer.file_check(s).is_ok()
+            });
+        }));
+        assert!(result.is_err());
+        assert_eq!(report.last_read, Some(Ok(3)));
+        assert_eq!(report.sha256, None);
+        assert!(shared.admission().stopped());
+        assert_eq!(shared.cooperative_raw(), 0);
+        assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), calls);
+        assert!(!shared.admission().pending());
+    }
 }
