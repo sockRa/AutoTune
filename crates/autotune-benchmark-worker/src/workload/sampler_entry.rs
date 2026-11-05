@@ -46,6 +46,15 @@ pub struct Outcome {
     native: NativeOwner,
 }
 impl Outcome {
+    pub fn runtime_file(&self) -> Option<&autotune_probe::runtime_file::windows::Image> {
+        self.native.runtime_file()
+    }
+    pub fn runtime_load_error(&self) -> Option<&autotune_probe::nvml::RuntimeLoadError> {
+        self.native.load_error()
+    }
+    pub fn initialization_status(&self) -> Option<i32> {
+        self.native.initialization()
+    }
     /// Child orderly-completion status only, never qualification or GPU fence.
     pub fn exit_code(&self) -> i32 {
         if self.trace.fault.is_none()
@@ -178,7 +187,7 @@ pub unsafe fn entry() -> Result<Outcome, EntryFailure> {
         transport_fault: None,
         clock_error: None,
         control_error: None,
-        native: NativeOwner::Released,
+        native: NativeOwner::Released(Default::default()),
     };
     run(&mut outcome);
     Ok(outcome)

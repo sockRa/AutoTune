@@ -7,6 +7,12 @@ use crate::{
     },
 };
 use autotune_probe::nvml::{SamplerCall, SamplerObserver, SamplerReturn};
+use autotune_probe::runtime_file::{Stage, MAX_CHECKS};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileCheck {
+    pub stage: Stage,
+    pub anchor: Option<Anchor>,
+}
 const CAP: usize = 1 + 1 + 1024 * 3 + 3;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
@@ -34,6 +40,8 @@ pub struct Ledger {
     overflow: Option<(SamplerCall, Option<Anchor>)>,
     rejected_return: Option<(SamplerCall, SamplerReturn, Option<Anchor>)>,
     _allocation: Reservation,
+    file_checks: Vec<FileCheck>,
+    file_overflow: Option<FileCheck>,
 }
 impl Ledger {
     pub fn new(
@@ -53,11 +61,20 @@ impl Ledger {
             return Err(Fault::Deadline);
         }
         let allocation = budget
-            .reserve(std::mem::size_of::<Self>() + CAP * std::mem::size_of::<Entry>())
+            .reserve(
+                std::mem::size_of::<Self>()
+                    + CAP * std::mem::size_of::<Entry>()
+                    + MAX_CHECKS * std::mem::size_of::<FileCheck>()
+                    + 512 * 1024,
+            )
             .map_err(|_| Fault::Capacity)?;
         let mut entries = Vec::new();
         entries
             .try_reserve_exact(CAP)
+            .map_err(|_| Fault::Capacity)?;
+        let mut file_checks = Vec::new();
+        file_checks
+            .try_reserve_exact(MAX_CHECKS)
             .map_err(|_| Fault::Capacity)?;
         Ok(Self {
             clock,
@@ -69,10 +86,18 @@ impl Ledger {
             overflow: None,
             rejected_return: None,
             _allocation: allocation,
+            file_checks,
+            file_overflow: None,
         })
     }
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+    pub fn file_checks(&self) -> &[FileCheck] {
+        &self.file_checks
+    }
+    pub fn file_overflow(&self) -> Option<FileCheck> {
+        self.file_overflow
     }
     pub fn fault(&self) -> Option<Fault> {
         self.fault
@@ -116,7 +141,43 @@ pub struct Observer<'a, F> {
     gate: &'a NativeAdmission,
     clock: F,
 }
+impl<F> Drop for Observer<'_, F> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.ledger.fault.get_or_insert(Fault::Protocol);
+            self.gate.stop();
+        }
+    }
+}
 impl<F: FnMut() -> Option<Anchor>> SamplerObserver for Observer<'_, F> {
+    fn file_check(&mut self, stage: Stage) -> bool {
+        let anchor = (self.clock)();
+        let raw = FileCheck { stage, anchor };
+        if self.ledger.file_checks.len() == MAX_CHECKS {
+            self.ledger.file_overflow.get_or_insert(raw);
+            self.ledger.fail(Fault::Capacity, self.gate);
+            return false;
+        }
+        self.ledger.file_checks.push(raw);
+        let result = if self.ledger.pending.is_some() {
+            Err(Fault::Protocol)
+        } else if let Some(f) = self.ledger.fault {
+            Err(f)
+        } else {
+            self.ledger.check(anchor).and_then(|()| {
+                if self.gate.stopped() {
+                    Err(Fault::Stopped)
+                } else {
+                    Ok(())
+                }
+            })
+        };
+        if let Err(f) = result {
+            self.ledger.fail(f, self.gate);
+            return false;
+        }
+        true
+    }
     fn before(&mut self, call: SamplerCall) -> bool {
         let a = (self.clock)();
         if self.ledger.entries.len() == CAP {
@@ -169,13 +230,13 @@ impl<F: FnMut() -> Option<Anchor>> SamplerObserver for Observer<'_, F> {
         let i = index.expect("checked pending index");
         // Raw return owned BEFORE the potentially failing post-clock callback.
         self.ledger.entries[i].raw = Some(raw);
+        if raw.status != 0 {
+            self.ledger.fail(Fault::Native(raw.status), self.gate);
+        }
         let a = (self.clock)();
         self.ledger.entries[i].after = a;
         self.ledger.pending = None;
         let checked = self.ledger.check(a);
-        if raw.status != 0 {
-            self.ledger.fail(Fault::Native(raw.status), self.gate);
-        }
         if let Err(f) = checked {
             self.ledger.fail(f, self.gate);
         }

@@ -8,6 +8,14 @@ fn observer_stopped() -> Failure {
     Failure::new(Reason::QueryFailed, "NVML observed call lane stopped")
 }
 impl<'a, O: SamplerObserver> CallGuard<'a, O> {
+    fn file_check(&mut self, stage: crate::runtime_file::Stage) -> bool {
+        if self.halted || !self.observer.file_check(stage) {
+            self.halted = true;
+            false
+        } else {
+            true
+        }
+    }
     pub(super) fn new(observer: &'a mut O) -> Self {
         Self {
             observer,
@@ -34,32 +42,52 @@ impl<'a, O: SamplerObserver> CallGuard<'a, O> {
     }
 }
 impl Session {
+    #[allow(clippy::result_large_err)] // Return original library/file owner without error-path boxing.
     pub(super) fn open_observed<O: SamplerObserver>(
         guard: &mut CallGuard<'_, O>,
-    ) -> Result<Self, Failure> {
-        let (library, path) = Self::load()?;
-        Self::initialize_observed(library, path, guard)
+    ) -> Result<Self, OpenFailure> {
+        Self::initialize_retained(Startup::load(guard)?, guard)
     }
+    #[cfg(test)]
+    #[allow(clippy::result_large_err)] // Exercise the same inline retained-owner API as production.
     fn initialize_observed<O: SamplerObserver>(
         library: Symbols,
         path: PathBuf,
         guard: &mut CallGuard<'_, O>,
-    ) -> Result<Self, Failure> {
+    ) -> Result<Self, OpenFailure> {
+        Self::initialize_retained(Startup::from_symbols(library, path), guard)
+    }
+    #[allow(clippy::result_large_err)] // Keep original pre-init library/file owners inline.
+    fn initialize_retained<O: SamplerObserver>(
+        startup: Startup,
+        guard: &mut CallGuard<'_, O>,
+    ) -> Result<Self, OpenFailure> {
+        let mut startup = std::mem::ManuallyDrop::new(startup);
         // SAFETY: exact existing init/shutdown ABI and retained trusted library.
-        let (init, shutdown) = unsafe {
-            (
-                library.get::<Init>(b"nvmlInit_v2\0")?,
-                library.get::<Init>(b"nvmlShutdown\0")?,
-            )
+        let resolved = (|| -> Result<(Init, Init), Failure> {
+            unsafe {
+                let library = startup.symbols.as_ref().expect("retained loaded symbols");
+                Ok((
+                    library.get::<Init>(b"nvmlInit_v2\0")?,
+                    library.get::<Init>(b"nvmlShutdown\0")?,
+                ))
+            }
+        })();
+        let (init, shutdown) = match resolved {
+            Ok(v) => v,
+            Err(f) => return Err(Startup::failed(startup, f)),
         };
-        guard.before(SamplerCall::Initialize)?;
+        if let Err(f) = guard.before(SamplerCall::Initialize) {
+            return Err(Startup::failed(startup, f));
+        }
         let status = unsafe { init() };
+        startup.initialization = Some(status);
         if status == 0 {
             // Even observer unwind cannot silently call shutdown. Explicit
             // failure ownership or the selected owner is transferred below.
             let session = std::mem::ManuallyDrop::new(Self {
-                library,
-                path,
+                library: startup.symbols.take().expect("retained library"),
+                path: std::mem::take(&mut startup.path),
                 shutdown,
                 closed: false,
             });
@@ -67,8 +95,10 @@ impl Session {
             Ok(std::mem::ManuallyDrop::into_inner(session))
         } else {
             guard.returned(SamplerCall::Initialize, status, SamplerOutput::None);
-            check(status, b"nvmlInit_v2")?;
-            unreachable!()
+            Err(Startup::failed(
+                startup,
+                Failure::vendor(status, "nvmlInit_v2"),
+            ))
         }
     }
     #[allow(clippy::result_large_err)]

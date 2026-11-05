@@ -42,6 +42,15 @@ pub struct Outcome {
     native: NativeOwner,
 }
 impl Outcome {
+    pub fn runtime_file(&self) -> Option<&autotune_probe::runtime_file::windows::Image> {
+        self.native.runtime_file()
+    }
+    pub fn runtime_load_error(&self) -> Option<&autotune_probe::nvml::RuntimeLoadError> {
+        self.native.load_error()
+    }
+    pub fn initialization_status(&self) -> Option<i32> {
+        self.native.initialization()
+    }
     /// Child orderly-completion status only, never qualification or GPU fence.
     /// Requires the complete bounded export to have been handed to the queue.
     pub fn exit_code(&self) -> i32 {
@@ -219,7 +228,7 @@ pub unsafe fn execute(mut context: Context<Bound>) -> Result<Outcome, EntryFailu
         export_error: None,
         delivery: None,
         delivery_error: None,
-        native: NativeOwner::Released,
+        native: NativeOwner::Released(Default::default()),
     };
     run(&mut out);
     deliver(&mut out);

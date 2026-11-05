@@ -407,6 +407,7 @@ fn retained_selection_failure_keeps_initialized_owner_until_one_explicit_shutdow
             let mut retained = super::super::SamplerOpenFailure {
                 failure,
                 session: Some(session),
+                startup: None,
             };
             assert!(retained.initialized());
             assert_eq!(retained.shutdown(), Some(status));
@@ -1232,9 +1233,203 @@ fn opened(watch: &mut Watch) -> Session {
     )
     .unwrap()
 }
+struct CountedOwner(std::rc::Rc<std::cell::Cell<usize>>);
+impl Drop for CountedOwner {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() + 1);
+    }
+}
+fn owned_symbols(drops: &std::rc::Rc<std::cell::Cell<usize>>) -> Symbols {
+    Symbols::OwnedFake {
+        resolve,
+        _owner: Box::new(CountedOwner(drops.clone())),
+    }
+}
+#[test]
+fn observed_pre_init_failures_keep_original_symbol_owner_without_shutdown() {
+    for mode in 0..3 {
+        reset();
+        let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut watch = Watch::default();
+        if mode == 0 {
+            watch.stop_before = Some(0);
+        } else {
+            SCRIPT.with(|s| {
+                s.borrow_mut().missing = Some(if mode == 1 {
+                    "nvmlInit_v2"
+                } else {
+                    "nvmlShutdown"
+                })
+            });
+        }
+        let err = Session::initialize_observed(
+            owned_symbols(&drops),
+            PathBuf::from("fake-no-DLL"),
+            &mut CallGuard::new(&mut watch),
+        )
+        .err()
+        .expect("rejected startup");
+        assert!(err.startup.symbols.is_some());
+        assert_eq!(drops.get(), 0);
+        let mut failure = err.into_public();
+        assert!(!failure.initialized());
+        assert_eq!(failure.initialization_status(), None);
+        assert!(failure.runtime_file().is_none());
+        assert!(!failure.startup_library_retained());
+        assert_eq!(failure.shutdown(), None);
+        assert_eq!(drops.get(), 0);
+        SCRIPT.with(|s| assert!(s.borrow().calls.is_empty()));
+        drop(failure);
+        assert_eq!(drops.get(), 1);
+        SCRIPT.with(|s| assert!(s.borrow().calls.is_empty()));
+    }
+}
+#[test]
+fn observed_init_failure_keeps_raw_status_and_owner_without_cleanup_or_retry() {
+    for status in [9, 15, 999] {
+        reset();
+        SCRIPT.with(|s| s.borrow_mut().init_status = status);
+        let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut watch = Watch {
+            reject_return: Some(0),
+            ..Watch::default()
+        };
+        let err = Session::initialize_observed(
+            owned_symbols(&drops),
+            PathBuf::from("fake-no-DLL"),
+            &mut CallGuard::new(&mut watch),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(drops.get(), 0);
+        let mut failure = err.into_public();
+        assert_eq!(failure.failure.vendor_status, Some(status));
+        assert_eq!(failure.initialization_status(), Some(status));
+        assert_eq!(watch.returns, [(SamplerCall::Initialize, status)]);
+        assert!(!failure.initialized());
+        assert_eq!(failure.shutdown(), None);
+        assert_eq!(failure.shutdown(), None);
+        let facts = failure.take_release_facts();
+        assert_eq!(facts.initialization, Some(status));
+        assert!(facts.file.is_none());
+        assert!(facts.load_error.is_none());
+        assert_eq!(drops.get(), 0);
+        SCRIPT.with(|s| assert_eq!(s.borrow().calls, ["nvmlInit_v2"]));
+        drop(failure);
+        assert_eq!(drops.get(), 1);
+        SCRIPT.with(|s| assert_eq!(s.borrow().calls, ["nvmlInit_v2"]));
+    }
+}
+#[test]
+fn observed_post_init_stop_retains_owner_until_one_explicit_shutdown() {
+    reset();
+    let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut watch = Watch {
+        reject_return: Some(0),
+        ..Watch::default()
+    };
+    let session = Session::initialize_observed(
+        owned_symbols(&drops),
+        PathBuf::from("fake-no-DLL"),
+        &mut CallGuard::new(&mut watch),
+    )
+    .unwrap();
+    let (session, failure) = selected(session, &mut watch).err().unwrap();
+    let mut retained = super::super::SamplerOpenFailure {
+        failure,
+        session: Some(session),
+        startup: None,
+    };
+    assert_eq!(drops.get(), 0);
+    assert!(retained.initialized());
+    assert_eq!(retained.initialization_status(), Some(0));
+    assert!(retained.runtime_file().is_none());
+    SCRIPT.with(|s| assert_eq!(s.borrow().calls, ["nvmlInit_v2"]));
+    assert_eq!(retained.shutdown(), Some(0));
+    assert_eq!(retained.shutdown(), None);
+    let facts = retained.take_release_facts();
+    assert_eq!(facts.initialization, Some(0));
+    assert!(facts.file.is_none());
+    assert_eq!(drops.get(), 0);
+    drop(retained);
+    assert_eq!(drops.get(), 1);
+    SCRIPT.with(|s| assert_eq!(s.borrow().calls, ["nvmlInit_v2", "nvmlShutdown"]));
+}
+#[test]
+fn observed_init_return_unwind_never_drops_library_or_calls_shutdown() {
+    for status in [0, 9] {
+        reset();
+        SCRIPT.with(|s| s.borrow_mut().init_status = status);
+        let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+        struct PanicAfter {
+            raw: std::rc::Rc<std::cell::Cell<Option<SamplerReturn>>>,
+        }
+        impl SamplerObserver for PanicAfter {
+            fn before(&mut self, _: SamplerCall) -> bool {
+                true
+            }
+            fn returned(&mut self, _: SamplerCall, raw: SamplerReturn) -> bool {
+                self.raw.set(Some(raw));
+                panic!("post-init observer");
+            }
+        }
+        let raw = std::rc::Rc::new(std::cell::Cell::new(None));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut observer = PanicAfter { raw: raw.clone() };
+            let _owner = Session::initialize_observed(
+                owned_symbols(&drops),
+                PathBuf::from("fake-no-DLL"),
+                &mut CallGuard::new(&mut observer),
+            );
+        }));
+        assert!(result.is_err());
+        assert_eq!(raw.get().unwrap().status, status);
+        assert_eq!(drops.get(), 0);
+        SCRIPT.with(|s| assert_eq!(s.borrow().calls, ["nvmlInit_v2"]));
+    }
+}
+#[test]
+fn observed_file_stop_is_sticky_and_prevents_first_init_call() {
+    reset();
+    let drops = std::rc::Rc::new(std::cell::Cell::new(0));
+    struct FileStop {
+        checks: usize,
+    }
+    impl SamplerObserver for FileStop {
+        fn file_check(&mut self, _: crate::runtime_file::Stage) -> bool {
+            self.checks += 1;
+            false
+        }
+        fn before(&mut self, _: SamplerCall) -> bool {
+            panic!("stopped file lane cannot enter init observer");
+        }
+        fn returned(&mut self, _: SamplerCall, _: SamplerReturn) -> bool {
+            panic!("no native return");
+        }
+    }
+    let mut watch = FileStop { checks: 0 };
+    let mut guard = CallGuard::new(&mut watch);
+    assert!(!guard.file_check(crate::runtime_file::Stage::MetadataBefore));
+    assert!(!guard.file_check(crate::runtime_file::Stage::MetadataAfter));
+    let err = Session::initialize_observed(
+        owned_symbols(&drops),
+        PathBuf::from("fake-no-DLL"),
+        &mut guard,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(watch.checks, 1);
+    assert_eq!(drops.get(), 0);
+    assert!(err.startup.symbols.is_some());
+    SCRIPT.with(|s| assert!(s.borrow().calls.is_empty()));
+    drop(err);
+    assert_eq!(drops.get(), 1);
+}
+#[allow(clippy::result_large_err)] // Retained production session owner, not an error-path allocation.
 fn selected(session: Session, watch: &mut Watch) -> Result<SelectedSession, (Session, Failure)> {
     selected_as(session, "fixture", "0000:01:00.0", watch)
 }
+#[allow(clippy::result_large_err)] // Retained production session owner, not an error-path allocation.
 fn selected_as(
     session: Session,
     uuid: &str,
@@ -1359,6 +1554,7 @@ fn observed_stop_before_abi_call_prevents_successor_and_retains_owner() {
     let mut retained = super::super::SamplerOpenFailure {
         failure,
         session: Some(session),
+        startup: None,
     };
     assert!(retained.initialized());
     assert_eq!(retained.shutdown(), Some(0));
@@ -1398,6 +1594,7 @@ fn observed_stop_at_return_rejects_a_completed_selection() {
     let mut retained = super::super::SamplerOpenFailure {
         failure,
         session: Some(session),
+        startup: None,
     };
     assert_eq!(retained.shutdown(), Some(0));
 }
@@ -1420,6 +1617,7 @@ fn observed_native_status_failure_prevents_successor_selection_calls() {
         let mut retained = super::super::SamplerOpenFailure {
             failure,
             session: Some(session),
+            startup: None,
         };
         assert_eq!(retained.shutdown(), Some(0));
     }
@@ -1458,6 +1656,7 @@ fn observed_identity_requires_the_same_exact_unique_pair() {
         let mut retained = super::super::SamplerOpenFailure {
             failure,
             session: Some(session),
+            startup: None,
         };
         assert_eq!(retained.shutdown(), Some(0));
     }

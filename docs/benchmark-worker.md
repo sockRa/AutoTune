@@ -2055,7 +2055,7 @@ new vendor teardown/retry or NativeAdmission issuer is introduced.
 This records file bytes and an OS-reported module-path/file relationship. It is
 not a hash of mapped image pages, attestation of an already loaded image,
 authentication of a remote claim, consent or runtime qualification. The NVML
-loader is not yet connected to this file owner. Complete NVML/build/version and
+continuation below connects its observed loader to the same file owner. Complete runtime/build/version and
 effective child-option evidence, parent references/peer/consent admission,
 bounded aggregate raw export and real qualification remain open. No fixed main,
 native DLL/file observation, process/pipe or GPU execution was performed here.
@@ -2067,3 +2067,53 @@ stop/pending, fixed history overflow and exhausted prepaid budget. Initial
 unwind-test counter expectation was corrected to compare the existing shared
 fake counter baseline; no CUDA call had occurred. Exact source-bound checks and
 publication are recorded in ROADMAP.md. Actions remains removed/disabled.
+
+### Observed NVML DLL file and failed-start ownership — 2026-11-05
+
+`NvmlSampler::open_observed` now uses the shared fixed-system-file measurement
+before loading `nvml.dll`, retaining the full file hash/identity and validating
+the loaded module's reported path/file relationship. It uses the same bounded
+scratch, read/path limits and restricted search flags as the CUDA continuation.
+The legacy unobserved probe/open APIs keep their historical behavior and do not
+gain file proof from their path/version strings.
+
+The observed path returns original pre-init symbols/library/file ownership on
+stopped startup, missing init/shutdown exports and failed init. Loader errors
+and the actual init status are retained separately before post-call observation.
+Failed init does not establish an initialized session or permit shutdown/retry.
+A successful init whose observer rejects its return still retains the initialized
+session for supervised cleanup. ManuallyDrop locals prevent observer unwind
+from silently invoking shutdown or unloading the retained library. Ordinary
+caller Drop remains a possible release operation; the benchmark entries keep
+these owners wrapped and release only through their existing supervised path.
+
+The NVML ledger prepays file-check history and 512 KiB path/scratch allowance
+before loading, checks its original continuous clock/deadline and stopped lane,
+and preserves fixed overflow/first fault. A file checkpoint cannot interleave an
+unreturned NVML ABI call. It neither enters nor clears the outer startup/read
+group's pending state. Observer unwind closes admission without clearing unknown
+pending. A nonzero ABI status is now made sticky before its post-clock callback,
+so a later unwind cannot replace the already retained native failure.
+
+`ReleaseFacts` transfers the file owner, original loader error and init status
+across the entries' explicit native-owner release. Both pre-manifest and pilot
+sampler Outcomes expose them afterward; repeating release cannot erase them.
+These transferred facts are not an observation that FreeLibrary succeeded, an
+empty-job result, GPU quiescence or mapped-page attestation.
+
+Five ABI/ownership-fake regressions cover pre-init stop/missing exports, failed
+init, successful-init post-return rejection, observer unwind and sticky file
+stop. Five portable ledger regressions cover full prepaid memory pressure,
+continuous original time, outer pending, bad clocks/expiry/stop, unreturned ABI,
+fixed overflow and first-native-fault retention across unwind. Fakes supply no
+DLL file proof. Full source-bound verification/publication is in ROADMAP.md.
+Actual filesystem/DLL loading, entry/threads/process/pipe/GPU execution and
+hardware qualification were not performed.
+
+The file/loader owners and file-clock history are retained in memory; the current
+canonical starting response does not yet include these new sections. A complete
+bound runtime/environment bundle and bounded aggregate raw export/reader are
+still required, together with effective child options, parent peer/image/consent
+facts, fresh safety/re-entry/Start and workload admission. Application-ledger
+reservations do not qualify OS commit or the aggregate metadata/session limits.
+No workload issuer/main or release-gate completion follows; E3 remains partial.

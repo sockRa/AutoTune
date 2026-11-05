@@ -86,6 +86,32 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 observed NVML DLL file/failure ownership: open_observed now uses the
+  shared retained fixed-system-file hash/identity and reported-module binding,
+  under prepaid original-clock/deadline/stop checkpoints. Early stop, missing
+  exports and failed init preserve original symbols/library/file and actual
+  loader/init results. Successful init still retains its Session on post-return
+  rejection. ManuallyDrop locals prevent observer unwind from silently unloading
+  or calling shutdown. The legacy unobserved probe/open path remains separate.
+  ReleaseFacts carries file/loader/init facts across explicit native-owner release
+  into both sampler Outcomes; repeated release cannot overwrite them. It is not
+  observed successful FreeLibrary/GPU quiescence. NVML file history is prepaid,
+  bounded and overflow-retaining; it preserves the outer group's pending state
+  and prohibits interleaving an unreturned ABI. Observer unwind closes admission;
+  nonzero native status becomes sticky before post-clock callbacks. Five new ABI/
+  owner-fake and five ledger CPU cases cover retained/drop-counted owners, failed
+  init/no shutdown/retry, clock/stop/expiry, memory pressure, overflow, outer
+  pending and unwind. Initial isize module-handle cast and test borrow lifetimes
+  were corrected; inline retained-owner size lints have explicit local rationale
+  rather than error-path boxing. Final source-bound evidence: ROADMAP.md. No
+  independent-agent review, actual file/DLL/entry/process/pipe/GPU execution or
+  qualification. New file/loader/history data remains in memory: canonical
+  starting response, bounded runtime/environment bundle, aggregate export/reader
+  and aggregate resource qualification still need composition. Effective child
+  options, full parent peer/image/consent chain, fresh safety/Start/re-entry and
+  workload issuer/main remain open. E3 partial/Gate B unmet; full automatic
+  benchmark/search/validation remains the goal and Actions stays removed/disabled.
+
 - 2026-11-05 retained CUDA DLL file evidence: the actual CUDA startup now opens
   and retains the fixed OS system DLL file before load, streams its complete
   SHA-256 through fixed 64 KiB scratch, verifies before/after metadata and binds

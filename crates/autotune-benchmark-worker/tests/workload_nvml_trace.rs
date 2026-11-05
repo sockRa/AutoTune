@@ -8,6 +8,191 @@ use autotune_probe::nvml::{SamplerCall, SamplerObserver, SamplerOutput, SamplerR
 const FREQUENCY: u64 = 1_000_000_000;
 const SURFACE: usize = 1 + 1 + 1024 * 3 + 3;
 
+struct FileBytes {
+    position: usize,
+}
+impl autotune_probe::runtime_file::Source for FileBytes {
+    fn identity(
+        &mut self,
+    ) -> autotune_probe::runtime_file::Io<autotune_probe::runtime_file::Identity> {
+        Ok(autotune_probe::runtime_file::Identity {
+            volume_serial: 1,
+            index: 2,
+            bytes: 3,
+            last_write: 4,
+            attributes: 0x20,
+            file_type: 1,
+            file_type_error: None,
+        })
+    }
+    fn read(&mut self, buffer: &mut [u8]) -> autotune_probe::runtime_file::Io<usize> {
+        let n = (3 - self.position).min(buffer.len());
+        buffer[..n].copy_from_slice(&b"abc"[self.position..self.position + n]);
+        self.position += n;
+        Ok(n)
+    }
+}
+#[test]
+fn file_checks_and_native_returns_share_original_clock_without_clearing_outer_pending() {
+    let b = budget();
+    let gate = NativeAdmission::default();
+    let mut l = ledger(10_000_000_000, &b);
+    let used = b.used();
+    let _pressure = b.reserve(32 * 1024 * 1024 - used).unwrap();
+    let baseline = b.used();
+    gate.begin().unwrap();
+    let mut n = 1000;
+    let mut observer = l.observer(&gate, || {
+        n += 1000;
+        Some(a(n))
+    });
+    let mut report = autotune_probe::runtime_file::Report::default();
+    report.measure(&mut FileBytes { position: 0 }, |s| observer.file_check(s));
+    assert!(report.complete());
+    assert!(gate.pending());
+    assert!(observer.before(SamplerCall::Initialize));
+    assert!(observer.returned(SamplerCall::Initialize, ok(SamplerOutput::None)));
+    drop(observer);
+    assert_eq!(l.file_checks().len(), 8);
+    assert_eq!(l.entries()[0].before, Some(a(10_000)));
+    assert_eq!(l.entries()[0].after, Some(a(11_000)));
+    assert_eq!(l.fault(), None);
+    assert_eq!(b.used(), baseline);
+    assert!(!gate.stopped());
+    assert!(gate.pending());
+    gate.complete();
+    assert!(!gate.pending());
+}
+#[test]
+fn bad_file_clock_deadline_stop_and_unreturned_abi_forbid_successors() {
+    use autotune_probe::runtime_file::Stage;
+    for mode in 0..6 {
+        let b = budget();
+        let gate = NativeAdmission::default();
+        let mut l = ledger(10_000_000_000, &b);
+        assert!(l
+            .observer(&gate, || Some(a(2000)))
+            .file_check(Stage::MetadataBefore));
+        if mode == 4 {
+            gate.stop();
+        }
+        if mode == 5 {
+            assert!(l
+                .observer(&gate, || Some(a(2500)))
+                .before(SamplerCall::Count));
+        }
+        let clock = match mode {
+            0 => None,
+            1 => Some(a(10_000_000_000)),
+            2 => Some(a(0)),
+            3 => {
+                let mut v = a(3000);
+                v.clock_token = [9; 16];
+                Some(v)
+            }
+            _ => Some(a(3000)),
+        };
+        let mut o = l.observer(&gate, || clock);
+        assert!(!o.file_check(Stage::MetadataAfter));
+        assert!(!o.before(SamplerCall::Initialize));
+        drop(o);
+        assert_eq!(l.file_checks().last().unwrap().anchor, clock);
+        assert!(gate.stopped());
+        assert_eq!(
+            l.fault(),
+            Some(match mode {
+                0 | 2 | 3 => Fault::Clock,
+                1 => Fault::Deadline,
+                4 => Fault::Stopped,
+                _ => Fault::Protocol,
+            })
+        );
+        assert!(l.entries().last().unwrap().raw.is_none());
+    }
+}
+#[test]
+fn file_history_is_prepaid_keeps_first_overflow_and_never_grows() {
+    use autotune_probe::runtime_file::{Stage, MAX_CHECKS};
+    let b = budget();
+    let gate = NativeAdmission::default();
+    let mut l = ledger(10_000_000_000, &b);
+    let used = b.used();
+    let mut n = 1000;
+    let mut o = l.observer(&gate, || {
+        n += 100;
+        Some(a(n))
+    });
+    for index in 0..MAX_CHECKS {
+        assert!(o.file_check(Stage::ReadBefore(index as u32)));
+    }
+    assert!(!o.file_check(Stage::FinalMetadataAfter));
+    drop(o);
+    let overflow = l.file_overflow();
+    assert!(!l
+        .observer(&gate, || Some(a(1_000_000)))
+        .file_check(Stage::LibraryLoadBefore));
+    assert_eq!(l.file_checks().len(), MAX_CHECKS);
+    assert_eq!(l.file_checks()[0].anchor, Some(a(1100)));
+    assert_eq!(l.file_overflow(), overflow);
+    assert_eq!(b.used(), used);
+    assert_eq!(l.fault(), Some(Fault::Capacity));
+    assert!(gate.stopped());
+}
+#[test]
+fn file_post_read_unwind_keeps_raw_progress_and_closes_unknown_outer_call() {
+    let b = budget();
+    let gate = NativeAdmission::default();
+    gate.begin().unwrap();
+    let mut l = ledger(10_000_000_000, &b);
+    let mut report = autotune_probe::runtime_file::Report::default();
+    let mut n = 0;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut o = l.observer(&gate, || {
+            let i = n;
+            n += 1;
+            if i == 3 {
+                panic!("post-read clock");
+            }
+            Some(a((n * 1000 + 1000) as u64))
+        });
+        report.measure(&mut FileBytes { position: 0 }, |s| o.file_check(s));
+    }));
+    assert!(result.is_err());
+    assert_eq!(report.last_read, Some(Ok(3)));
+    assert_eq!(report.sha256, None);
+    assert!(gate.stopped());
+    assert!(gate.pending());
+    assert_eq!(l.fault(), Some(Fault::Protocol));
+    assert!(l.entries().is_empty());
+}
+#[test]
+fn failed_native_return_is_first_fault_even_when_post_clock_unwinds() {
+    let b = budget();
+    let gate = NativeAdmission::default();
+    let mut l = ledger(10_000_000_000, &b);
+    let mut n = 0;
+    let raw = SamplerReturn {
+        status: -7,
+        output: SamplerOutput::Count(u32::MAX),
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut o = l.observer(&gate, || {
+            n += 1;
+            if n == 2 {
+                panic!("post-native clock");
+            }
+            Some(a(2000))
+        });
+        assert!(o.before(SamplerCall::Count));
+        o.returned(SamplerCall::Count, raw);
+    }));
+    assert!(result.is_err());
+    assert_eq!(l.entries()[0].raw, Some(raw));
+    assert_eq!(l.entries()[0].after, None);
+    assert_eq!(l.fault(), Some(Fault::Native(-7)));
+    assert!(gate.stopped());
+}
+
 fn a(ns: u64) -> Anchor {
     Anchor {
         clock_token: [3; 16],

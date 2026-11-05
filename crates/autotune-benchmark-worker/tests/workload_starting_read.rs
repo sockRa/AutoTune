@@ -277,6 +277,7 @@ fn missing_values_and_failed_native_facts_stay_reported_without_success_inferenc
             output: SamplerOutput::Count(u32::MAX)
         }
     ));
+    drop(observer);
     let r = build(
         &f,
         None,
@@ -624,6 +625,7 @@ fn largest_ledger_export_fits_reader_representation_and_budget() {
             }
         ));
     }
+    drop(observer);
     let r = build(&f, None, None, None, ControlFacts::default()).unwrap();
     assert_eq!(read(&f, &r).summary().native_calls, 3077);
 }

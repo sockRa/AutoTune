@@ -35,6 +35,10 @@ pub struct SamplerReturn {
 /// post-call clock. False from either hook permanently stops this invocation;
 /// no successor native call is issued. No callback is made for an uncalled ABI.
 pub trait SamplerObserver {
+    /// Host file/loader checkpoint; not an NVML ABI call or execution permit.
+    fn file_check(&mut self, _: crate::runtime_file::Stage) -> bool {
+        true
+    }
     fn before(&mut self, call: SamplerCall) -> bool;
     fn returned(&mut self, call: SamplerCall, raw: SamplerReturn) -> bool;
 }

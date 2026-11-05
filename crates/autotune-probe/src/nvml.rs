@@ -88,14 +88,86 @@ pub struct NvmlSampler {
     #[cfg(windows)]
     selected: windows::SelectedSession,
 }
-/// Failed startup with any initialized session still owned. Callers supervise
-/// explicit shutdown on the original native lane; Drop may otherwise call it.
+/// Failed startup retaining observed pre-init file/library owners or a successful
+/// initialized session. Callers retain this owner and supervise explicit release;
+/// ordinary Drop may unload a library or shut down an initialized session and is
+/// not an observed cleanup result. Failed init never authorizes shutdown/retry.
 pub struct SamplerOpenFailure {
     pub failure: Failure,
     #[cfg(windows)]
     session: Option<windows::Session>,
+    #[cfg(windows)]
+    startup: Option<windows::Startup>,
+}
+#[cfg(windows)]
+pub type RuntimeLoadError = libloading::Error;
+/// Transferred diagnostics, not an observation of successful DLL release.
+#[cfg(windows)]
+#[derive(Default)]
+pub struct ReleaseFacts {
+    pub file: Option<crate::runtime_file::windows::Image>,
+    pub load_error: Option<RuntimeLoadError>,
+    pub initialization: Option<i32>,
 }
 impl SamplerOpenFailure {
+    #[cfg(windows)]
+    pub fn take_release_facts(&mut self) -> ReleaseFacts {
+        let initialization = self.initialization_status();
+        let file = self.take_runtime_file();
+        let load_error = self
+            .startup
+            .as_mut()
+            .and_then(windows::Startup::take_load_error);
+        ReleaseFacts {
+            file,
+            load_error,
+            initialization,
+        }
+    }
+    #[cfg(windows)]
+    pub fn runtime_file(&self) -> Option<&crate::runtime_file::windows::Image> {
+        self.session
+            .as_ref()
+            .and_then(windows::Session::runtime_file)
+            .or_else(|| {
+                self.startup
+                    .as_ref()
+                    .and_then(windows::Startup::runtime_file)
+            })
+    }
+    /// Transfer only as part of supervised owner release. Retain the returned
+    /// file owner across library release; no vendor operation is invoked here.
+    #[cfg(windows)]
+    pub fn take_runtime_file(&mut self) -> Option<crate::runtime_file::windows::Image> {
+        self.session
+            .as_mut()
+            .and_then(windows::Session::take_runtime_file)
+            .or_else(|| {
+                self.startup
+                    .as_mut()
+                    .and_then(windows::Startup::take_runtime_file)
+            })
+    }
+    #[cfg(windows)]
+    pub fn load_error(&self) -> Option<&libloading::Error> {
+        self.startup.as_ref().and_then(windows::Startup::load_error)
+    }
+    #[cfg(windows)]
+    pub fn initialization_status(&self) -> Option<i32> {
+        if self.session.is_some() {
+            Some(0)
+        } else {
+            self.startup
+                .as_ref()
+                .and_then(windows::Startup::initialization)
+        }
+    }
+    #[cfg(windows)]
+    pub fn startup_library_retained(&self) -> bool {
+        self.startup
+            .as_ref()
+            .is_some_and(windows::Startup::library_retained)
+    }
     pub fn shutdown(&mut self) -> Option<i32> {
         #[cfg(windows)]
         {
@@ -128,6 +200,23 @@ pub struct SamplerInfo {
 }
 
 impl NvmlSampler {
+    #[cfg(windows)]
+    pub fn take_release_facts(&mut self) -> ReleaseFacts {
+        ReleaseFacts {
+            file: self.take_runtime_file(),
+            load_error: None,
+            initialization: Some(0),
+        }
+    }
+    #[cfg(windows)]
+    pub fn runtime_file(&self) -> Option<&crate::runtime_file::windows::Image> {
+        self.selected.runtime_file()
+    }
+    /// Transfer file ownership for a separately supervised native release.
+    #[cfg(windows)]
+    pub fn take_runtime_file(&mut self) -> Option<crate::runtime_file::windows::Image> {
+        self.selected.take_runtime_file()
+    }
     /// Observed fixed read-only startup. Successful init remains owned even if
     /// its post-call observer closes the gate. Callers supervise explicit cleanup.
     #[allow(clippy::result_large_err)]
@@ -139,17 +228,14 @@ impl NvmlSampler {
         #[cfg(windows)]
         {
             let mut guard = windows::CallGuard::new(observer);
-            let session = windows::Session::open_observed(&mut guard).map_err(|failure| {
-                SamplerOpenFailure {
-                    failure,
-                    session: None,
-                }
-            })?;
+            let session = windows::Session::open_observed(&mut guard)
+                .map_err(windows::OpenFailure::into_public)?;
             match session.select_observed(uuid, pci_bus_id, &mut guard) {
                 Ok(selected) => Ok(Self { selected }),
                 Err((session, failure)) => Err(SamplerOpenFailure {
                     failure,
                     session: Some(session),
+                    startup: None,
                 }),
             }
         }
@@ -174,12 +260,14 @@ impl NvmlSampler {
             let session = windows::Session::open().map_err(|failure| SamplerOpenFailure {
                 failure,
                 session: None,
+                startup: None,
             })?;
             match session.select_retained(uuid, pci_bus_id) {
                 Ok(selected) => Ok(Self { selected }),
                 Err((session, failure)) => Err(SamplerOpenFailure {
                     failure,
                     session: Some(session),
+                    startup: None,
                 }),
             }
         }
@@ -405,20 +493,45 @@ mod windows {
 
     // Fake symbol sources exist only in unit-test builds; production always owns
     // the trusted library loaded by Session::open.
+    #[allow(clippy::large_enum_variant)] // Retain bounded owners inline, without post-failure allocation.
     enum Symbols {
-        Native(Library),
+        Native {
+            library: Library,
+            image: Option<crate::runtime_file::windows::Image>,
+        },
         #[cfg(test)]
         Fake(fn(&[u8]) -> Option<Box<dyn std::any::Any>>),
+        #[cfg(test)]
+        OwnedFake {
+            resolve: fn(&[u8]) -> Option<Box<dyn std::any::Any>>,
+            _owner: Box<dyn std::any::Any>,
+        },
     }
 
     impl Symbols {
+        fn runtime_file(&self) -> Option<&crate::runtime_file::windows::Image> {
+            match self {
+                Self::Native { image, .. } => image.as_ref(),
+                #[cfg(test)]
+                Self::Fake(_) | Self::OwnedFake { .. } => None,
+            }
+        }
+        fn take_runtime_file(&mut self) -> Option<crate::runtime_file::windows::Image> {
+            match self {
+                Self::Native { image, .. } => image.take(),
+                #[cfg(test)]
+                Self::Fake(_) | Self::OwnedFake { .. } => None,
+            }
+        }
         // SAFETY: callers supply the documented ABI for the named getter.
         unsafe fn get<T: Copy + 'static>(&self, name: &[u8]) -> Result<T, Failure> {
             let missing = || Failure::new(Reason::SymbolMissing, symbol_name(name));
             match self {
-                Self::Native(library) => library.get::<T>(name).map(|s| *s).map_err(|_| missing()),
+                Self::Native { library, .. } => {
+                    library.get::<T>(name).map(|s| *s).map_err(|_| missing())
+                }
                 #[cfg(test)]
-                Self::Fake(resolve) => resolve(name)
+                Self::Fake(resolve) | Self::OwnedFake { resolve, .. } => resolve(name)
                     .and_then(|s| s.downcast::<T>().ok())
                     .map(|s| *s)
                     .ok_or_else(missing),
@@ -441,6 +554,12 @@ mod windows {
     }
 
     impl SelectedSession {
+        pub(super) fn runtime_file(&self) -> Option<&crate::runtime_file::windows::Image> {
+            self.session.runtime_file()
+        }
+        pub(super) fn take_runtime_file(&mut self) -> Option<crate::runtime_file::windows::Image> {
+            self.session.take_runtime_file()
+        }
         pub(super) fn shutdown(&mut self) -> Option<i32> {
             self.session.close()
         }
@@ -579,6 +698,12 @@ mod windows {
     }
 
     impl Session {
+        pub(super) fn runtime_file(&self) -> Option<&crate::runtime_file::windows::Image> {
+            self.library.runtime_file()
+        }
+        pub(super) fn take_runtime_file(&mut self) -> Option<crate::runtime_file::windows::Image> {
+            self.library.take_runtime_file()
+        }
         pub fn open() -> Result<Self, Failure> {
             let (library, path) = Self::load()?;
             Self::initialize(library, path)
@@ -617,7 +742,13 @@ mod windows {
                         format!("{}: {error}", path.display()),
                     )
                 })?;
-            Ok((Symbols::Native(library), path))
+            Ok((
+                Symbols::Native {
+                    library,
+                    image: None,
+                },
+                path,
+            ))
         }
 
         fn initialize(library: Symbols, path: PathBuf) -> Result<Self, Failure> {
@@ -1176,6 +1307,7 @@ mod windows {
     }
 
     include!("nvml_guarded.rs");
+    include!("nvml_loader.rs");
     #[cfg(test)]
     mod tests {
         use super::*;
