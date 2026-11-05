@@ -86,6 +86,41 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-04 worker entry/finalization composition: the opt-in worker_entry::entry
+  now adopts parsed fixed worker Arguments once through Context, starts the split
+  independent control owner and freezes bootstrap setup before composing actual
+  observed CUDA preparation, Ready/encoded Start, a required future admission
+  callback, producer/failure-vector export, explicit cleanup, control completion,
+  bounded output/control drain and separate I/O cancellation/completion. No main
+  invokes it and no NativeAdmission issuer is added. Unsafe exact setup consent
+  remains external and must hold before invocation; the callback after Start
+  cannot authorize earlier setup retroactively. Outcome retains Context, startup
+  and preparation failures, raw split/sender/event-clone causes, rejected owners,
+  admission reason, control report, native owners and finalization/I/O evidence.
+  A continuous ClockChain spans all main-thread captures without a new epoch;
+  WindowsClock clone copies immutable token/frequency only. worker_finish::State
+  uses the already frozen producer exit or original Shared window and cannot
+  manufacture new grace. Cleanup result/validation, completion queue receipt,
+  output/control drain, cancellation result and actual I/O-thread completion are
+  separate. Late supplemental completion cannot clear timeout, and unknown host
+  pending cannot pass completion. I/O polling observes retained JoinHandles only,
+  with no cancellation retry or blocking join. Nine CPU cases cover original
+  deadlines, truthful native/validation/I/O status, ordering, retained first errors,
+  budget/binding rejection, continuous-clock faults and actual injected-producer
+  cleanup. A tenth feature-library test forces entry monomorphization/linking
+  through black_box of its function pointer and NEVER invokes it. Initial Result
+  API and test-module-placement errors were fixed; review also distinguished
+  missing deadline from missing clock. Final source-bound evidence/publication:
+  ROADMAP.md; earlier verification attempts remain separate. No real entry,
+  endpoint adoption, control/I/O threads, DLL/native/GPU execution or independent
+  review. Denial/failure before producer Start retains the prepared or partial
+  native owner and reports absent cleanup; speculative pre-Start teardown is not
+  introduced or qualified. Before wiring a fixed executable, complete parent
+  facts/consent and pre-setup authority, fresh Start/safety/re-entry and admission
+  issuance, pre-Start resource disposition, aggregate raw export and real process/
+  native qualification. Full automatic benchmark/search/validation remains the
+  goal; E3 partial/Gate B unmet. Actions remains removed and disabled.
+
 - 2026-11-04 original shared stop/drain and concrete receive: Shared now retains
   the actual original trigger separately from its clipped raw cooperative cap.
   State, native/local stop and setup expiry publish one monotonic earliest

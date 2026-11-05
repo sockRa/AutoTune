@@ -1861,3 +1861,58 @@ final output/control/I/O drain, aggregate live export, complete parent facts and
 consent, workload admission issuance and real qualification remain unfinished.
 No real native, pipe/process or GPU execution was performed. Actions remains
 removed and disabled; verification is local.
+
+### Worker entry and original-bound finalization — 2026-11-04
+
+The opt-in Windows x64 `worker_entry::entry` composes one fixed-role Context
+adoption from parsed Arguments, independent split control, frozen setup,
+observed CUDA preparation, Ready/encoded Start, producer execution/failure-vector
+handoff, explicit teardown and bounded finalization. Its caller must supply an
+admission callback returning the still-unissued NativeAdmission. No executable
+main invokes this entry. Exact native setup consent and complete required
+pre-setup authority are unsafe caller prerequisites; the later Start callback
+cannot retroactively authorize setup. A fixed main and real qualification remain
+unfinished, alongside the parent facts/consent/admission chain.
+
+Outcome retains original Context and native/preparation failure owners, startup
+history, raw split/sender/event-clone causes, admission rejection, surplus packet,
+control handle/report and finalization/I/O observations. A sticky ClockChain
+validates every main-thread capture across entry/setup/producer/finalization and
+retains the first bad anchor or missing-clock condition. Cloning WindowsClock
+copies its immutable token/frequency, without a new frequency query or epoch.
+Valid raw anchors remain in their respective retained stage ledgers.
+
+`worker_finish::State` uses the already frozen producer exit deadline clipped by
+the independently published Shared cooperative cap. Failure paths require an
+existing original stop window; no fallback now-plus-grace is created. Missing
+original deadline stays distinct from a missing clock. Native cleanup's actual
+return and teardown validation remain separate from a completion command's
+queue result, local output drain, control-thread finish and actual I/O-thread
+finish. None proves peer receipt, durability, process/job exit or GPU quiescence.
+A failed cancellation request is retained even when the I/O thread is later
+observed finished; completion is not attributed to that request. Late thread
+completion remains supplemental and cannot clear a timeout. Unknown native host
+pending or missing/invalid cleanup prevents successful completion.
+
+Output/control drain and the subsequent I/O phase share the original deadline;
+neither starts a new window. I/O cancellation is requested explicitly once by
+this entry, then `io_completion` only observes retained JoinHandles, without
+reissuing cancellation or joining an unfinished thread. Failed/unresolved I/O
+owners remain in the returned Context. Exit code zero requires the full producer
+report count, successful cleanup/finalization and an accepted control report;
+it remains child completion only, not native qualification or baseline acceptance.
+
+Nine CPU regressions cover these contracts with actual injected-producer cleanup,
+raw failures, deadline equality, late completion, ordering, pending, resource and
+clock cases. A feature-library test forces code generation/linking of the full
+generic entry by taking its function pointer through black_box; the pointer is
+never called. Actual entry/threads/pipes/DLL/GPU execution has not been tested.
+The original fake-process matrix remains separately unapproved.
+
+Before-Start denial/failure keeps the prepared/partial native owner and reports
+cleanup absent; no speculative pre-Start teardown or physical-release claim is
+added. Required pre-Start resource disposition, the complete pre-setup parent
+facts/consent chain, fresh safety/re-entry/Start and workload admission issuance,
+fixed main, bounded aggregate raw export and real qualification remain open.
+Exact source-bound verification and publication are in ROADMAP.md. Hosted Actions
+stays removed and disabled; all current verification is local.

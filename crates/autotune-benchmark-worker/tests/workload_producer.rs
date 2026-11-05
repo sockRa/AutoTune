@@ -58,6 +58,7 @@ use std::sync::{
     Arc,
 };
 include!("support/worker_runtime.rs");
+include!("support/worker_finish.rs");
 #[derive(Default)]
 struct Stats {
     submits: AtomicUsize,

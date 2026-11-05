@@ -157,6 +157,10 @@ impl InheritedTransport {
     pub fn shutdown(&self) -> [IoObservation; 4] {
         self.transport.shutdown()
     }
+    /// Observes only retained I/O JoinHandles. No cancellation retry or join.
+    pub fn io_completion(&self) -> [bool; 4] {
+        self.transport.completion()
+    }
 }
 pub struct ControlTransport {
     port: ControlPort,

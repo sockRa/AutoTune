@@ -33,6 +33,7 @@ pub enum CaptureError {
 ///
 /// Use `clock_token()` and `qpc_frequency()` unchanged in the monitor `Binding`.
 /// The token is supplied by the caller, not generated as proof of a boot/session.
+#[derive(Clone)]
 pub struct WindowsClock {
     clock_token: [u8; 16],
     qpc_frequency: u64,

@@ -529,7 +529,7 @@ impl Transport {
                 .iter()
                 .all(|n| n.load(Ordering::Acquire) == 0)
     }
-    pub(super) fn completion(&self) -> [bool; 4] {
+    pub(crate) fn completion(&self) -> [bool; 4] {
         std::array::from_fn(|i| self.threads[i].is_finished())
     }
     /// Each result retains cancellation status and observed thread completion;
