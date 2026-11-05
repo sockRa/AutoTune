@@ -2219,10 +2219,62 @@ partial file/native/CPU failures, exact binding/deadline/digest rejection,
 malformed schema/widths/unions, maximum histories, budget release and untrusted
 source/clock claims. Source-bound final verification/publication: ROADMAP.md.
 
-Chunk transport and parent retention/assessment before Ready/Start still need
-composition; no pipe delivery is claimed here. Early startup/prepare failures
+The continuation below supplies chunk transport and parent retention; setup
+acceptance assessment and controller/main composition remain open. No executed
+pipe delivery is claimed. Early startup/prepare failures
 before a Prepared ledger exists remain separately retained and need aggregate
 export. Complete host/starting/runtime references, peer/image/process/consent,
 fresh safety/re-entry/Start, native admission/main, cross-role resource limits
 and real qualification remain open. No actual environment API, file/DLL, entry,
 thread/process/pipe/GPU invocation or hardware qualification was performed.
+
+## Worker setup delivery before Ready — 2026-11-05
+
+The worker-only `setup_chunk` message carries bounded hex segments on the existing
+ordinary FromWorker channel. Each segment binds the artifact digest, index,
+count and total bytes. Raw payload segments are at most 16 KiB, with at most
+128 segments under the unchanged 2 MiB artifact cap; encoded frames remain under
+the existing 64 KiB limit. Sampler roles, control lanes, invalid widths/hex and
+inconsistent segment geometry reject the message. Other message bytes and the
+read-only sampler protocol are unchanged.
+
+`Session::send_setup` makes one attempt, checks exact artifact/run/original
+deadline and unfinished setup, prepays scratch, and observes the original setup
+clock/control gate before and after every handoff. It uses the producer's existing
+encoder and failed-frame owner. Progress retains the artifact digest and handed
+off segment count, including post-handoff expiry. Failure closes the existing
+path; no retry, reconnect, renewed deadline or subsequent Ready is permitted.
+The actual opt-in entry calls this before announce. Original artifact and
+Prepared owners remain retained. Queue acceptance is not pipe completion.
+
+The parent Receiver consumes the existing owned RawReceived packets. One decoder
+checks the complete chunk sequence, then Ready. Before Ready it requires every
+byte, matching digest and successful strict worker_setup::Receipt reading against
+its frozen run and original raw deadline. Missing/bad/regressing clocks, deadline
+equality, stop, transport failure, gaps, duplicates, transfer replacement, corrupt
+payloads or an early Ready close reception. Partial/full payload bytes, clock
+history, per-frame digest/receipt observations and the first rejected packet or
+transport cause remain retained. The constructor prepays bounded payload/history
+storage; parent receipt allocation failure is explicit and cannot expose Ready.
+
+`ReadyDelivery` retains the strict receipt, Ready owner and observations and hands
+off the same decoder for later phase/dispatch messages. This is a delivery state,
+not setup acceptance, authenticated peer evidence, consent or native admission.
+The existing NativeAdmission still has no issuer or fixed main.
+
+Sixteen CPU regressions exercise the actual byte codecs/framer, parent receiver,
+Session, injected driver and common sequence through Ready/fixture dispatch;
+they include first-frame queue failure, late return, prequeue stop/full budget,
+run/deadline/completion mismatch, malformed protocol, hash/schema corruption,
+partial reception, clocks, role/lane rejection and parent allocation failure.
+Initial mutation fixtures used the wrong total-length prefix and were corrected;
+a redundant constant assertion was removed after warning-denied Clippy. Final
+source-bound verification/publication: ROADMAP.md. No real pipe, process, thread,
+DLL/environment API or GPU execution, independent-agent review or qualification.
+
+Reported setup consistency/required-fact assessment and complete parent
+host/starting/runtime/peer/image/process/consent/safety composition remain next.
+Failed/early preparation without a ready Session still retains its artifact/
+owners and needs separate aggregate failure export. Aggregate metadata and OS
+resources remain unqualified; byte/ledger reservations do not close those gates.
+E3 remains partial and Gate B unmet; the full automatic optimization goal remains.

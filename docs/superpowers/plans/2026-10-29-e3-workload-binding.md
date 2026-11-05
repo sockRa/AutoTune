@@ -86,6 +86,29 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 setup delivery before Ready: bounded worker-only setup_chunk frames
+  carry exact artifact digest/index/count/bytes on the producer's existing output
+  sequence. Session makes one attempt under original setup clock/control checks
+  before/after each queue handoff; exact run/deadline/unfinished-state checks,
+  retained progress/failed frame and no Ready/retry on failure are wired into the
+  actual compile-only entry. Parent Receiver consumes owned RawReceived frames,
+  requires complete payload/digest/strict receipt before Ready and retains raw
+  partial bytes, clock/frame observations and first rejected/transport cause.
+  ReadyDelivery hands off the original decoder for later dispatches, without
+  acceptance or admission authority. Scratch/payload/history storage is prepaid
+  and all profile/byte limits stay unchanged. Sixteen new CPU regressions cover
+  actual Session/codec/framer/receiver sequence, failures/clocks/corruption,
+  run/deadline/completion mismatch, role/lane and budget rejection. Initial
+  malformed-test length prefixes and a redundant constant lint were corrected,
+  with historical logs retained. Source-bound checks/publication: ROADMAP.md. No
+  independent-agent review or actual OS/environment/DLL/thread/process/pipe/GPU
+  invocation/qualification. Next: reported setup acceptance checks, complete
+  parent host/starting/runtime/peer/image/process/consent/safety composition,
+  qualified native issuance/main, aggregate failed-setup/metadata/resource export
+  and real qualification. Early/failed preparation without a ready Session retains
+  its owners/artifact separately. E3 partial/Gate B unmet; full product goal and
+  frozen numeric contracts unchanged, Actions remains removed/disabled.
+
 - 2026-11-05 retained worker setup artifact/reader: portable setup types preserve
   CUDA aliases while the canonical artifact covers each Prepared outcome, exact
   WorkerBinding/original deadline, full raw ABI/file-clock ledgers, pending/first

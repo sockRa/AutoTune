@@ -138,6 +138,7 @@ pub enum Message {
     },
     DispatchRecord(super::dispatch::Record),
     FailureChunk(super::dispatch::FailureChunk),
+    SetupChunk(super::worker_setup_delivery::Chunk),
     Bootstrap {
         manifest: String,
     },
@@ -181,6 +182,7 @@ impl Message {
             Self::PhaseEntered { .. } => (Lane::Ordinary, Direction::FromWorker, "phase_entered"),
             Self::DispatchRecord(_) => (Lane::Ordinary, Direction::FromWorker, "dispatch_record"),
             Self::FailureChunk(_) => (Lane::Ordinary, Direction::FromWorker, "failure_chunk"),
+            Self::SetupChunk(_) => (Lane::Ordinary, Direction::FromWorker, "setup_chunk"),
             Self::Bootstrap { .. } => (Lane::Ordinary, Direction::ToWorker, "bootstrap"),
             Self::Ready { .. } => (Lane::Ordinary, Direction::FromWorker, "ready"),
             Self::Start { .. } => (Lane::Ordinary, Direction::ToWorker, "start"),
@@ -203,6 +205,7 @@ impl Message {
             Self::NativeFailure { stage, detail, .. } => stage.as_str().len() + detail.capacity(),
             Self::DispatchRecord(r) => r.allocation_bytes(),
             Self::FailureChunk(c) => c.allocation_bytes(),
+            Self::SetupChunk(c) => c.allocation_bytes(),
             Self::Bootstrap { manifest } => manifest.capacity(),
             Self::Stop { reason, .. } => reason.as_str().len(),
             _ => 0,
@@ -210,6 +213,7 @@ impl Message {
     }
     pub(super) fn validate(&self, b: WorkerBinding) -> Result<(), WireError> {
         match self {
+            Self::SetupChunk(c) => c.validate()?,
             Self::SamplerQuery { ticket, issued } => {
                 super::telemetry::validate_ticket(*ticket, b)?;
                 if b.elapsed(*issued)? != ticket.start_ns {
@@ -329,6 +333,7 @@ impl Message {
     }
     fn body(&self) -> Value {
         match self {
+            Self::SetupChunk(c) => c.value(),
             Self::SamplerQuery { ticket, issued } => object([
                 ("ticket", super::telemetry::ticket_value(*ticket)),
                 ("issued", super::settings::raw_anchor(*issued)),
@@ -563,6 +568,7 @@ impl Message {
             }
             "dispatch_record" => Self::DispatchRecord(super::dispatch::Record::parse(v, b)?),
             "failure_chunk" => Self::FailureChunk(super::dispatch::FailureChunk::parse(v)?),
+            "setup_chunk" => Self::SetupChunk(super::worker_setup_delivery::Chunk::parse(v)?),
             "bootstrap" => {
                 let o = exact(v, &["manifest"])?;
                 Self::Bootstrap {

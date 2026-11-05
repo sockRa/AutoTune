@@ -1,4 +1,5 @@
 mod worker_runtime_tests {
+    include!("setup_runtime_delivery.rs");
     use super::*;
     use autotune_benchmark_worker::{
         sampler::framing::{Framer, ReadStep, Source},

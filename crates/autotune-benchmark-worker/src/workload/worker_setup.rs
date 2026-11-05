@@ -77,11 +77,19 @@ pub struct Reported {
     pub module_loading_mode: Option<i32>,
 }
 pub struct Artifact {
+    binding: WorkerBinding,
+    deadline_raw: u64,
     canonical: String,
     digest: Digest,
     _allocation: Reservation,
 }
 impl Artifact {
+    pub fn binding(&self) -> WorkerBinding {
+        self.binding
+    }
+    pub fn deadline_raw(&self) -> u64 {
+        self.deadline_raw
+    }
     pub fn recorded(
         binding: WorkerBinding,
         facts: Facts<'_>,
@@ -243,6 +251,8 @@ impl Artifact {
         }
         let digest = Digest::of(Domain::RawArtifact, canonical.as_bytes());
         Ok(Self {
+            binding,
+            deadline_raw: f.deadline_raw,
             canonical,
             digest,
             _allocation: allocation,

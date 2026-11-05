@@ -37,12 +37,19 @@ pub struct ReadyFacts {
     pub compute_major: i32,
     pub compute_minor: i32,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SetupDelivery {
+    pub digest: crate::evidence::Digest,
+    pub sent: u32,
+    pub count: u32,
+}
 pub struct Session<B, C, S> {
     binding: WorkerBinding,
     shared: Arc<Shared>,
     gate: Gate,
     producer: Producer<B, C, S>,
     ready: Option<Message>,
+    setup_delivery: Option<SetupDelivery>,
     ready_receipt: Option<Anchor>,
     start_packet: Option<WorkerReceived>,
     rejected: Option<WorkerReceived>,
@@ -150,6 +157,7 @@ impl<
             gate,
             producer,
             ready: None,
+            setup_delivery: None,
             ready_receipt: None,
             start_packet: None,
             rejected: None,
@@ -170,6 +178,49 @@ impl<
     }
     pub fn ready(&self) -> Option<&Message> {
         self.ready.as_ref()
+    }
+    pub fn setup_delivery(&self) -> Option<SetupDelivery> {
+        self.setup_delivery
+    }
+    /// One attempt on the producer's existing ordinary sequence. Each handoff
+    /// is bracketed by the original setup clock/control gate, with no new grace.
+    pub fn send_setup(
+        &mut self,
+        artifact: &super::worker_setup::Artifact,
+        sink: &mut impl FrameSink,
+        budget: &Budget,
+    ) -> Result<(), Fault> {
+        if self.fault.is_some() || self.ready.is_some() || self.setup_delivery.is_some() {
+            return Err(self.fail(Fault::Protocol));
+        }
+        let count = artifact
+            .canonical()
+            .len()
+            .div_ceil(super::worker_setup_delivery::CHUNK_BYTES) as u32;
+        self.setup_delivery = Some(SetupDelivery {
+            digest: artifact.digest(),
+            sent: 0,
+            count,
+        });
+        if artifact.binding() != self.binding
+            || self.shared.setup_observations() != (Some(artifact.deadline_raw()), None)
+        {
+            return Err(self.fail(Fault::Protocol));
+        }
+        let chunks = super::worker_setup_delivery::Chunks::new(artifact, budget)
+            .map_err(|_| self.fail(Fault::Producer(super::producer::Fault::Capacity)))?;
+        for index in 0..chunks.count() {
+            self.poll_setup()?;
+            let message = chunks
+                .message(index)
+                .map_err(|_| self.fail(Fault::Protocol))?;
+            self.producer
+                .publish_ready(&message, sink)
+                .map_err(|e| self.fail(Fault::Producer(e)))?;
+            self.setup_delivery.as_mut().expect("one delivery").sent += 1;
+            self.poll_setup()?;
+        }
+        Ok(())
     }
     pub fn ready_receipt(&self) -> Option<Anchor> {
         self.ready_receipt
@@ -212,7 +263,10 @@ impl<
     /// CPU preparation precedes this fresh Ready timestamp. Ready and dispatch
     /// reports share the producer's one output channel/sequence and failed frame.
     pub fn announce(&mut self, facts: ReadyFacts, sink: &mut impl FrameSink) -> Result<(), Fault> {
-        if self.fault.is_some() || self.ready.is_some() {
+        if self.fault.is_some()
+            || self.ready.is_some()
+            || self.setup_delivery.is_some_and(|s| s.sent != s.count)
+        {
             return Err(self.fail(Fault::Protocol));
         }
         let anchor = self.poll_setup()?;

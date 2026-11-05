@@ -339,6 +339,15 @@ fn run<
             return Err(Fault::Native);
         };
         session
+            .send_setup(
+                out.setup_report
+                    .as_ref()
+                    .expect("setup report before Ready"),
+                &mut sender,
+                budget,
+            )
+            .map_err(|_| Fault::Export)?;
+        session
             .announce(*facts, &mut sender)
             .map_err(|_| Fault::Ready)?;
         while session.start_packet().is_none() {
