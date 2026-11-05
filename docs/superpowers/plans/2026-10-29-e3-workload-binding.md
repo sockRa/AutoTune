@@ -86,6 +86,28 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 separate consent requests/guarded launch: StartingRead, PilotSetup
+  and Workload requests now bind exact declarations/images, scope/manifest/profile,
+  original clocks/windows and (for workload) successful parent context/peer refs.
+  A private concrete console capture retains the exact affirmative/decline/error
+  separately; public fixture records cannot become accepted authority. Typed
+  records are not Clone/Deserialize and retain bounded raw input/key/terminal/
+  I/O/clock facts and sticky deadline failure. Input polls under exclusive console
+  ownership use existing cadence; output/prompt owners still need independent
+  supervision off the deadline path. Launch::start checks a concrete record and
+  fresh actual clock before constructing OS owners, consuming each exact role
+  once and retaining misuse/expiry. This is consent-only, not all pre-setup facts,
+  current safety, NativeAdmission or the desktop session UI. Eleven CPU models
+  plus four concrete request regressions are added, with non-invoked codegen/link
+  pointers extended. Initial helper/test-layout/manifest-digest and portability/
+  test-name-resolution failures are retained after correction. Final source-bound
+  verification/publication: ROADMAP.md. No independent-agent review or actual
+  console/clock-API/process/DLL/GPU invocation, human receipt or qualification.
+  Parent receipt consumption, fresh process/containment/safety/re-entry/Start,
+  prompt ownership/export, aggregate resources, issuance/mains and real
+  qualification remain open; E3 partial/Gate B unmet. Frozen contracts/full
+  product unchanged; Actions remains removed/disabled.
+
 - 2026-11-05 local launcher/channel provenance: PID from the retained assigned
   process handle now binds nonzero creation time, measured image, declaration and
   scope/run to private-construction Origin before resume. Failed launches retain

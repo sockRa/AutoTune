@@ -4,6 +4,7 @@ pub mod bootstrap;
 pub mod child_options;
 #[cfg(windows)]
 pub mod child_windows;
+pub mod consent;
 pub mod control;
 #[cfg(windows)]
 pub mod control_windows;

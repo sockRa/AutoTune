@@ -306,6 +306,9 @@ impl BoundRun<'_> {
     pub fn manifest_digest(&self) -> Digest {
         self.manifest.digest
     }
+    pub(super) fn manifest_canonical(&self) -> &str {
+        self.manifest.canonical()
+    }
     pub fn worker_digest(&self) -> Digest {
         self.manifest.draft.artifacts.worker
     }

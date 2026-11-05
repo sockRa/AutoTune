@@ -50,8 +50,12 @@ fn fixed_windows_starting_process_api_links_without_launching() {
     use autotune_benchmark_worker::workload::windows_process::{Launch, Process};
     // Take the actual monomorphized functions, never invoke them. Compilation
     // checks the retained-process launch/observe APIs for the separate scope.
-    let _start: fn(Declaration, Budget) -> std::io::Result<Launch<Declaration>> =
-        Launch::<Declaration>::start;
+    let _start: fn(
+        Declaration,
+        Budget,
+        &mut autotune_benchmark_worker::workload::consent::Record,
+        &autotune_benchmark_worker::monitor::windows_clock::WindowsClock,
+    ) -> std::io::Result<Launch<Declaration>> = Launch::<Declaration>::start;
     let _poll = Launch::<Declaration>::poll;
     let _sender = Process::<Declaration>::starting_sender;
     type ReceiveFn = fn(

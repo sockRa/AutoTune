@@ -168,6 +168,9 @@ pub struct ParentSampler {
     _metadata: Reservation,
 }
 impl ParentSampler {
+    pub(super) fn consent_window(&self) -> (Anchor, u64) {
+        (self.setup_entry, self.setup_deadline)
+    }
     pub fn peer_check(&self) -> Option<&super::parent_peers::Record> {
         self.peer_check.as_ref()
     }

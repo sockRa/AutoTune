@@ -1,5 +1,126 @@
 mod parent_context_tests {
     #[test]
+    fn separate_starting_and_setup_requests_bind_exact_scope_run_and_operations() {
+        use autotune_benchmark_worker::workload::{
+            consent::{Request, Setup, Stage},
+            launch::{Declaration as PilotDeclaration, Role},
+        };
+        let h = Harness::new(200000);
+        let run = h.m.bind_run(0, ORIGIN).unwrap();
+        let decl = Declaration::new(&h.scope, a(2100), &h.b).unwrap();
+        let read = Request::starting(&h.scope, &decl, a(2200), &h.b).unwrap();
+        let worker =
+            PilotDeclaration::new(&run, h.scope.draft().frequency, a(0), Role::Worker, &h.b)
+                .unwrap();
+        let sampler =
+            PilotDeclaration::new(&run, h.scope.draft().frequency, a(0), Role::Sampler, &h.b)
+                .unwrap();
+        let setup = Request::setup(
+            Setup {
+                run: &run,
+                scope: &h.scope,
+                worker: &worker,
+                sampler: &sampler,
+                entry: a(ORIGIN + 1000),
+                issued: a(ORIGIN + 2000),
+            },
+            &h.b,
+        )
+        .unwrap();
+        assert_eq!(read.stage(), Stage::StartingRead);
+        assert_eq!(setup.stage(), Stage::PilotSetup);
+        assert_eq!(setup.scope(), h.scope.digest());
+        assert_ne!(read.digest(), setup.digest());
+        assert!(setup.canonical().contains(&worker.image_digest().to_hex()));
+        assert!(setup.canonical().contains(&run.manifest_digest().to_hex()));
+    }
+    #[test]
+    fn setup_request_rejects_wrong_run_role_scope_and_original_expiry() {
+        use autotune_benchmark_worker::workload::{
+            consent::{Fault, Request, Setup},
+            launch::{Declaration as PilotDeclaration, Role},
+        };
+        let h = Harness::new(200000);
+        let run = h.m.bind_run(0, ORIGIN).unwrap();
+        let other = h.m.bind_run(1, ORIGIN).unwrap();
+        let worker =
+            PilotDeclaration::new(&run, h.scope.draft().frequency, a(0), Role::Worker, &h.b)
+                .unwrap();
+        let sampler =
+            PilotDeclaration::new(&run, h.scope.draft().frequency, a(0), Role::Sampler, &h.b)
+                .unwrap();
+        for mode in 0..3 {
+            let result = Request::setup(
+                Setup {
+                    run: if mode == 0 { &other } else { &run },
+                    scope: &h.scope,
+                    worker: if mode == 1 { &sampler } else { &worker },
+                    sampler: &sampler,
+                    entry: a(ORIGIN + 1000),
+                    issued: a(if mode == 2 {
+                        ORIGIN + 1000 + 10_000_000_000
+                    } else {
+                        ORIGIN + 2000
+                    }),
+                },
+                &h.b,
+            );
+            assert_eq!(
+                result.err(),
+                Some(if mode == 2 {
+                    Fault::Deadline
+                } else {
+                    Fault::Binding
+                })
+            );
+        }
+        let mut draft = h.scope.draft().clone();
+        draft.source_commit = "b".repeat(40);
+        let foreign = Scope::freeze(draft, &h.b).unwrap();
+        assert_eq!(
+            Request::setup(
+                Setup {
+                    run: &run,
+                    scope: &foreign,
+                    worker: &worker,
+                    sampler: &sampler,
+                    entry: a(ORIGIN + 1000),
+                    issued: a(ORIGIN + 2000)
+                },
+                &h.b
+            )
+            .err(),
+            Some(Fault::Binding)
+        );
+    }
+    #[test]
+    fn consistent_context_without_local_peer_evidence_cannot_request_workload_consent() {
+        use autotune_benchmark_worker::workload::consent::{Fault, Request};
+        let mut h = Harness::new(200000);
+        assert!(h.check(true, true).is_ok());
+        let run = h.m.bind_run(0, ORIGIN).unwrap();
+        assert_eq!(
+            Request::workload(&h.parent, &run, a(ORIGIN + 4000), &h.b).err(),
+            Some(Fault::Context)
+        );
+        assert!(!h.parent.native_admission_available());
+    }
+    #[test]
+    fn consent_capacity_rejection_keeps_existing_scope_and_declaration_unchanged() {
+        use autotune_benchmark_worker::workload::consent::{Fault, Request};
+        let h = Harness::new(200000);
+        let decl = Declaration::new(&h.scope, a(2100), &h.b).unwrap();
+        let before = h.scope.digest();
+        let tag = decl.tag();
+        let _pressure = h.b.reserve(32 * 1024 * 1024 - h.b.used()).unwrap();
+        assert_eq!(
+            Request::starting(&h.scope, &decl, a(2200), &h.b).err(),
+            Some(Fault::Capacity)
+        );
+        assert_eq!(h.scope.digest(), before);
+        assert_eq!(decl.tag(), tag);
+    }
+    #[test]
     fn reported_starting_timing_retains_typed_failures_without_discarding_raw_reports() {
         use autotune_benchmark_worker::workload::starting_read::TimingFault;
         for (mode, expected) in [

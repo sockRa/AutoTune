@@ -2437,3 +2437,61 @@ agent review or actual OS/PID/file/DLL/thread/process/pipe/GPU invocation or
 qualification. Fresh process/containment observations, separate pre-setup/workload
 consent, fresh safety/re-entry/Start, native issuance/mains, aggregate resources/
 export and real qualification remain open; E3 partial/Gate B unmet.
+
+## Separate consent requests and guarded launch — 2026-11-05
+
+`consent::Request` freezes separate StartingRead, PilotSetup and Workload requests.
+The read request binds the original Scope/declaration/image; setup binds the exact
+worker/sampler declarations, manifest bytes/digest, fixed profile and original
+setup window. Workload request construction requires the successful parent
+context and local peer record, binding their complete artifact references and
+original owners to the exact run/plan. These are requests, never approval inferred
+from an approval_ref, digest, source label or Ready message. Human waiting cannot
+rebase the original preflight/setup deadline; an expired request must fail.
+
+The concrete Windows console adapter records a deliberately submitted exact
+`approve <request digest>` line, or a decline/error, separately from the request.
+Only that private capture path can construct a console-source Record; public
+fixture recording stays untrusted even with an exact affirmative response.
+Record has no Clone/Deserialize or wire reconstruction path. It retains bounded
+edited ASCII, raw key fields/ignored event kinds, terminal facts, I/O failures,
+capture/policy errors, observed clock identity and rejected anchors. Input is
+limited to 96 bytes and 256 events, with a bounded poll count and original clock
+checks at the existing controller cadence; expiry/clock faults stay sticky.
+This records a local console response, not cryptographic human identity or proof
+that the operator independently verified the supplied evidence.
+
+The adapter requires exclusive console input ownership. It holds the Rust stdin
+lock and reads one event only after a positive console event count; another
+same-account console reader is outside that fixed-controller contract. Output
+can block, so the future controller must supervise original deadlines separately
+and retain the prompt/thread owner off the deadline path. This is an engineering
+qualification adapter, not the E8 desktop approval workflow, observed console
+acceptance or permission to invoke it during implementation.
+
+`windows_process::Launch::start` now requires a separately captured Record and an
+actual WindowsClock. Before job/event/process construction, it checks exact
+kind/binding/declaration/image, current clock identity/time and one unused role
+slot. A starting record has one slot; setup has one worker and one sampler slot;
+a workload record cannot launch either role. Wrong target, duplicate, clock loss
+or expiry closes further use while retaining the first attempts/rejection.
+Consumed attempts cannot be retried after a later startup failure. Existing child
+startup/native deadlines and independent stop supervision remain mandatory; the
+consent check neither renews time nor supplies the other pre-setup prerequisites.
+
+Canonical requests and decision/attempt storage are prepaid; assessment uses
+bounded inline state. Eleven new CPU model tests cover exact/changing decisions,
+untrusted fixtures, distinct stages/roles, negative I/O/clock/input, expiry/replay,
+key editing/repetition, sticky faults and full ledger pressure. Four concrete
+request tests cover exact scope/run/profile, role/expiry/scope rejection, missing
+peer evidence and capacity retention. Existing non-invoked pointers additionally
+force console/guard codegen/linking. Initial private-helper/test-layout and
+portability/name-resolution failures were corrected; a missing separate manifest
+digest assertion led to an explicit field alongside full bytes. Failed logs stay
+historical; source-bound final evidence/publication is in ROADMAP.md.
+
+No terminal/console/clock-API/process/DLL/GPU execution, human approval receipt or
+qualification is claimed, and no main invokes capture. NativeAdmission still has
+no issuer. Parent consumption of setup/workload receipts, fresh process/job and
+safety/re-entry/Start checks, prompt ownership/cancellation/export, aggregate
+resources, mains and real qualification remain open; E3 partial/Gate B unmet.

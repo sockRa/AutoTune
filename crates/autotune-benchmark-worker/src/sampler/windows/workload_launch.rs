@@ -363,7 +363,27 @@ pub struct Launch<D: FixedDeclaration = Declaration> {
     _metadata: super::super::budget::Reservation,
 }
 impl<D: FixedDeclaration> Launch<D> {
-    pub fn start(declaration: D, budget: Budget) -> io::Result<Self> {
+    /// Consume this exact role's one launch attempt from a separately captured
+    /// interactive decision, before any job/event/process construction. This
+    /// checks consent only; caller still owes all pre-setup safety prerequisites.
+    pub fn start(
+        declaration: D,
+        budget: Budget,
+        consent: &mut crate::workload::consent::Record,
+        clock: &crate::monitor::windows_clock::WindowsClock,
+    ) -> io::Result<Self> {
+        let (kind, binding, tag) = declaration.launch_origin_binding();
+        consent
+            .authorize_launch(
+                crate::workload::consent::LaunchTarget {
+                    kind,
+                    binding,
+                    declaration: tag,
+                    image: declaration.launch_image(),
+                },
+                clock,
+            )
+            .map_err(io::Error::other)?;
         let role = declaration.launch_role();
         let binding = declaration.launch_binding();
         let metadata = budget
