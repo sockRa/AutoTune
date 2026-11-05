@@ -161,6 +161,7 @@ pub struct RawReceived {
     lane: Lane,
     packet: Packet,
     receipt: Option<Anchor>,
+    origin: Option<super::launch_origin::Origin>,
 }
 impl RawReceived {
     pub fn new(lane: Lane, packet: Packet, receipt: Option<Anchor>) -> Self {
@@ -168,7 +169,17 @@ impl RawReceived {
             lane,
             packet,
             receipt,
+            origin: None,
         }
+    }
+    /// Local launcher provenance; absent for public byte-stream constructors.
+    pub fn origin(&self) -> Option<super::launch_origin::Origin> {
+        self.origin
+    }
+    #[cfg(windows)]
+    pub(crate) fn stamp_process(mut self, origin: super::launch_origin::Origin) -> Self {
+        self.origin = Some(origin);
+        self
     }
     pub fn lane(&self) -> Lane {
         self.lane
@@ -238,5 +249,60 @@ impl SettingsReceived {
     }
     pub fn result(&self) -> Result<&Receipt, Block> {
         self.result.as_ref().map_err(|e| *e)
+    }
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+    use crate::{
+        evidence::Domain,
+        sampler::framing::{Framer, ReadStep, Source},
+        workload::launch_origin::{Kind, Origin},
+    };
+    struct Bytes<'a>(&'a [u8]);
+    impl Source for Bytes<'_> {
+        fn read(&mut self, out: &mut [u8]) -> ReadStep {
+            let n = out.len().min(self.0.len());
+            out[..n].copy_from_slice(&self.0[..n]);
+            self.0 = &self.0[n..];
+            ReadStep {
+                reported: n,
+                error: None,
+            }
+        }
+    }
+    #[test]
+    fn public_raw_constructor_never_infers_origin_from_lookalike_bytes() {
+        let b = Budget::new(1024 * 1024).unwrap();
+        let mut bytes = Vec::from((6u32).to_le_bytes());
+        bytes.extend_from_slice(b"native");
+        let raw = RawReceived::new(
+            Lane::Ordinary,
+            Framer::new(b).unwrap().read(&mut Bytes(&bytes)),
+            None,
+        );
+        assert_eq!(raw.origin(), None);
+    }
+    #[test]
+    fn framing_rejection_keeps_local_origin_and_partial_bytes() {
+        let b = Budget::new(2 * 1024 * 1024).unwrap();
+        let bytes = [0; 4];
+        let d = Digest::of(Domain::RawArtifact, b"fixture");
+        let origin = Origin::new(Kind::Sampler, d, d, d, 1, 2).unwrap();
+        let raw = RawReceived::new(
+            Lane::Ordinary,
+            Framer::new(b).unwrap().read(&mut Bytes(&bytes)),
+            None,
+        );
+        // Production attachment is Windows-only; this model exercises retained
+        // fields without invoking a launcher, pipe or process.
+        let raw = RawReceived {
+            origin: Some(origin),
+            ..raw
+        };
+        assert_eq!(raw.origin(), Some(origin));
+        assert!(raw.packet().rejection().is_some());
+        assert_eq!(raw.packet().bytes(), bytes);
     }
 }

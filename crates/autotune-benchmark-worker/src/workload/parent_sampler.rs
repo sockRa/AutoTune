@@ -118,6 +118,8 @@ impl Reentry {
 }
 pub struct ParentSampler {
     binding: WorkerBinding,
+    #[cfg(windows)]
+    binding_digest: crate::evidence::Digest,
     expected_uuid: String,
     expected_pci: String,
     setup_entry: Anchor,
@@ -159,10 +161,19 @@ pub struct ParentSampler {
         Result<(), super::host_environment::Fault>,
     )>,
     context_check: Option<super::parent_context::Record>,
+    origins: super::launch_origin::Chain,
+    expected_origin: Option<super::launch_origin::Origin>,
+    peer_check: Option<super::parent_peers::Record>,
     budget: Budget,
     _metadata: Reservation,
 }
 impl ParentSampler {
+    pub fn peer_check(&self) -> Option<&super::parent_peers::Record> {
+        self.peer_check.as_ref()
+    }
+    pub fn origin(&self) -> Result<super::launch_origin::Origin, super::launch_origin::Fault> {
+        self.origins.result()
+    }
     pub(super) fn context_binding(&self) -> WorkerBinding {
         self.binding
     }
@@ -333,6 +344,13 @@ impl ParentSampler {
         }
         drop(check);
         let binding = WorkerBinding::new(run, frequency, epoch).map_err(|_| Fault::Binding)?;
+        #[cfg(windows)]
+        let binding_digest = {
+            let _codec = budget
+                .reserve(64 * 1024 * 16)
+                .map_err(|_| Fault::Capacity)?;
+            binding.transport_digest()
+        };
         let entry = binding.elapsed(setup_entry).map_err(|_| Fault::Clock)?;
         let n = binding.elapsed(first).map_err(|_| Fault::Clock)?;
         if entry < binding.origin_ns || n < entry || setup_entry.qpc_after > first.qpc_before {
@@ -380,6 +398,8 @@ impl ParentSampler {
         .map_err(|_| Fault::Capacity)?;
         let mut result = Self {
             binding,
+            #[cfg(windows)]
+            binding_digest,
             expected_uuid: run.raw_uuid().into(),
             expected_pci: run.raw_pci().into(),
             setup_entry,
@@ -438,6 +458,9 @@ impl ParentSampler {
             starting_check: None,
             environment_check: None,
             context_check: None,
+            origins: super::launch_origin::Chain::default(),
+            expected_origin: None,
+            peer_check: None,
             budget,
             _metadata: metadata,
         };
@@ -633,6 +656,14 @@ impl ParentSampler {
     }
     #[allow(clippy::result_large_err)]
     pub fn receive(&mut self, run: &BoundRun<'_>, raw: RawReceived) -> Result<(), RawReceived> {
+        self.origins.observe(raw.origin());
+        if self
+            .expected_origin
+            .is_some_and(|o| raw.origin() != Some(o))
+        {
+            self.fail(Fault::Binding, self.now_ns);
+            return Err(raw);
+        }
         let receipt = raw.receipt();
         let _ = self.observe(receipt);
         if raw.lane() == Lane::Control {
@@ -881,6 +912,73 @@ pub struct Poll {
 }
 #[cfg(windows)]
 impl ParentSampler {
+    /// Compare retained local launch owners with every received artifact path.
+    /// Caller keeps all process/session owners; success gives no native permit.
+    pub fn check_processes(
+        &mut self,
+        input: super::parent_peers::Processes<'_>,
+    ) -> Result<(), super::parent_peers::Fault> {
+        use super::{
+            launch_origin::Kind,
+            parent_peers::{self, Peer},
+        };
+        if self.peer_check.is_some() {
+            input.setup.close_reference_path();
+            self.fail(Fault::Protocol, self.now_ns);
+            return Err(parent_peers::Fault::Duplicate);
+        }
+        let context = if self.context_open() {
+            self.context_check
+                .as_ref()
+                .and_then(|c| c.result.ok())
+                .map(|c| c.references)
+        } else {
+            None
+        };
+        let starting_response = input
+            .starting_session
+            .canonical()
+            .map(|b| crate::evidence::Digest::of(crate::evidence::Domain::RawArtifact, b));
+        let peers = [
+            Peer {
+                expected: input.starting.origin(),
+                received: input.starting_session.origin(),
+                cancelled: input.starting.cancelled(),
+            },
+            Peer {
+                expected: input.sampler.origin(),
+                received: self.origin(),
+                cancelled: input.sampler.cancelled(),
+            },
+            Peer {
+                expected: input.worker.origin(),
+                received: input.setup.origin(),
+                cancelled: input.worker.cancelled(),
+            },
+        ];
+        let mut record = parent_peers::assess(
+            context,
+            self.binding_digest,
+            self.binding.images(),
+            starting_response,
+            peers,
+        );
+        // The setup object must be the one retained by the context check.
+        if context.is_some_and(|c| c.worker_setup != input.setup.receipt().digest())
+            || input.sampler.origin().kind() != Kind::Sampler
+        {
+            record.result = Err(parent_peers::Fault::Binding);
+        }
+        let result = record.result;
+        self.peer_check = Some(record);
+        if result.is_err() {
+            input.setup.close_reference_path();
+            self.fail(Fault::Binding, self.now_ns);
+        } else {
+            self.expected_origin = Some(input.sampler.origin());
+        }
+        result
+    }
     pub fn for_process(
         run: &BoundRun<'_>,
         process: &super::windows_process::Process,
@@ -900,7 +998,7 @@ impl ParentSampler {
         {
             return Err(Fault::Binding);
         }
-        Self::new(
+        let mut parent = Self::new(
             run,
             declaration.binding().monitor().qpc_frequency,
             declaration.binding().epoch,
@@ -908,7 +1006,9 @@ impl ParentSampler {
             first,
             budget,
             process.reserved_control_budget(),
-        )
+        )?;
+        parent.expected_origin = Some(process.origin());
+        Ok(parent)
     }
     /// Concrete retained process -> raw receipt/strict parent assessment -> next
     /// query/control handoff. Does not launch, wait for exit or grant compute.
@@ -922,6 +1022,7 @@ impl ParentSampler {
         use super::windows_transport::Receive;
         if process.declaration().role() != super::launch::Role::Sampler
             || process.declaration().binding() != self.binding
+            || self.expected_origin.is_some_and(|o| o != process.origin())
         {
             self.fail(Fault::Binding, self.now_ns);
             return Poll {

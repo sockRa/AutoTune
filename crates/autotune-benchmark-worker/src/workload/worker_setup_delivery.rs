@@ -147,6 +147,7 @@ pub struct Arrival {
     pub receipt: Option<Anchor>,
     pub frame_digest: Digest,
     pub index: Option<u32>,
+    pub origin: Option<super::launch_origin::Origin>,
 }
 pub struct Receiver {
     binding: WorkerBinding,
@@ -331,6 +332,7 @@ impl Receiver {
             receipt,
             frame_digest: Digest::of(Domain::RawArtifact, packet.raw().packet().bytes()),
             index,
+            origin: packet.raw().origin(),
         });
         match message {
             Message::SetupChunk(c) => {
@@ -403,6 +405,14 @@ pub struct ReadyDelivery {
     >,
 }
 impl ReadyDelivery {
+    /// Every setup chunk and Ready must have the same local launcher stamp.
+    pub fn origin(&self) -> Result<super::launch_origin::Origin, super::launch_origin::Fault> {
+        let mut chain = super::launch_origin::Chain::default();
+        for arrival in self.arrivals() {
+            chain.observe(arrival.origin);
+        }
+        chain.result()
+    }
     pub(crate) fn close_reference_path(&mut self) {
         self.receiver.decoder.poison();
     }

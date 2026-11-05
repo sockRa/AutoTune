@@ -246,6 +246,7 @@ pub struct FailedLaunch {
     io_shutdown: [super::runtime::IoObservation; 4],
     _image: Option<File>,
     image: Option<(PathBuf, [u8; 32])>,
+    origin: Option<crate::workload::launch_origin::Origin>,
 }
 impl std::fmt::Debug for FailedLaunch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -265,6 +266,9 @@ impl std::fmt::Display for FailedLaunch {
 }
 impl std::error::Error for FailedLaunch {}
 impl FailedLaunch {
+    pub fn origin(&self) -> Option<crate::workload::launch_origin::Origin> {
+        self.origin
+    }
     /// Supplemental actual image observation when supplied by the pilot launcher.
     /// Historical sampler failures may have no retained image observation.
     pub fn image(&self) -> Option<(&std::path::Path, [u8; 32])> {
@@ -345,6 +349,7 @@ fn failed_launch(
         termination: None,
         _image: None,
         image: None,
+        origin: None,
     };
     // A request is retained independently of the later process/job observation.
     let _ = failure.request_termination();

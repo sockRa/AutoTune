@@ -123,6 +123,7 @@ mod assessment_tests {
                 })),
                 frame_digest: digest(88),
                 index: if i < count { Some(i as u32) } else { None },
+                origin: None,
             })
             .collect()
     }

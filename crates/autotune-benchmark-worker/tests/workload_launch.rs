@@ -200,6 +200,16 @@ fn fixed_images_limits_and_child_environment_follow_role() {
         .contains("PATH"));
 }
 
+#[cfg(windows)]
+#[test]
+fn provenance_composition_entries_link_without_process_invocation() {
+    use autotune_benchmark_worker::workload::{
+        parent_sampler::ParentSampler, windows_process::Process,
+    };
+    std::hint::black_box(ParentSampler::check_processes as *const ());
+    std::hint::black_box(Process::<Declaration>::origin as *const ());
+}
+
 #[test]
 fn cancellation_closes_an_existing_sender_without_losing_frame_or_control() {
     use autotune_benchmark_worker::{

@@ -2392,3 +2392,48 @@ publication are in ROADMAP.md. No independent-agent review or actual OS/DLL/
 thread/process/pipe/GPU execution/qualification. Peer/image/process composition,
 separate consent, fresh safety/re-entry/Start, native issuance/mains, aggregate
 export/resources and real qualification remain open. E3 partial/Gate B unmet.
+
+## Local launcher/channel provenance — 2026-11-05
+
+The fixed Windows launcher now reads PID from its retained process handle after
+job assignment and creation-time observation, before resume. Zero PID/creation
+rejects through the existing retained failure path. A private-construction Origin
+binds kind (starting/sampler/worker), exact scope or transport binding, declaration,
+measured image, PID and creation time. The locked image and original process/job/
+transport owners remain with Process. Later failed launch retains any issued
+origin alongside its image/creation/error/handle facts.
+
+Process::receive attaches this local Origin to raw packets. Public raw-byte
+constructors and decoders cannot manufacture it from matching JSON, hashes or
+native-source labels. Setup delivery retains the origin of every chunk and Ready.
+ParentSampler tracks all received origins, binds for_process to one exact process
+and rejects replacement or unstamped packets once bound. Starting Session tracks
+each accepted chunk through its concrete process poll; public borrowed-byte
+acceptance marks provenance missing. Missing/mixed origins remain sticky even
+after subsequent matching packets. Canonical wire bytes are unchanged.
+
+`ParentSampler::check_processes` borrows all three retained Process owners plus
+the completed starting Session and worker setup. It retains one record comparing
+all received origins to the exact declarations, scope/run/image bindings and
+distinct PIDs, current cancellation state, starting-response digest and the setup
+digest already screened by context. It retains independent per-role outcomes;
+failure or duplicate attempts close ordinary paths without replacing the first
+record. Parent origin binding then guards subsequent sampler receipt. This
+composes local channel provenance, not current process liveness, independent
+job/exit observation, mapped-image attestation, DLL truth, human consent, fresh
+safety or native admission. Caller must retain the borrowed owners. Native
+admission remains unavailable; this record is not a transferable execution token.
+
+Origin/record/arrival storage is prepaid through updated type sizes; Starting
+Session now explicitly reserves its own inline state. Cached binding digests are
+computed under constructor codec reservations, leaving comparison allocation-free.
+No quota or numeric contract changed. Eleven new CPU model tests cover invalid
+identity, missing/mixed/changed provenance, cancellation, artifact/binding drift,
+role aliasing, public raw input and framing-error retention. A non-invoked pointer
+test forces Windows composition codegen/linking. Initial private-access/arrival-
+fixture errors and naming/function-pointer lints were corrected; failed logs stay
+historical. Final source-bound evidence/publication: ROADMAP.md. No independent-
+agent review or actual OS/PID/file/DLL/thread/process/pipe/GPU invocation or
+qualification. Fresh process/containment observations, separate pre-setup/workload
+consent, fresh safety/re-entry/Start, native issuance/mains, aggregate resources/
+export and real qualification remain open; E3 partial/Gate B unmet.

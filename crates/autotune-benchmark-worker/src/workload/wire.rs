@@ -55,6 +55,10 @@ impl WorkerBinding {
     pub fn monitor(self) -> Binding {
         self.monitor
     }
+    #[cfg(windows)]
+    pub(super) fn images(self) -> [Digest; 2] {
+        [self.sampler, self.worker]
+    }
     // Call only while holding codec storage: the canonical binding is allocated.
     pub(super) fn transport_digest(self) -> Digest {
         Digest::of(Domain::RawArtifact, self.value().to_canonical().as_bytes())

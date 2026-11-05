@@ -15,9 +15,11 @@ pub mod host_environment;
 #[cfg(windows)]
 pub mod host_environment_windows;
 pub mod launch;
+pub mod launch_origin;
 pub mod manifest;
 pub mod nvml_trace;
 pub mod parent_context;
+pub mod parent_peers;
 pub mod parent_sampler;
 pub mod prestart;
 pub mod producer;

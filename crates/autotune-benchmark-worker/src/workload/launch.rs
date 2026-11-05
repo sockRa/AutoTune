@@ -83,6 +83,8 @@ pub struct Declaration {
     image: Digest,
     role: Role,
     tag: Digest,
+    #[cfg(windows)]
+    transport: Digest,
     _metadata: Reservation,
 }
 impl Declaration {
@@ -119,6 +121,8 @@ impl Declaration {
             },
             role,
             tag,
+            #[cfg(windows)]
+            transport: binding.transport_digest(),
             _metadata: metadata,
         })
     }
@@ -130,6 +134,17 @@ impl Declaration {
     }
     pub fn image_digest(&self) -> Digest {
         self.image
+    }
+    #[cfg(windows)]
+    pub(crate) fn origin_parts(&self) -> (super::launch_origin::Kind, Digest, Digest) {
+        (
+            match self.role {
+                Role::Worker => super::launch_origin::Kind::Worker,
+                Role::Sampler => super::launch_origin::Kind::Sampler,
+            },
+            self.transport,
+            self.tag,
+        )
     }
     pub(super) fn tag(&self) -> Digest {
         self.tag

@@ -11,7 +11,7 @@ use super::{
 use crate::{
     evidence::Digest,
     monitor::{clock::Clock, Anchor},
-    sampler::budget::Budget,
+    sampler::budget::{Budget, Reservation},
 };
 /// Absolute original-epoch bound for the single starting response. The read is
 /// due at the preflight boundary and the response follows the child's stop/
@@ -68,6 +68,8 @@ pub struct Session {
     polls: u64,
     transport: Option<Option<i32>>,
     outcome: Option<Outcome>,
+    origins: super::launch_origin::Chain,
+    _provenance: Reservation,
 }
 impl Session {
     /// Freeze the declaration/scope binding, the arrival bound and the reserved
@@ -77,6 +79,9 @@ impl Session {
             return Err(Fault::Assembly(super::starting_delivery::Fault::Scope));
         }
         let d = scope.draft();
+        let provenance = budget
+            .reserve(std::mem::size_of::<Self>())
+            .map_err(|_| Fault::Assembly(super::starting_delivery::Fault::Capacity))?;
         let clock =
             Clock::temporal(d.frequency, d.clock_token, d.epoch).map_err(|_| Fault::Clock)?;
         let receiver = Receiver::new(declaration, scope, 0, arrival_bound_ns(), budget)?;
@@ -86,6 +91,8 @@ impl Session {
             polls: 0,
             transport: None,
             outcome: None,
+            origins: super::launch_origin::Chain::default(),
+            _provenance: provenance,
         })
     }
     pub fn epoch_ns(&self) -> u64 {
@@ -96,6 +103,10 @@ impl Session {
     }
     pub fn received(&self) -> u32 {
         self.receiver.received()
+    }
+    /// Local provenance of all accepted chunks, separate from byte verification.
+    pub fn origin(&self) -> Result<super::launch_origin::Origin, super::launch_origin::Fault> {
+        self.origins.result()
     }
     pub fn polls(&self) -> u64 {
         self.polls
@@ -159,7 +170,11 @@ impl Session {
     }
     /// One bounded chunk with the parent's elapsed receive clock.
     pub fn accept(&mut self, now_ns: u64, bytes: &[u8]) -> Step {
+        let before = self.receiver.received();
         let accepted = self.receiver.accept(now_ns, bytes).is_ok();
+        if self.receiver.received() > before {
+            self.origins.observe(None);
+        }
         self.settle(Supervision {
             accepted,
             ..Supervision::default()
@@ -243,6 +258,9 @@ impl Session {
             |anchor| session_clock.observe(anchor).ok(),
         );
         let accepted = receiver.received() > before;
+        if accepted {
+            self.origins.observe(Some(process.origin()));
+        }
         self.settle(Supervision {
             transport_fault: poll.transport_fault,
             os_code: poll.os_code,

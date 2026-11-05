@@ -86,6 +86,28 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 local launcher/channel provenance: PID from the retained assigned
+  process handle now binds nonzero creation time, measured image, declaration and
+  scope/run to private-construction Origin before resume. Failed launches retain
+  any issued origin with existing handle/image/error owners. Process receive
+  stamps packets locally; setup chunks/Ready, sampler receipt and concrete
+  starting-session polls preserve all accepted origins. Public raw/borrowed-byte
+  paths cannot infer provenance; missing/mixed origin is sticky. One-shot parent
+  comparison borrows all three process owners and checks exact origin/kind/
+  binding/image, distinct PID, cancellation and starting/setup artifact references.
+  Failed/duplicate checks preserve the first record and close ordinary paths;
+  bound sampler receipt rejects origin replacement. Constructor reservations
+  cover new fixed storage and cached binding digests; wire bytes/limits unchanged.
+  Eleven CPU model regressions and one non-invoked Windows codegen/link pointer
+  test are added. Initial private-access/fixture-field errors and naming/pointer
+  lints were corrected with logs retained. Final source-bound checks/publication:
+  ROADMAP.md. No independent-agent review or actual PID/OS/DLL/thread/process/
+  pipe/GPU execution/qualification. The result is local channel provenance,
+  not live process/job/exit observation, consent, fresh safety, native admission
+  or attestation. Those prerequisites, issuance/mains, aggregate export/resources
+  and real qualification remain open; E3 partial/Gate B unmet. Full product and
+  frozen contracts unchanged; Actions remains removed/disabled.
+
 - 2026-11-05 reported starting timeline: strict receipts now retain a typed
   temporal result alongside raw lifecycle flags. Parent context requires ordered
   exported Open/Describe/Read/stop/Cleanup/completion/control receipt/drain facts

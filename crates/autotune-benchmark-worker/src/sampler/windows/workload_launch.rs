@@ -22,6 +22,13 @@ pub trait FixedDeclaration: sealed::Sealed + Send + 'static {
     fn launch_binding(&self) -> Self::Binding;
     fn launch_image(&self) -> crate::evidence::Digest;
     fn launch_arguments(&self, handles: [usize; 5]) -> io::Result<Vec<String>>;
+    fn launch_origin_binding(
+        &self,
+    ) -> (
+        crate::workload::launch_origin::Kind,
+        crate::evidence::Digest,
+        crate::evidence::Digest,
+    );
 }
 impl FixedDeclaration for Declaration {
     type Binding = crate::workload::wire::WorkerBinding;
@@ -33,6 +40,15 @@ impl FixedDeclaration for Declaration {
     }
     fn launch_image(&self) -> crate::evidence::Digest {
         self.image_digest()
+    }
+    fn launch_origin_binding(
+        &self,
+    ) -> (
+        crate::workload::launch_origin::Kind,
+        crate::evidence::Digest,
+        crate::evidence::Digest,
+    ) {
+        self.origin_parts()
     }
     fn launch_arguments(&self, handles: [usize; 5]) -> io::Result<Vec<String>> {
         self.arguments(handles)
@@ -49,6 +65,16 @@ impl FixedDeclaration for starting_bootstrap::Declaration {
     }
     fn launch_image(&self) -> crate::evidence::Digest {
         self.image_digest()
+    }
+    fn launch_origin_binding(
+        &self,
+    ) -> (
+        crate::workload::launch_origin::Kind,
+        crate::evidence::Digest,
+        crate::evidence::Digest,
+    ) {
+        use crate::workload::launch_origin::Kind;
+        (Kind::Starting, self.scope_digest(), self.tag())
     }
     fn launch_arguments(&self, handles: [usize; 5]) -> io::Result<Vec<String>> {
         self.arguments(handles)
@@ -71,6 +97,7 @@ pub struct Process<D: FixedDeclaration = Declaration> {
     image_path: PathBuf,
     image_digest: [u8; 32],
     creation: u64,
+    origin: crate::workload::launch_origin::Origin,
     transport: InheritedTransport,
     termination: Option<Result<(), u32>>,
     sender_taken: AtomicBool,
@@ -119,6 +146,7 @@ impl<D: FixedDeclaration> Process<D> {
         check(&shared)?;
         let (process, thread) = spawn_environment(&path, &command, &handles, &environment)?;
         let mut creation = None;
+        let mut origin = None;
         let mut assigned = false;
         let mut stage = "pilot_cancel_before_assignment";
         // Every post-CreateProcess failure transfers the original handle and
@@ -147,6 +175,23 @@ impl<D: FixedDeclaration> Process<D> {
             }
             creation =
                 Some((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime));
+            stage = "pilot_process_identity";
+            let pid = unsafe { GetProcessId(process.as_raw_handle()) };
+            if pid == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let (kind, binding, tag) = declaration.launch_origin_binding();
+            origin = Some(
+                crate::workload::launch_origin::Origin::new(
+                    kind,
+                    binding,
+                    tag,
+                    declaration.launch_image(),
+                    pid,
+                    creation.unwrap(),
+                )
+                .ok_or_else(|| io::Error::from_raw_os_error(ERROR_INVALID_DATA as i32))?,
+            );
             stage = "pilot_cancel_before_resume";
             check(&shared)?;
             stage = "pilot_resume";
@@ -172,6 +217,7 @@ impl<D: FixedDeclaration> Process<D> {
             let mut failure = *FailedLaunch::from_error(error).expect("created retained failure");
             failure._image = Some(image);
             failure.image = Some((path, digest));
+            failure.origin = origin;
             return Err(io::Error::other(failure));
         }
         drop(thread);
@@ -184,6 +230,7 @@ impl<D: FixedDeclaration> Process<D> {
             image_path: path,
             image_digest: digest,
             creation: creation.expect("successful creation observation"),
+            origin: origin.expect("successful process identity"),
             transport,
             termination: None,
             sender_taken: AtomicBool::new(false),
@@ -198,6 +245,9 @@ impl<D: FixedDeclaration> Process<D> {
     }
     pub fn creation_time(&self) -> u64 {
         self.creation
+    }
+    pub fn origin(&self) -> crate::workload::launch_origin::Origin {
+        self.origin
     }
     pub fn cancelled(&self) -> bool {
         self.shared.cancelled.load(Ordering::Acquire)
@@ -258,7 +308,10 @@ impl Process<starting_bootstrap::Declaration> {
 }
 impl<D: FixedDeclaration> Process<D> {
     pub fn receive(&self, clock: impl FnMut() -> Option<crate::monitor::Anchor>) -> Receive {
-        self.transport.receive(clock)
+        match self.transport.receive(clock) {
+            Receive::Packet(raw) => Receive::Packet(raw.stamp_process(self.origin)),
+            other => other,
+        }
     }
     /// Read-only inherited transport owner for a poll driver. The process keeps
     /// sole ownership; the driver may not create a second sender.
