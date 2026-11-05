@@ -2358,3 +2358,37 @@ actual OS/file/DLL/thread/process/pipe/GPU invocation/qualification is claimed.
 Native admission remains unavailable. Peer/image/process evidence, separate
 pre-setup/workload consent, fresh safety/re-entry/Start, aggregate export/resources,
 fixed mains and real qualification remain open; E3 partial and Gate B unmet.
+
+## Reported starting timeline assessment — 2026-11-05
+
+The strict reader now retains `Summary::lifecycle_timing` independently from raw
+completion flags. It returns the final drain anchor or a typed missing/clock/
+order/deadline/window/native/settings rejection. Failed or incomplete reports
+remain readable with unchanged canonical bytes. The parent context requires this
+assessment and a final drain no later than the original run origin.
+
+The reported serial timeline binds bootstrap receipt to Open, Describe and Read,
+the original stop trigger, Cleanup, completion, its separate control receipt and
+final drain. Work/stop must precede the original preflight deadline. Both trace
+and control must reference the same stop trigger; cooperative/exit times must
+exactly derive from the frozen profile, with no renewed grace. Cleanup,
+completion, receipt and drain must precede that cooperative deadline; equality
+expires. Each branch uses the existing original-epoch clock policy.
+
+NVML discovery and file checkpoints must fit inside Open, version queries inside
+Describe, and the exact starting snapshot entry and all getter pairs inside Read.
+This assesses exported reported boundaries, not omitted polling history, OS
+observation authenticity, actual cleanup, process exit or GPU quiescence. It
+creates no native admission or new heap model. Response v1/v2 bytes and resource/
+time limits remain unchanged. The successful fixture now includes the producer's
+required stop window and drain facts rather than relying on completion booleans.
+
+Three new regressions cover 15 malformed timeline variants, valid original
+cleanup/drain facts and a drain after run origin. Raw rejected reports remain
+available; the existing full-budget parent regression still applies. An initial
+test used a private object builder and was corrected to the public Object API;
+its failed compile log remains historical. Final source-bound verification and
+publication are in ROADMAP.md. No independent-agent review or actual OS/DLL/
+thread/process/pipe/GPU execution/qualification. Peer/image/process composition,
+separate consent, fresh safety/re-entry/Start, native issuance/mains, aggregate
+export/resources and real qualification remain open. E3 partial/Gate B unmet.

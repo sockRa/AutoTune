@@ -9,6 +9,19 @@ use crate::{
     monitor::Anchor,
     sampler::budget::{Budget, Reservation},
 };
+#[path = "starting_timing.rs"]
+mod timing;
+/// Reported temporal consistency only; no execution or admission authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimingFault {
+    Missing,
+    Clock,
+    Order,
+    Deadline,
+    Window,
+    Native,
+    Settings,
+}
 /// Hard bound on the canonical response, matching the exporter.
 pub const CAP: usize = super::starting_export::CAP;
 /// Fixed bound shared with the per-call ledger.
@@ -104,6 +117,7 @@ pub struct Summary {
     pub native_end: Option<Anchor>,
     pub runtime_calls_match: bool,
     pub lifecycle_complete: bool,
+    pub lifecycle_timing: Result<Anchor, TimingFault>,
     pub native_fault: Option<String>,
     pub snapshot: Option<Digest>,
     pub snapshot_error: Option<String>,
@@ -279,6 +293,13 @@ impl Receipt {
             native_end: abi_anchor(field(&document, "native_calls")?, scope, false),
             runtime_calls_match: runtime_matches(field(&document, "native_calls")?, info.as_ref()),
             lifecycle_complete: lifecycle_complete(&document),
+            lifecycle_timing: timing::assess(
+                &document,
+                scope,
+                snapshot.as_ref(),
+                runtime.as_ref(),
+                deadline_ns,
+            ),
             native_fault,
             snapshot: snapshot.as_ref().map(|s| s.snapshot().digest()),
             snapshot_error: optional_text(field(&document, "snapshot_error")?, &BLOCKS)?,

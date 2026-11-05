@@ -147,6 +147,7 @@ pub(super) fn screen(parent: &ParentSampler, input: Inputs<'_, '_>) -> Record {
         if r.response_version != 2
             || !r.lifecycle_complete
             || !r.native_abi_complete
+            || r.lifecycle_timing.is_err()
             || r.native_fault.is_some()
             || r.snapshot_error.is_some()
             || r.trace_fault.is_some()
@@ -166,6 +167,14 @@ pub(super) fn screen(parent: &ParentSampler, input: Inputs<'_, '_>) -> Record {
             .and_then(|mut c| c.observe(complete))
             .map_err(|_| Cause::Lifecycle)?;
         if elapsed > run.origin_ns() {
+            return Err(Cause::Lifecycle);
+        }
+        let drain = r.lifecycle_timing.map_err(|_| Cause::Lifecycle)?;
+        if Clock::new(binding.monitor, binding.epoch)
+            .and_then(|mut c| c.observe(drain))
+            .map_err(|_| Cause::Lifecycle)?
+            > run.origin_ns()
+        {
             return Err(Cause::Lifecycle);
         }
         if let Some(end) = snapshot.and_then(|s| {

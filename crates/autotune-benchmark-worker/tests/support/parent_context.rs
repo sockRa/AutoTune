@@ -1,5 +1,55 @@
 mod parent_context_tests {
     #[test]
+    fn reported_starting_timing_retains_typed_failures_without_discarding_raw_reports() {
+        use autotune_benchmark_worker::workload::starting_read::TimingFault;
+        for (mode, expected) in [
+            (4, TimingFault::Missing),
+            (5, TimingFault::Order),
+            (6, TimingFault::Order),
+            (7, TimingFault::Window),
+            (8, TimingFault::Deadline),
+            (9, TimingFault::Clock),
+            (10, TimingFault::Settings),
+            (11, TimingFault::Native),
+            (12, TimingFault::Native),
+            (13, TimingFault::Deadline),
+            (14, TimingFault::Missing),
+            (15, TimingFault::Window),
+            (16, TimingFault::Window),
+            (18, TimingFault::Order),
+            (19, TimingFault::Order),
+        ] {
+            let mut h = Harness::new_mode(200000, Some(mode));
+            assert_eq!(
+                h.start.summary().lifecycle_timing,
+                Err(expected),
+                "mode {mode}"
+            );
+            let bytes = h.start.canonical().to_owned();
+            assert_eq!(
+                h.check(true, true).unwrap_err().part,
+                Part::Lifecycle,
+                "mode {mode}"
+            );
+            assert_eq!(h.start.canonical(), bytes);
+            assert!(!h.parent.native_admission_available());
+        }
+    }
+    #[test]
+    fn drain_after_run_origin_cannot_be_used_as_a_pre_run_context() {
+        let mut h = Harness::new_mode(200000, Some(17));
+        assert!(h.start.summary().lifecycle_timing.is_ok());
+        assert_eq!(h.check(true, true).unwrap_err().part, Part::Lifecycle);
+    }
+    #[test]
+    fn valid_reported_timeline_keeps_original_cleanup_window_and_final_drain() {
+        let mut h = Harness::new(200000);
+        assert_eq!(h.start.summary().lifecycle_timing, Ok(a(7200)));
+        let before = h.b.used();
+        assert!(h.check(true, true).is_ok());
+        assert_eq!(h.b.used(), before);
+    }
+    #[test]
     fn missing_runtime_or_contradictory_versions_and_lifecycle_stay_distinct() {
         for mode in 0..3 {
             let mut h = Harness::new_mode(200000, Some(mode));
@@ -142,6 +192,22 @@ mod parent_context_tests {
         if path.is_empty() {
             return replacement;
         }
+        if let Value::Array(values) = v {
+            let index: usize = path[0].parse().unwrap();
+            return Value::Array(
+                values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, value)| {
+                        if i == index {
+                            edit(value, &path[1..], replacement.clone())
+                        } else {
+                            value.clone()
+                        }
+                    })
+                    .collect(),
+            );
+        }
         let mut result = autotune_benchmark_worker::evidence::Object::new();
         for (key, v) in v.as_object().unwrap().iter() {
             result
@@ -277,6 +343,8 @@ mod parent_context_tests {
         trace.cleanup_status = Some(0);
         trace.output_drained = true;
         trace.control_finished = true;
+        trace.stop_trigger = Some(a(5800));
+        trace.drain_receipt = Some(a(7200));
         let info = SamplerInfo {
             raw_uuid: s.draft().raw_uuid.clone(),
             raw_pci: s.draft().raw_pci.clone(),
@@ -306,6 +374,12 @@ mod parent_context_tests {
                     completion_receipt: Some(a(7100)),
                     finished: Some(true),
                     observed_frequency: Some(s.draft().frequency),
+                    trigger: Some(a(5800)),
+                    window: Some(autotune_benchmark_worker::workload::gate::StopWindow {
+                        trigger_ns: 5800,
+                        cooperative_ns: 1_000_005_800,
+                        exit_ns: 3_000_005_800,
+                    }),
                     ..Default::default()
                 },
                 native_failure: None,
@@ -339,7 +413,33 @@ mod parent_context_tests {
                     )
                 }
                 2 => (vec!["event_clone_error"], Value::U64(5)),
-                _ => (vec!["native_calls"], Value::Array(Vec::new())),
+                3 => (vec!["native_calls"], Value::Array(Vec::new())),
+                4 => (vec!["trace", "drain_receipt"], Value::Null),
+                5 => (vec!["control", "completion_receipt"], av(6900)),
+                6 => (vec!["trace", "calls", "3", "before"], av(5700)),
+                7 => (
+                    vec!["control", "window", "cooperative_ns"],
+                    Value::U64(1_000_005_801),
+                ),
+                8 => (vec!["trace", "drain_receipt"], av(1_000_005_800)),
+                9 => (
+                    vec!["trace", "drain_receipt", "unbiased_100ns"],
+                    Value::U64(10_000_072),
+                ),
+                10 => (vec!["trace", "calls", "2", "after"], av(5400)),
+                11 => (vec!["trace", "calls", "1", "before"], av(3060)),
+                12 => (vec!["trace", "calls", "0", "before"], av(2400)),
+                13 => (vec!["trace", "calls", "1", "after"], av(10_000_000_000)),
+                14 => (vec!["control", "window"], Value::Null),
+                15 => (vec!["control", "trigger"], av(5700)),
+                16 => (
+                    vec!["control", "window", "exit_ns"],
+                    Value::U64(3_000_005_801),
+                ),
+                17 => (vec!["trace", "drain_receipt"], av(ORIGIN + 100)),
+                18 => (vec!["trace", "calls", "1", "before"], av(3000)),
+                19 => (vec!["trace", "calls", "3", "after"], av(7050)),
+                _ => panic!("unknown timing fixture mode"),
             };
             edit(&doc, &path, value).to_canonical()
         } else {
@@ -355,6 +455,19 @@ mod parent_context_tests {
         )
         .ok()
         .unwrap()
+    }
+    fn av(n: u64) -> Value {
+        let anchor = a(n);
+        let mut value = autotune_benchmark_worker::evidence::Object::new();
+        for (key, field) in [
+            ("qpc_before", Value::U64(anchor.qpc_before)),
+            ("qpc_after", Value::U64(anchor.qpc_after)),
+            ("interrupt_100ns", Value::U64(anchor.interrupt_100ns)),
+            ("unbiased_100ns", Value::U64(anchor.unbiased_100ns)),
+        ] {
+            value.insert(key, field).unwrap();
+        }
+        Value::Object(value)
     }
     fn worker(bind: WorkerBinding, b: &Budget) -> ReadyDelivery {
         let mut f = worker_fixture::fixture(bind, d(7), 65536);

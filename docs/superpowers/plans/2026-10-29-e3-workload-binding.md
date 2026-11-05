@@ -86,6 +86,25 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 reported starting timeline: strict receipts now retain a typed
+  temporal result alongside raw lifecycle flags. Parent context requires ordered
+  exported Open/Describe/Read/stop/Cleanup/completion/control receipt/drain facts
+  under original clocks, exact original stop/cooperative/exit windows and final
+  drain before run origin. Nested discovery/file/version/getter boundaries must
+  fit their owning phases. Failed reports retain canonical bytes; no wire/limit
+  changes or admission authority. Three new tests cover 15 malformed variants,
+  valid facts and a drain after run origin, with full-budget regression retained.
+  The successful fixture now includes real producer-shape stop/drain fields.
+  An initial private-builder test compile error was corrected to public Object
+  construction, with its log retained. Source-bound final verification and
+  publication are in ROADMAP.md. No independent-agent review or actual OS/DLL/
+  thread/process/pipe/GPU execution/qualification. Retained image/creation/handle/
+  inherited-channel observations already exist in the fixed launcher; their
+  parent composition remains next, followed by consent/fresh safety/Start,
+  issuance/mains, aggregate resources/export and real qualification. E3 partial/
+  Gate B unmet; full product and frozen numeric contracts unchanged; Actions
+  remains removed/disabled.
+
 - 2026-11-05 reported parent context references: one-shot parent composition now
   retains nine independent outcomes and exact host/starting/setup/current/Ready
   references under the manifest/run/Scope. The starting reader retains budgeted
