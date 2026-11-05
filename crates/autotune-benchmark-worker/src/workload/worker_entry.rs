@@ -84,6 +84,8 @@ pub struct Outcome {
     pub control: Option<Handle>,
     pub report: Option<Report>,
     pub prepared: Option<Prepared<ClockFn, StopFn>>,
+    pub setup_report: Option<super::worker_setup::Artifact>,
+    pub setup_report_error: Option<super::worker_setup::Fault>,
     pub prepare_failure: Option<worker_native::Failure<ClockFn, StopFn>>,
     pub surplus: Option<WorkerReceived>,
     pub admission_rejection: Option<Reason>,
@@ -134,7 +136,9 @@ pub struct Failure {
 /// parent facts/consent/safety chain; bootstrap/Ready/Start cannot issue a token.
 /// NativeAdmission deliberately still has no issuer. This function is not run
 /// by a main and does not substitute an admission-denied read-only product.
-pub unsafe fn entry<A: FnOnce(&NativeSession) -> Result<NativeAdmission, Reason>>(
+pub unsafe fn entry<
+    A: FnOnce(&NativeSession, &super::worker_setup::Artifact) -> Result<NativeAdmission, Reason>,
+>(
     args: &Arguments,
     admit: A,
 ) -> Result<Outcome, Failure> {
@@ -209,6 +213,8 @@ pub unsafe fn entry<A: FnOnce(&NativeSession) -> Result<NativeAdmission, Reason>
         control: None,
         report: None,
         prepared: None,
+        setup_report: None,
+        setup_report_error: None,
         prepare_failure: None,
         surplus: None,
         admission_rejection: None,
@@ -230,7 +236,12 @@ pub unsafe fn entry<A: FnOnce(&NativeSession) -> Result<NativeAdmission, Reason>
     run(&mut out, admit);
     Ok(out)
 }
-fn run<A: FnOnce(&NativeSession) -> Result<NativeAdmission, Reason>>(out: &mut Outcome, admit: A) {
+fn run<
+    A: FnOnce(&NativeSession, &super::worker_setup::Artifact) -> Result<NativeAdmission, Reason>,
+>(
+    out: &mut Outcome,
+    admit: A,
+) {
     let captures = out.captures.clone();
     let (bootstrap, port, _, event, budget) = out.context.parts();
     let binding = bootstrap.binding();
@@ -310,6 +321,18 @@ fn run<A: FnOnce(&NativeSession) -> Result<NativeAdmission, Reason>>(out: &mut O
                 return Err(Fault::Native);
             }
         }
+        match out
+            .prepared
+            .as_ref()
+            .expect("preparation owner")
+            .setup_artifact(budget)
+        {
+            Ok(report) => out.setup_report = Some(report),
+            Err(error) => {
+                out.setup_report_error = Some(error);
+                return Err(Fault::Export);
+            }
+        }
         let Preparation::Ready { session, facts } =
             &mut out.prepared.as_mut().expect("preparation owner").result
         else {
@@ -333,7 +356,12 @@ fn run<A: FnOnce(&NativeSession) -> Result<NativeAdmission, Reason>>(out: &mut O
                 thread::sleep(Duration::from_nanos(p.controller_tick_ns));
             }
         }
-        let admission = match admit(session) {
+        let admission = match admit(
+            session,
+            out.setup_report
+                .as_ref()
+                .expect("setup report before Ready"),
+        ) {
             Ok(v) => v,
             Err(reason) => {
                 out.admission_rejection = Some(reason);
@@ -540,7 +568,10 @@ mod tests {
     use super::*;
     #[test]
     fn full_generic_entry_is_monomorphized_and_linked_without_invocation() {
-        type Admit = fn(&NativeSession) -> Result<NativeAdmission, Reason>;
+        type Admit = fn(
+            &NativeSession,
+            &super::super::worker_setup::Artifact,
+        ) -> Result<NativeAdmission, Reason>;
         let pointer: unsafe fn(&Arguments, Admit) -> Result<Outcome, Failure> = entry::<Admit>;
         // Force code generation of the complete real entry. Never call the
         // pointer: this test performs no adoption, thread/DLL load or GPU work.

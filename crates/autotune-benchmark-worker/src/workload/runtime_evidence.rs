@@ -217,29 +217,7 @@ pub(super) fn value(input: Input<'_>, ledger: &Ledger) -> Result<Value, Block> {
             load_error,
             initialization,
         } => {
-            let error = load_error
-                .map(|e| {
-                    use std::error::Error;
-                    match e {
-                        autotune_probe::nvml::RuntimeLoadError::LoadLibraryExW { .. } => {
-                            Ok(LoadError {
-                                known: true,
-                                code: e
-                                    .source()
-                                    .and_then(|s| s.downcast_ref::<std::io::Error>())
-                                    .and_then(std::io::Error::raw_os_error),
-                            })
-                        }
-                        autotune_probe::nvml::RuntimeLoadError::LoadLibraryExWUnknown => {
-                            Ok(LoadError {
-                                known: false,
-                                code: None,
-                            })
-                        }
-                        _ => Err(Block::Scope),
-                    }
-                })
-                .transpose()?;
+            let error = load_error.map(runtime_load_error).transpose()?;
             (
                 file.map(|f| f.record()),
                 error,
@@ -401,7 +379,7 @@ fn identity(i: Identity) -> Value {
         ("file_type_error", ou(i.file_type_error)),
     ])
 }
-fn file_value(f: &FileRecord) -> Value {
+pub(super) fn file_value(f: &FileRecord) -> Value {
     object([
         (
             "kind",
@@ -490,7 +468,7 @@ fn file_value(f: &FileRecord) -> Value {
         ("bound", Value::Bool(f.bound)),
     ])
 }
-fn check_value(c: &FileCheck) -> Value {
+pub(super) fn check_value(c: &FileCheck) -> Value {
     let (name, index) = stage(c.stage);
     object([
         ("stage", text(name)),
@@ -526,7 +504,7 @@ fn stage(s: Stage) -> (&'static str, Option<u32>) {
         Stage::LoadedMetadataAfter => ("loaded_metadata_after", None),
     }
 }
-fn read_check(v: &Value) -> Result<FileCheck, Fault> {
+pub(super) fn read_check(v: &Value) -> Result<FileCheck, Fault> {
     let o = obj(v, &["stage", "index", "anchor"])?;
     let name = txt(get(o, "stage")?)?;
     let index = optional(get(o, "index")?, num::<u32>)?;
@@ -704,7 +682,7 @@ fn read_identity(v: &Value) -> Result<Identity, Fault> {
         file_type_error: optional(get(o, "file_type_error")?, num::<u32>)?,
     })
 }
-fn read_file(v: &Value) -> Result<FileRecord, Fault> {
+pub(super) fn read_file(v: &Value) -> Result<FileRecord, Fault> {
     let o = obj(
         v,
         &[
@@ -793,4 +771,25 @@ fn read_file(v: &Value) -> Result<FileRecord, Fault> {
         held: boolv(get(o, "held")?)?,
         bound: boolv(get(o, "bound")?)?,
     })
+}
+
+#[cfg(windows)]
+pub(super) fn runtime_load_error(
+    e: &autotune_probe::nvml::RuntimeLoadError,
+) -> Result<LoadError, Block> {
+    use std::error::Error;
+    match e {
+        autotune_probe::nvml::RuntimeLoadError::LoadLibraryExW { .. } => Ok(LoadError {
+            known: true,
+            code: e
+                .source()
+                .and_then(|s| s.downcast_ref::<std::io::Error>())
+                .and_then(std::io::Error::raw_os_error),
+        }),
+        autotune_probe::nvml::RuntimeLoadError::LoadLibraryExWUnknown => Ok(LoadError {
+            known: false,
+            code: None,
+        }),
+        _ => Err(Block::Scope),
+    }
 }

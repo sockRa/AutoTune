@@ -29,6 +29,7 @@ mod sampler_native;
 pub mod sampler_runtime;
 pub mod settings;
 pub mod settings_transport;
+pub mod setup_model;
 pub mod starting;
 pub mod starting_bootstrap;
 pub mod starting_control;
@@ -50,6 +51,7 @@ pub mod trace;
 pub mod transport;
 #[cfg(windows)]
 pub mod windows_transport;
+pub mod worker_setup;
 #[cfg(windows)]
 pub use crate::sampler::windows::workload_launch as windows_process;
 pub mod wire;

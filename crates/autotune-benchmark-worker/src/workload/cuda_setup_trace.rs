@@ -9,33 +9,10 @@ use crate::{
 };
 use std::sync::Arc;
 
-// Adapter permits at most 64 devices, two calls each, five attributes for the
-// unique match, four initial calls, two host environment reads and ten
-// context/module/buffer/stream calls. Storage is prepaid, not a workload budget.
-const CAP: usize = 2 + 4 + 64 * 2 + 5 + 10;
+pub use super::nvml_trace::FileCheck;
+use super::setup_model::CAP;
+pub use super::setup_model::{Entry, Fault};
 use autotune_probe::runtime_file::{Stage, MAX_CHECKS};
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FileCheck {
-    pub stage: Stage,
-    pub anchor: Option<Anchor>,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fault {
-    Binding,
-    Capacity,
-    Clock,
-    Deadline,
-    Stopped,
-    Protocol,
-    Native(i32),
-}
-pub struct Entry {
-    pub operation: SetupOperation,
-    pub before: Option<Anchor>,
-    pub after: Option<Anchor>,
-    pub attempted: bool,
-    pub raw: Option<SetupReturn>,
-}
 pub struct Ledger {
     binding: WorkerBinding,
     shared: Arc<Shared>,
@@ -123,6 +100,9 @@ impl Ledger {
             file_checks,
             file_overflow: None,
         })
+    }
+    pub fn deadline_raw(&self) -> u64 {
+        self.deadline_raw
     }
     pub fn entries(&self) -> &[Entry] {
         &self.entries

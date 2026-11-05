@@ -7,6 +7,7 @@ use autotune_benchmark_worker::{
         manifest::{Artifacts, PilotDraft, PilotManifest},
     },
 };
+include!("support/worker_setup.rs");
 fn digest(n: u8) -> Digest {
     Digest::parse(&format!("{n:02x}").repeat(32)).unwrap()
 }

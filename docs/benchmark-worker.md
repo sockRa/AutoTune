@@ -2181,6 +2181,48 @@ pre/post rejection, raw retention across unwind, original deadline/stop and full
 prepaid memory pressure. Existing every-call failure and clock-boundary tests now
 include the mode query. Final source-bound verification/publication is recorded
 in ROADMAP.md. No actual environment API, DLL, process, pipe, thread or GPU
-execution was performed. These new worker facts still need bounded canonical
-export and strict parent reading/composition with the host and starting artifacts
-before Ready/Start admission. E3 remains partial and Gate B unmet.
+execution was performed. The following continuation exports these retained facts;
+transport, acceptance assessment and parent composition with host/starting
+artifacts before Ready/Start admission remain open. E3 partial/Gate B unmet.
+
+## Retained worker setup artifact and reader — 2026-11-05
+
+`worker_setup::Artifact` now serializes one retained Prepared outcome: CUDA setup
+failed, CPU preparation failed, or ready. It binds the exact WorkerBinding and
+original raw setup deadline, and preserves environment/mode/version values,
+native/CPU failures, file/loader facts, every setup entry/return, pending state,
+first ledger fault, rejected returns, and full file-clock/overflow history.
+Portable setup types preserve the CUDA-facing aliases and raw integer ABI.
+The file/path codec is shared with the starting response; its v1/v2 bytes and
+semantics are unchanged. Exact UTF-16 and unknown status/clock facts stay raw.
+
+The strict structural parent reader checks canonicality, the delivered RawArtifact
+digest, exact run binding/deadline, closed schemas/enums, numeric widths and
+bounded paths/histories. Bad or missing per-call clocks and failed/contradictory
+reported facts remain readable evidence; parsing does not assess native setup
+acceptance. Fixture construction always labels simulated. A native-source label
+authenticates no observation, ownership or consent, and there is no admission
+issuer or qualification result in the codec.
+
+The canonical artifact cap is 2 MiB. Codec storage is prepaid at 16 MiB and
+retained canonical/typed storage at 4 MiB plus owner size. Oversized reports fail
+explicitly, without truncating their original ledgers. The tested maximum-count
+fixture fits both 149 setup entries and all 8218 file checks, with overflow.
+Application reservations are not an OS-commit or aggregate metadata proof.
+
+The actual opt-in worker entry freezes and retains this artifact before Ready.
+Failure to build it stops that path while preserving the original Prepared owner
+and the typed export error. Its future admission callback now receives both the
+session and artifact. This entry is compiled/linked through a non-invoked pointer;
+no executable calls it. Seven CPU regressions cover all operation/output shapes,
+partial file/native/CPU failures, exact binding/deadline/digest rejection,
+malformed schema/widths/unions, maximum histories, budget release and untrusted
+source/clock claims. Source-bound final verification/publication: ROADMAP.md.
+
+Chunk transport and parent retention/assessment before Ready/Start still need
+composition; no pipe delivery is claimed here. Early startup/prepare failures
+before a Prepared ledger exists remain separately retained and need aggregate
+export. Complete host/starting/runtime references, peer/image/process/consent,
+fresh safety/re-entry/Start, native admission/main, cross-role resource limits
+and real qualification remain open. No actual environment API, file/DLL, entry,
+thread/process/pipe/GPU invocation or hardware qualification was performed.

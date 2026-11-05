@@ -1,41 +1,7 @@
 // Included in the opt-in Windows CUDA adapter. No setup is executed by inclusion.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SetupOperation {
-    Environment(crate::workload::child_options::Variable),
-    Initialize,
-    DriverVersion,
-    ModuleLoadingMode,
-    DeviceCount,
-    Device(u32),
-    Uuid(i32),
-    Attribute { device: i32, attribute: i32 },
-    ContextCreate,
-    ContextDevice,
-    ModuleLoad,
-    Function,
-    MemoryInfo,
-    Allocate(u8),
-    StreamCreate,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SetupOutput {
-    /// Host Win32 return; SetupReturn.status is zero for this non-CUDA operation.
-    Environment(crate::workload::child_options::Read),
-    None,
-    Integer(i32),
-    Uuid([u8; 16]),
-    HandleIsNull(bool),
-    Memory {
-        free: usize,
-        total: usize,
-    },
-    AllocationIsZero(bool),
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SetupReturn {
-    pub status: i32,
-    pub output: SetupOutput,
-}
+pub use crate::workload::setup_model::{
+    Operation as SetupOperation, Output as SetupOutput, Return as SetupReturn,
+};
 /// Reserve evidence before approving entry. `returned` receives actual status
 /// and initialized output fields before post-clock validation. Observer methods
 /// call no driver; any rejection aborts setup without a successor or cleanup.
@@ -101,6 +67,9 @@ fn capture_child_options(
     Ok(())
 }
 impl SetupFailure {
+    pub fn driver_version(&self) -> Option<i32> {
+        self.backend.as_ref().map(CudaBackend::driver_version)
+    }
     pub fn child_options(&self) -> crate::workload::child_options::Facts {
         self.backend
             .as_ref()

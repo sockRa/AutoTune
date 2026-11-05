@@ -182,3 +182,91 @@ pub unsafe fn prepare<
         _metadata: metadata,
     })
 }
+
+impl<C: FnMut() -> Option<Anchor> + 'static, S: FnMut() -> Option<StopWindow> + 'static>
+    Prepared<C, S>
+{
+    /// Detach only retained facts, with model/codec reservations before copies.
+    /// No driver, OS query, cleanup or native admission occurs here.
+    pub fn setup_artifact(
+        &self,
+        budget: &Budget,
+    ) -> Result<super::worker_setup::Artifact, super::worker_setup::Fault> {
+        use super::worker_setup::{Artifact, Facts, File, Preparation as Stage};
+        let (stage, cpu_fault, native_fault, backend, failure) = match &self.result {
+            Preparation::Ready { session, .. } => (
+                Stage::Ready,
+                None,
+                None,
+                Some(session.producer().setup_backend()),
+                None,
+            ),
+            Preparation::SetupFailed { failure, .. } => (
+                Stage::CudaFailed,
+                None,
+                Some(&failure.fault),
+                None,
+                Some(failure),
+            ),
+            Preparation::PrepareFailed(f) => {
+                use super::producer::Fault;
+                let name = match f.fault {
+                    Fault::Admission => "admission",
+                    Fault::Binding => "binding",
+                    Fault::Capacity => "capacity",
+                    Fault::Clock => "clock",
+                    Fault::Deadline => "deadline",
+                    Fault::Protocol => "protocol",
+                    Fault::Native(_) => "native",
+                    Fault::Incorrect => "incorrect",
+                    Fault::Length => "length",
+                    Fault::Transport => "transport",
+                };
+                let native = if let Fault::Native(n) = &f.fault {
+                    Some(n)
+                } else {
+                    None
+                };
+                (Stage::CpuFailed, Some(name), native, Some(&f.driver), None)
+            }
+        };
+        let file = backend
+            .and_then(CudaBackend::runtime_file)
+            .or_else(|| failure.and_then(SetupFailure::runtime_file));
+        let load_error = failure
+            .and_then(SetupFailure::load_error)
+            .map(super::runtime_evidence::runtime_load_error)
+            .transpose()
+            .map_err(|_| super::worker_setup::Fault::Shape)?;
+        Artifact::native(
+            self.binding,
+            Facts {
+                first: self.first,
+                deadline_raw: self.setup.deadline_raw(),
+                preparation: stage,
+                cpu_fault,
+                native_fault,
+                entries: self.setup.entries(),
+                pending: self.setup.pending(),
+                fault: self.setup.fault(),
+                overflow: self.setup.overflow(),
+                rejected: self.setup.rejected_return(),
+                file_checks: self.setup.file_checks(),
+                file_overflow: self.setup.file_overflow(),
+                file: file.map(File::Native),
+                load_error,
+                environment: backend
+                    .map(CudaBackend::child_options)
+                    .or_else(|| failure.map(SetupFailure::child_options))
+                    .unwrap_or_default(),
+                driver_version: backend
+                    .map(CudaBackend::driver_version)
+                    .or_else(|| failure.and_then(SetupFailure::driver_version)),
+                module_loading_mode: backend
+                    .map(CudaBackend::module_loading_mode)
+                    .or_else(|| failure.and_then(SetupFailure::module_loading_mode)),
+            },
+            budget,
+        )
+    }
+}

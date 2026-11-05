@@ -86,6 +86,28 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 retained worker setup artifact/reader: portable setup types preserve
+  CUDA aliases while the canonical artifact covers each Prepared outcome, exact
+  WorkerBinding/original deadline, full raw ABI/file-clock ledgers, pending/first
+  fault/rejected/overflow, environment/mode/version, retained file/loader and
+  native/CPU preparation failures. Shared file/load-error codecs preserve starting
+  response bytes. The strict structural parent reader binds canonical bytes and
+  delivered digest with closed schema/width/capacity checks; failed/bad-clock and
+  contradictory facts remain raw, never native acceptance or consent. Actual
+  entry freezes/retains the report before Ready and passes it to the future
+  admission callback; report failure preserves the original owner and stops.
+  Seven new portable CPU regressions cover schemas, every operation/output,
+  failures, exact run/deadline/digest, maximum count histories and budget pressure.
+  Initial missing integer helper and test Object iterator errors were corrected,
+  with historical logs retained. Source-bound checks/publication: ROADMAP.md.
+  No independent-agent review or actual OS/file/DLL/entry/thread/process/pipe/GPU
+  execution/qualification. Next: bounded chunk transport and retained parent
+  receipt/assessment before Ready/Start; early pre-Prepared failures and aggregate
+  metadata/session export remain separate. Full parent peer/image/process/
+  consent, host/starting/runtime composition, fresh safety/re-entry/Start, native
+  issuer/main and real qualification remain open. E3 partial/Gate B unmet; frozen
+  numeric contracts/full product goal unchanged and hosted Actions stays disabled.
+
 - 2026-11-05 child CUDA options and mode readback: the exact child-only launcher
   block now requests cache-disable and EAGER module loading. Actual opt-in setup
   reads both fixed keys once before opening a DLL; failed/missing/oversized or
