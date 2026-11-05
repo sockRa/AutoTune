@@ -403,6 +403,9 @@ pub struct ReadyDelivery {
     >,
 }
 impl ReadyDelivery {
+    pub(crate) fn close_reference_path(&mut self) {
+        self.receiver.decoder.poison();
+    }
     /// One retained assessment of reported assertions. A rejection poisons the
     /// ordinary decoder; independent stop/control and native authority remain
     /// the parent's responsibility. Calling again returns the original result.

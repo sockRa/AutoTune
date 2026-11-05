@@ -321,6 +321,9 @@ impl Snapshot {
         self.digest = Digest::of(Domain::RawArtifact, self.canonical.as_bytes());
         Ok(())
     }
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
     pub fn canonical(&self) -> &str {
         &self.canonical
     }

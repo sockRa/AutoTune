@@ -22,6 +22,7 @@ use crate::{
 use autotune_probe::report::{Reading, Runtime, SymbolPresence};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
+    Context,
     Capacity,
     Binding,
     Clock,
@@ -157,10 +158,42 @@ pub struct ParentSampler {
         crate::evidence::Digest,
         Result<(), super::host_environment::Fault>,
     )>,
+    context_check: Option<super::parent_context::Record>,
     budget: Budget,
     _metadata: Reservation,
 }
 impl ParentSampler {
+    pub(super) fn context_binding(&self) -> WorkerBinding {
+        self.binding
+    }
+    pub(super) fn context_open(&self) -> bool {
+        self.fault.is_none() && !self.finishing && !self.reported_finished
+    }
+    pub fn context_check(&self) -> Option<&super::parent_context::Record> {
+        self.context_check.as_ref()
+    }
+    /// One reported-reference check only. No peer/consent/safety authority or
+    /// native admission follows; raw artifacts remain owned by the caller.
+    pub fn check_context(
+        &mut self,
+        input: super::parent_context::Inputs<'_, '_>,
+    ) -> Result<super::parent_context::Summary, super::parent_context::Rejection> {
+        if self.context_check.is_some() {
+            input.worker.close_reference_path();
+            self.fail(Fault::Protocol, self.now_ns);
+            return Err(super::parent_context::Rejection {
+                part: super::parent_context::Part::Duplicate,
+                cause: super::parent_context::Cause::Binding,
+            });
+        }
+        let record = super::parent_context::screen(self, input);
+        let result = record.result;
+        self.context_check = Some(record);
+        if result.is_err() {
+            self.fail(Fault::Context, self.now_ns);
+        }
+        result
+    }
     pub fn environment_check(
         &self,
     ) -> Option<(
@@ -404,6 +437,7 @@ impl ParentSampler {
             miss_count: 0,
             starting_check: None,
             environment_check: None,
+            context_check: None,
             budget,
             _metadata: metadata,
         };
@@ -990,7 +1024,7 @@ impl ParentSampler {
         result
     }
 }
-fn runtime_valid(r: &Runtime) -> bool {
+pub(super) fn runtime_valid(r: &Runtime) -> bool {
     let text = |f: &autotune_probe::report::Field| {
         f.unit == "text"
             && f.symbol_presence == SymbolPresence::Present

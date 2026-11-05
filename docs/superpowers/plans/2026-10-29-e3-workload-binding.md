@@ -86,6 +86,24 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 reported parent context references: one-shot parent composition now
+  retains nine independent outcomes and exact host/starting/setup/current/Ready
+  references under the manifest/run/Scope. The starting reader retains budgeted
+  Runtime information and derives ABI/version/lifecycle flags without changing
+  v1/v2 bytes. Exact version/path and original/current settings consistency are
+  checked; failed or duplicate checks close ordinary paths and keep the first
+  result. Eight CPU regressions; final source-bound 647 CPU tests, formatting,
+  scoped warning-denied Clippy, full workspace/all-feature linking and Linux
+  check pass; manifests and publication are in ROADMAP.md. Initial fixture/API/
+  import/lint errors and oversized late-reader attempts remain historical; the
+  latter were fixed by constructing input before parent reservations, with the
+  32 MiB quota unchanged. No independent-agent review or actual native/process/
+  GPU execution/qualification. Reported consistency grants no peer authentication,
+  consent, fresh safety or native admission. Complete trace qualification,
+  peer/image/process evidence, consent/safety/Start, aggregate export/resources,
+  mains, real qualification and the full product remain open. E3 partial/Gate B
+  unmet; frozen contracts unchanged and GitHub Actions remains removed/disabled.
+
 - 2026-11-05 reported worker setup assessment: strict receipts retain their
   verified binding and a pure screen now checks complete environment/file/CUDA
   ordering, statuses, original clocks/deadline, unique readable enumeration and

@@ -2324,3 +2324,37 @@ environment API/DLL/process/pipe/thread/GPU invocation or hardware qualification
 Complete parent fact composition, fresh safety/consent, qualified native issuance,
 aggregate resources/export, mains and real qualification remain open. E3 partial,
 Gate B unmet; full automatic benchmark/search/validation goal unchanged.
+
+## Reported parent context references — 2026-11-05
+
+`ParentSampler::check_context` composes nine independent reported checks once:
+exact manifest/run/worker binding, shared capture Scope, host facts, original
+settings, starting completion/ABI flags and causal boundaries, NVML file/runtime
+assessment, cross-role versions/path, retained worker setup assessment and current
+settings equality. The retained Record includes all outcomes and exact artifact
+references, including sampler Ready and current-response raw-frame digests.
+Missing and contradictory facts remain distinct. Rejection faults the parent and
+poisons ordinary worker decoding; a repeated check keeps the first Record and
+rejects the successor. Independent stop/control remains the caller's obligation.
+
+The strict starting reader now retains the validated SamplerInfo and complete
+Runtime fields under an additional reservation of twice its JSON length plus
+64 KiB. Response v1/v2 bytes and numeric limits are unchanged. Derived flags
+require successful ordered discovery/version ABI entries and retained lifecycle
+completion flags; versions must agree with raw NVML results and later sampler/
+worker reports. The screen compares exact requested NVML UTF-16 path bytes.
+These checks authenticate no OS observation, process identity or human consent.
+Lifecycle flags and selected causal boundaries do not qualify the entire trace.
+Original artifact owners must remain retained/exported by the caller.
+
+Eight CPU regressions cover consistent claimed-native reports, missing/conflicting
+versions, failed completion, missing ABI history, changed settings, aliased Scope,
+wrong run, duplicate checks and prepaid storage under full ledger pressure.
+Initial fixture/API/import/lint failures and two oversized late reader attempts
+remain in historical logs. Constructing negative input in the pre-parent phase
+fixed those attempts without raising the 32 MiB quota. Final source-bound local
+checks/publication are recorded in ROADMAP.md. No independent-agent review or
+actual OS/file/DLL/thread/process/pipe/GPU invocation/qualification is claimed.
+Native admission remains unavailable. Peer/image/process evidence, separate
+pre-setup/workload consent, fresh safety/re-entry/Start, aggregate export/resources,
+fixed mains and real qualification remain open; E3 partial and Gate B unmet.

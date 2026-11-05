@@ -14,6 +14,7 @@ use autotune_benchmark_worker::{
 };
 use autotune_probe::{nvml::SettingMetric, report::Field};
 const LIMIT: usize = 24 * 1024 * 1024;
+include!("support/parent_context.rs");
 fn budget() -> Budget {
     Budget::new(LIMIT).unwrap()
 }

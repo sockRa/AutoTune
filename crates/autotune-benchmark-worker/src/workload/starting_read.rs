@@ -99,6 +99,11 @@ pub struct Summary {
     pub receipt: Anchor,
     pub deadline_ns: u64,
     pub native_calls: usize,
+    pub native_abi_complete: bool,
+    pub native_begin: Option<Anchor>,
+    pub native_end: Option<Anchor>,
+    pub runtime_calls_match: bool,
+    pub lifecycle_complete: bool,
     pub native_fault: Option<String>,
     pub snapshot: Option<Digest>,
     pub snapshot_error: Option<String>,
@@ -115,6 +120,8 @@ pub struct Summary {
 }
 /// One strictly read response bound to the parent's frozen scope/declaration.
 pub struct Receipt {
+    info: Option<autotune_probe::nvml::SamplerInfo>,
+    _info_allocation: Option<Reservation>,
     runtime: Option<super::runtime_evidence::Reported>,
     summary: Summary,
     snapshot: Option<super::starting::ReportedSnapshot>,
@@ -220,7 +227,7 @@ impl Receipt {
         if observed_deadline != deadline_ns {
             return Err(Fault::Deadline);
         }
-        info(field(&document, "info")?, scope)?;
+        let (info, info_allocation) = info(field(&document, "info")?, scope, budget)?;
         let runtime_allocation = if response_version == 2 {
             Some(budget.reserve(CAP).map_err(|_| Fault::Capacity)?)
         } else {
@@ -267,6 +274,11 @@ impl Receipt {
             receipt,
             deadline_ns: observed_deadline,
             native_calls,
+            native_abi_complete: abi_complete(field(&document, "native_calls")?, scope),
+            native_begin: abi_anchor(field(&document, "native_calls")?, scope, true),
+            native_end: abi_anchor(field(&document, "native_calls")?, scope, false),
+            runtime_calls_match: runtime_matches(field(&document, "native_calls")?, info.as_ref()),
+            lifecycle_complete: lifecycle_complete(&document),
             native_fault,
             snapshot: snapshot.as_ref().map(|s| s.snapshot().digest()),
             snapshot_error: optional_text(field(&document, "snapshot_error")?, &BLOCKS)?,
@@ -288,6 +300,8 @@ impl Receipt {
             },
         };
         Ok(Self {
+            info,
+            _info_allocation: info_allocation,
             runtime,
             summary,
             snapshot,
@@ -298,6 +312,9 @@ impl Receipt {
             _allocation: allocation,
             _runtime_allocation: runtime_allocation,
         })
+    }
+    pub fn info(&self) -> Option<&autotune_probe::nvml::SamplerInfo> {
+        self.info.as_ref()
     }
     pub fn summary(&self) -> &Summary {
         &self.summary
@@ -405,9 +422,13 @@ fn optional_anchor(value: &Value) -> Result<Option<Anchor>, Fault> {
         other => anchor(other).map(Some),
     }
 }
-fn info(value: &Value, scope: &Scope) -> Result<(), Fault> {
+type Info = (
+    Option<autotune_probe::nvml::SamplerInfo>,
+    Option<Reservation>,
+);
+fn info(value: &Value, scope: &Scope, budget: &Budget) -> Result<Info, Fault> {
     if matches!(value, Value::Null) {
-        return Ok(());
+        return Ok((None, None));
     }
     let object = exact(value, &["raw_uuid", "raw_pci", "runtime"])?;
     if text(object, "raw_uuid")? != scope.draft().raw_uuid
@@ -416,8 +437,14 @@ fn info(value: &Value, scope: &Scope) -> Result<(), Fault> {
         return Err(Fault::Scope);
     }
     match field(object, "runtime")? {
-        Value::Null => Ok(()),
+        Value::Null => Ok((None, None)),
         Value::Text(raw) => {
+            let bytes = raw
+                .len()
+                .checked_mul(2)
+                .and_then(|n| n.checked_add(64 * 1024))
+                .ok_or(Fault::Capacity)?;
+            let allocation = budget.reserve(bytes).map_err(|_| Fault::Capacity)?;
             crate::sampler::wire::validate_complexity_limit(raw.as_bytes(), 256)
                 .map_err(|_| Fault::Capacity)?;
             let runtime: autotune_probe::report::Runtime =
@@ -425,7 +452,14 @@ fn info(value: &Value, scope: &Scope) -> Result<(), Fault> {
             if serde_json::to_string(&runtime).map_err(|_| Fault::Shape)? != *raw {
                 return Err(Fault::Shape);
             }
-            Ok(())
+            Ok((
+                Some(autotune_probe::nvml::SamplerInfo {
+                    raw_uuid: scope.draft().raw_uuid.clone(),
+                    raw_pci: scope.draft().raw_pci.clone(),
+                    runtime,
+                }),
+                Some(allocation),
+            ))
         }
         _ => Err(Fault::Shape),
     }
@@ -446,6 +480,231 @@ fn calls(value: &Value) -> Result<usize, Fault> {
         }
     }
     Ok(entries.len())
+}
+fn abi_complete(value: &Value, scope: &Scope) -> bool {
+    let check = || -> Result<(), Fault> {
+        let entries = array(value)?;
+        let first = entries.first().ok_or(Fault::Shape)?;
+        if text(object(first)?, "call")? != "initialize" {
+            return Err(Fault::Shape);
+        }
+        if !discovery_matches(entries, scope)? {
+            return Err(Fault::Shape);
+        }
+        let d = scope.draft();
+        let mut clock = crate::monitor::clock::Clock::temporal(d.frequency, d.clock_token, d.epoch)
+            .map_err(|_| Fault::Epoch)?;
+        let mut last = d.epoch;
+        for e in entries {
+            let o = object(e)?;
+            if !boolean_field(o, "attempted")? {
+                return Err(Fault::Shape);
+            }
+            for name in ["before", "after"] {
+                let mut a = anchor(field(o, name)?)?;
+                a.clock_token = d.clock_token;
+                if a.qpc_before < last.qpc_after
+                    || clock.observe(a).map_err(|_| Fault::Epoch)?
+                        >= autotune_fma_reference::profile::Profile::approved_design()
+                            .limits
+                            .preflight_ns
+                {
+                    return Err(Fault::Epoch);
+                }
+                last = a;
+            }
+            if int(object(field(o, "raw")?)?, "status")? != 0 {
+                return Err(Fault::Shape);
+            }
+        }
+        Ok(())
+    };
+    check().is_ok()
+}
+fn abi_anchor(value: &Value, scope: &Scope, first: bool) -> Option<Anchor> {
+    let entries = value.as_array()?;
+    let e = if first {
+        entries.first()?
+    } else {
+        entries.last()?
+    };
+    let o = e.as_object()?;
+    let mut a = anchor(o.get(if first { "before" } else { "after" })?).ok()?;
+    a.clock_token = scope.draft().clock_token;
+    Some(a)
+}
+fn discovery_matches(entries: &[Value], scope: &Scope) -> Result<bool, Fault> {
+    let output = |index: usize| -> Result<&Value, Fault> {
+        let e = object(entries.get(index).ok_or(Fault::Shape)?)?;
+        field(object(field(e, "raw")?)?, "output")
+    };
+    if output(0)? != &Value::Null {
+        return Ok(false);
+    }
+    let count_entry = object(entries.get(1).ok_or(Fault::Shape)?)?;
+    if text(count_entry, "call")? != "count" {
+        return Ok(false);
+    }
+    let count = object(output(1)?)?;
+    if text(count, "kind")? != "count" {
+        return Ok(false);
+    }
+    let count = uint(count, "value")?;
+    if !(1..=1024).contains(&count) || entries.len() != 5 + count as usize * 3 {
+        return Ok(false);
+    }
+    let identity =
+        crate::worker::DiscoveryBinding::parse(&scope.draft().raw_uuid, &scope.draft().raw_pci)
+            .map_err(|_| Fault::Scope)?
+            .identity;
+    let mut matched = 0;
+    for index in 0..count as usize {
+        let at = 2 + index * 3;
+        for (offset, name) in ["handle", "uuid", "pci"].into_iter().enumerate() {
+            if text(object(&entries[at + offset])?, "call")? != format!("{name}:{index}") {
+                return Ok(false);
+            }
+        }
+        let handle = object(output(at)?)?;
+        if text(handle, "kind")? != "handle_is_null" || boolean_field(handle, "value")? {
+            return Ok(false);
+        }
+        let uuid = object(output(at + 1)?)?;
+        if text(uuid, "kind")? != "text" {
+            return Ok(false);
+        }
+        let uuid: [u8; 256] =
+            crate::sampler::wire_model::unhex(field(uuid, "hex")?).map_err(|_| Fault::Shape)?;
+        let pci = object(output(at + 2)?)?;
+        if text(pci, "kind")? != "pci" {
+            return Ok(false);
+        }
+        let bus: [u8; 32] =
+            crate::sampler::wire_model::unhex(field(pci, "bus_id")?).map_err(|_| Fault::Shape)?;
+        let text = |v: &[u8], expected: &str| {
+            v.iter()
+                .position(|n| *n == 0)
+                .and_then(|n| std::str::from_utf8(&v[..n]).ok())
+                .is_some_and(|s| s == expected)
+        };
+        if text(&uuid, &scope.draft().raw_uuid) && text(&bus, &scope.draft().raw_pci) {
+            matched += 1;
+            let numbers = array(field(pci, "numbers")?)?;
+            if numbers[0].as_u64().ok() != Some(identity.domain.into())
+                || numbers[1].as_u64().ok() != Some(identity.bus.into())
+                || numbers[2].as_u64().ok() != Some(identity.device.into())
+            {
+                return Ok(false);
+            }
+        }
+    }
+    for (i, name) in ["cuda_version", "driver_version", "nvml_version"]
+        .into_iter()
+        .enumerate()
+    {
+        if text(object(&entries[2 + count as usize * 3 + i])?, "call")? != name {
+            return Ok(false);
+        }
+    }
+    Ok(matched == 1)
+}
+fn runtime_matches(value: &Value, info: Option<&autotune_probe::nvml::SamplerInfo>) -> bool {
+    use autotune_probe::report::Reading;
+    let check = || -> Result<(), Fault> {
+        let info = info.ok_or(Fault::Shape)?;
+        let entries = array(value)?;
+        for (call, expected) in [
+            ("cuda_version", &info.runtime.cuda_driver_version),
+            ("driver_version", &info.runtime.driver_version),
+            ("nvml_version", &info.runtime.nvml_version),
+        ] {
+            let mut selected = None;
+            for e in entries {
+                let o = object(e)?;
+                if text(o, "call")? == call {
+                    if selected.is_some() {
+                        return Err(Fault::Shape);
+                    }
+                    selected = Some(o);
+                }
+            }
+            let e = selected.ok_or(Fault::Shape)?;
+            if !boolean_field(e, "attempted")? {
+                return Err(Fault::Shape);
+            }
+            let raw = object(field(e, "raw")?)?;
+            if int(raw, "status")? != 0 {
+                return Err(Fault::Shape);
+            }
+            let output = object(field(raw, "output")?)?;
+            let Reading::Available { value } = &expected.reading else {
+                return Err(Fault::Shape);
+            };
+            if call == "cuda_version" {
+                if text(output, "kind")? != "version"
+                    || value.as_i64() != Some(int(output, "value")?)
+                {
+                    return Err(Fault::Shape);
+                }
+            } else {
+                if text(output, "kind")? != "text" {
+                    return Err(Fault::Shape);
+                }
+                let bytes: [u8; 256] = crate::sampler::wire_model::unhex(field(output, "hex")?)
+                    .map_err(|_| Fault::Shape)?;
+                let end = bytes.iter().position(|b| *b == 0).ok_or(Fault::Shape)?;
+                let text = std::str::from_utf8(&bytes[..end]).map_err(|_| Fault::Shape)?;
+                if value.as_str() != Some(text) {
+                    return Err(Fault::Shape);
+                }
+            }
+        }
+        Ok(())
+    };
+    check().is_ok()
+}
+fn lifecycle_complete(document: &Object) -> bool {
+    let check = || -> Result<(), Fault> {
+        for name in [
+            "native_overflow",
+            "native_rejected",
+            "event_clone_error",
+            "unreported_completion",
+        ] {
+            if field(document, name)? != &Value::Null {
+                return Err(Fault::Shape);
+            }
+        }
+        let trace = object(field(document, "trace")?)?;
+        for entry in array(field(trace, "calls")?)? {
+            let o = object(entry)?;
+            for flag in ["requested", "attempted", "returned"] {
+                if !boolean_field(o, flag)? {
+                    return Err(Fault::Shape);
+                }
+            }
+            if field(o, "before")? == &Value::Null || field(o, "after")? == &Value::Null {
+                return Err(Fault::Shape);
+            }
+        }
+        let control = object(field(document, "control")?)?;
+        if field(control, "finished")? != &Value::Bool(true)
+            || field(control, "event_error")? != &Value::Null
+            || field(control, "transport_error")? != &Value::Null
+            || field(control, "rejected_receipt")? != &Value::Null
+        {
+            return Err(Fault::Shape);
+        }
+        let completion = object(field(control, "completion")?)?;
+        if !boolean_field(completion, "initialized_session")?
+            || !boolean_field(completion, "cleanup_attempted")?
+            || optional_i32(field(completion, "cleanup_status")?)? != Some(0)
+        {
+            return Err(Fault::Shape);
+        }
+        Ok(())
+    };
+    check().is_ok()
 }
 fn call_name(name: &str) -> Result<(), Fault> {
     if [
