@@ -2,6 +2,7 @@
 static SETUP_NATIVE: AtomicUsize = AtomicUsize::new(0);
 static SETUP_FAIL_AT: AtomicUsize = AtomicUsize::new(usize::MAX);
 static SETUP_CLEANUP: AtomicUsize = AtomicUsize::new(0);
+static SETUP_MODE: AtomicI32 = AtomicI32::new(1);
 static SETUP_COUNT: AtomicI32 = AtomicI32::new(1);
 static SETUP_NULL_CONTEXT: AtomicI32 = AtomicI32::new(0);
 static SETUP_LOW_MEMORY: AtomicI32 = AtomicI32::new(0);
@@ -19,6 +20,10 @@ unsafe extern "system" fn setup_init(flags: u32) -> i32 {
 }
 unsafe extern "system" fn setup_version(out: *mut i32) -> i32 {
     *out = 12090;
+    setup_status()
+}
+unsafe extern "system" fn setup_loading(out: *mut i32) -> i32 {
+    *out = SETUP_MODE.load(Ordering::SeqCst);
     setup_status()
 }
 unsafe extern "system" fn setup_count(out: *mut i32) -> i32 {
@@ -96,6 +101,7 @@ fn setup_symbols(name: &str) -> Option<Box<dyn std::any::Any>> {
     Some(match name {
         "cuInit" => Box::new(setup_init as Init),
         "cuDriverGetVersion" => Box::new(setup_version as IntOut),
+        "cuModuleGetLoadingMode" => Box::new(setup_loading as IntOut),
         "cuDeviceGetCount" => Box::new(setup_count as IntOut),
         "cuDeviceGet" => Box::new(setup_device as DeviceGet),
         "cuDeviceGetUuid_v2" => Box::new(setup_uuid as DeviceUuid),
@@ -119,6 +125,7 @@ fn setup_fixture() -> CudaBackend {
     SETUP_FAIL_AT.store(usize::MAX, Ordering::SeqCst);
     SETUP_CLEANUP.store(0, Ordering::SeqCst);
     SETUP_COUNT.store(1, Ordering::SeqCst);
+    SETUP_MODE.store(1, Ordering::SeqCst);
     SETUP_NULL_CONTEXT.store(0, Ordering::SeqCst);
     SETUP_LOW_MEMORY.store(0, Ordering::SeqCst);
     let mut b = fixture();
@@ -163,13 +170,13 @@ fn setup_observes_all_native_outputs_in_order_before_ready_without_compute() {
     let mut b = setup_fixture();
     let mut o = SetupRecorded::default();
     b.setup_observed(&mut o).unwrap();
-    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 20);
-    assert_eq!(o.raw.len(), 20);
+    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 21);
+    assert_eq!(o.raw.len(), 21);
     assert_eq!(o.before, o.raw.iter().map(|r| r.0).collect::<Vec<_>>());
     assert_eq!(o.raw[1].1.output, SetupOutput::Integer(12090));
-    assert_eq!(o.raw[4].1.output, SetupOutput::Uuid([1; 16]));
+    assert_eq!(o.raw[5].1.output, SetupOutput::Uuid([1; 16]));
     assert_eq!(
-        o.raw[14].1.output,
+        o.raw[15].1.output,
         SetupOutput::Memory {
             free: 1 << 30,
             total: 1 << 30
@@ -220,7 +227,7 @@ fn every_setup_pre_or_post_observer_rejection_stops_before_successor() {
 #[test]
 fn every_native_setup_failure_keeps_signed_status_and_partial_owner_without_cleanup() {
     let _lock = serial();
-    for i in 0..20 {
+    for i in 0..21 {
         let b = setup_fixture();
         SETUP_FAIL_AT.store(i, Ordering::SeqCst);
         let mut o = SetupRecorded::default();
@@ -232,6 +239,7 @@ fn every_native_setup_failure_keeps_signed_status_and_partial_owner_without_clea
             loaded_path: None,
             runtime_file: None,
             load_error: None,
+            child_options: Default::default(),
         };
         let owned = CudaBackend::finish_setup(input, &mut o).err().unwrap();
         assert_eq!(owned.fault.raw_status, -71);
@@ -239,8 +247,8 @@ fn every_native_setup_failure_keeps_signed_status_and_partial_owner_without_clea
         assert_eq!(o.raw.len(), i + 1);
         assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), i + 1);
         let resources = owned.resources().unwrap();
-        assert_eq!(resources.context, i >= 10);
-        assert_eq!(resources.buffers[0], i >= 15);
+        assert_eq!(resources.context, i >= 11);
+        assert_eq!(resources.buffers[0], i >= 16);
         drop(owned);
         assert_eq!(SETUP_CLEANUP.load(Ordering::SeqCst), 0);
     }
@@ -256,7 +264,7 @@ fn setup_rejects_identity_ambiguity_bad_count_null_context_and_headroom_before_s
             .operation,
         "UUID not found"
     );
-    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 5);
+    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 6);
     assert!(!b.setup_resources().context);
     let mut b = setup_fixture();
     SETUP_COUNT.store(2, Ordering::SeqCst);
@@ -275,7 +283,7 @@ fn setup_rejects_identity_ambiguity_bad_count_null_context_and_headroom_before_s
             .operation,
         "device count"
     );
-    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 3);
+    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 4);
     let mut b = setup_fixture();
     SETUP_NULL_CONTEXT.store(1, Ordering::SeqCst);
     assert_eq!(
@@ -284,7 +292,7 @@ fn setup_rejects_identity_ambiguity_bad_count_null_context_and_headroom_before_s
             .operation,
         "null context"
     );
-    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 11);
+    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 12);
     let mut b = setup_fixture();
     SETUP_LOW_MEMORY.store(1, Ordering::SeqCst);
     assert_eq!(
@@ -293,7 +301,127 @@ fn setup_rejects_identity_ambiguity_bad_count_null_context_and_headroom_before_s
             .operation,
         "memory headroom"
     );
-    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 15);
+    assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 16);
     assert_eq!(b.buffers, [0; 4]);
     assert_eq!(SETUP_CLEANUP.load(Ordering::SeqCst), 0);
+}
+
+fn environment_return(
+    variable: crate::workload::child_options::Variable,
+) -> crate::workload::child_options::Read {
+    let mut units = [0; crate::workload::child_options::UNITS];
+    for (slot, unit) in units.iter_mut().zip(variable.expected().encode_utf16()) {
+        *slot = unit;
+    }
+    crate::workload::child_options::Read {
+        length: variable.expected().len() as u32,
+        error: None,
+        units,
+    }
+}
+#[test]
+fn child_environment_observer_rejection_keeps_raw_return_without_successor_read() {
+    use crate::workload::child_options::{Facts, Variable};
+    for variable in Variable::ALL {
+        for after in [false, true] {
+            let mut facts = Facts::default();
+            let mut observer = SetupRecorded::default();
+            if after {
+                observer.deny_after = Some(SetupOperation::Environment(variable));
+            } else {
+                observer.deny_before = Some(SetupOperation::Environment(variable));
+            }
+            let mut reads = 0;
+            assert!(capture_child_options(&mut facts, &mut observer, |v| {
+                reads += 1;
+                environment_return(v)
+            })
+            .is_err());
+            assert_eq!(
+                reads,
+                usize::from(variable == Variable::ModuleLoading) + usize::from(after)
+            );
+            assert_eq!(
+                facts.cache_disable.is_some(),
+                variable == Variable::ModuleLoading || after
+            );
+            assert_eq!(
+                facts.module_loading.is_some(),
+                variable == Variable::ModuleLoading && after
+            );
+            for (_, raw) in observer.raw {
+                assert!(matches!(raw.output, SetupOutput::Environment(_)));
+            }
+        }
+    }
+}
+#[test]
+fn child_environment_failure_and_unwind_retain_first_raw_facts() {
+    use crate::workload::child_options::{Facts, Read};
+    let mut facts = Facts::default();
+    let mut reads = 0;
+    let raw = Read {
+        length: u32::MAX,
+        error: Some(203),
+        units: [0xd800; 16],
+    };
+    assert!(
+        capture_child_options(&mut facts, &mut SetupRecorded::default(), |_| {
+            reads += 1;
+            raw
+        })
+        .is_err()
+    );
+    assert_eq!(reads, 1);
+    assert_eq!(facts.cache_disable, Some(raw));
+    assert_eq!(facts.module_loading, None);
+    struct Panic;
+    impl SetupObserver for Panic {
+        fn before(&mut self, _: SetupOperation) -> Result<(), Fault> {
+            Ok(())
+        }
+        fn returned(&mut self, _: SetupOperation, _: SetupReturn) -> Result<(), Fault> {
+            panic!("post-clock fake")
+        }
+    }
+    let mut facts = Facts::default();
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| capture_child_options(
+            &mut facts,
+            &mut Panic,
+            environment_return
+        )))
+        .is_err()
+    );
+    assert!(facts.cache_disable.is_some());
+    assert_eq!(facts.module_loading, None);
+}
+#[test]
+fn module_loading_query_rejects_lazy_unknown_and_failed_results_before_context_or_module() {
+    let _lock = serial();
+    for mode in [2, -1, i32::MAX] {
+        let mut b = setup_fixture();
+        SETUP_MODE.store(mode, Ordering::SeqCst);
+        let mut o = SetupRecorded::default();
+        assert_eq!(
+            b.setup_observed(&mut o).unwrap_err().operation,
+            "effective CUDA module loading"
+        );
+        assert_eq!(b.module_loading_mode(), mode);
+        assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 3);
+        assert!(!b.setup_resources().context);
+        assert!(!b.setup_resources().module);
+        assert_eq!(o.raw.last().unwrap().0, SetupOperation::ModuleLoadingMode);
+        assert_eq!(o.raw.last().unwrap().1.output, SetupOutput::Integer(mode));
+        assert_eq!(SETUP_CLEANUP.load(Ordering::SeqCst), 0);
+    }
+    let mut b = setup_fixture();
+    SETUP_FAIL_AT.store(2, Ordering::SeqCst);
+    assert_eq!(
+        b.setup_observed(&mut SetupRecorded::default())
+            .unwrap_err()
+            .raw_status,
+        -71
+    );
+    assert!(!b.setup_resources().context);
 }

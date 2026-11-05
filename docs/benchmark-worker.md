@@ -938,8 +938,9 @@ also requests containment if none was requested, even while the launcher retains
 its shared job reference. Without a surviving observer, completion stays unknown.
 No automatic restart, replacement, reconnect, elevation or driver reset is added.
 
-The worker receives the exact child-only environment `CUDA_CACHE_DISABLE=1` with
-double-NUL termination; the sampler keeps the existing empty child environment.
+The worker originally received `CUDA_CACHE_DISABLE=1` only. The November 5
+continuation below adds `CUDA_MODULE_LOADING=EAGER` to that exact child-only,
+double-NUL-terminated block; the sampler retains its empty child environment.
 This implements the integration contract's recommendation after checking the
 [NVIDIA environment-variable reference](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/environment-variables.html).
 It requests disabling disk JIT caching; driver behavior and JIT setup time still
@@ -2144,3 +2145,42 @@ integer widths, raw failure retention, lone UTF-16 surrogates, transcript/clock
 rejection, maximum history, aggregate cap failure, budget release and owned
 delivery. Final source-bound local evidence is in ROADMAP.md. No actual file/DLL,
 entry/threads/process/pipe/GPU execution or qualification was performed.
+
+## Child CUDA environment and module-loading readback — 2026-11-05
+
+The fixed worker environment now requests both `CUDA_CACHE_DISABLE=1` and
+`CUDA_MODULE_LOADING=EAGER`. The host artifact derives its declaration from the
+same block. Before opening the driver DLL, the actual opt-in setup reads each
+variable once from its own process using bounded initialized UTF-16 scratch and
+GetEnvironmentVariableW. Missing, empty, oversized, nonexact and failed returns
+block setup without a retry or a DLL load. Raw lengths, error codes and scratch
+are retained before the post-clock callback, including on rejection or unwind.
+Undefined/partial failure buffers never supply an accepted value. No environment
+variable is changed by readback and no cache is deleted.
+
+After successful cuInit and driver-version observation, setup calls the exact
+`cuModuleGetLoadingMode` export and requires EAGER (1). Missing export, failed
+status, LAZY (2) or unknown raw mode prevents enumeration/context/module setup;
+there is no fallback. The output is retained as an integer, without constructing
+a Rust enum from unknown driver memory. SetupFailure and CudaBackend expose
+original environment and mode facts alongside the existing file/version owners.
+The original supervised setup clock/stop/deadline spans host reads, file loading
+and CUDA calls. The ledger prepays two host entries and one extra driver entry;
+this changes implementation capacity, not any approved workload/time ceiling.
+
+The getter ABI and numeric modes were checked against the [CUDA 12.9.1 module
+reference](https://docs.nvidia.com/cuda/archive/12.9.1/cuda-driver-api/group__CUDA__MODULE.html)
+and the existing pinned cudarc 0.17.3 declaration source. The [Win32 readback
+reference](https://learn.microsoft.com/en-us/windows/win32/api/processenv/nf-processenv-getenvironmentvariablew)
+defines the calling-process scope and oversized/failure semantics. These reads
+and CUDA's mode report cannot prove absence of all driver filesystem activity,
+JIT cost, exclusive GPU use or hardware qualification. They grant no consent.
+
+Seven new CPU/typed-ABI regressions cover exact values, failures and unknowns,
+pre/post rejection, raw retention across unwind, original deadline/stop and full
+prepaid memory pressure. Existing every-call failure and clock-boundary tests now
+include the mode query. Final source-bound verification/publication is recorded
+in ROADMAP.md. No actual environment API, DLL, process, pipe, thread or GPU
+execution was performed. These new worker facts still need bounded canonical
+export and strict parent reading/composition with the host and starting artifacts
+before Ready/Start admission. E3 remains partial and Gate B unmet.

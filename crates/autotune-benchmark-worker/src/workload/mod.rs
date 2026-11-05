@@ -1,6 +1,7 @@
 //! Workload declarations and protocol binding. No native execution authority.
 pub mod assessment;
 pub mod bootstrap;
+pub mod child_options;
 #[cfg(windows)]
 pub mod child_windows;
 pub mod control;

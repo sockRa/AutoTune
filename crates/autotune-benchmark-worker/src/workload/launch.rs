@@ -5,7 +5,7 @@ use super::{
     wire::WorkerBinding,
 };
 use crate::sampler::wire::Lane;
-pub(super) const WORKER_ENVIRONMENT: &str = "CUDA_CACHE_DISABLE=1\0\0";
+pub(super) const WORKER_ENVIRONMENT: &str = super::child_options::ENVIRONMENT;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,

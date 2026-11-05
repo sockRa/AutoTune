@@ -10,8 +10,9 @@ use crate::{
 use std::sync::Arc;
 
 // Adapter permits at most 64 devices, two calls each, five attributes for the
-// unique match, three initial calls and ten context/module/buffer/stream calls.
-const CAP: usize = 3 + 64 * 2 + 5 + 10;
+// unique match, four initial calls, two host environment reads and ten
+// context/module/buffer/stream calls. Storage is prepaid, not a workload budget.
+const CAP: usize = 2 + 4 + 64 * 2 + 5 + 10;
 use autotune_probe::runtime_file::{Stage, MAX_CHECKS};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FileCheck {

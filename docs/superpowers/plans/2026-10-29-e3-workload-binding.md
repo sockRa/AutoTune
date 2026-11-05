@@ -86,6 +86,29 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 child CUDA options and mode readback: the exact child-only launcher
+  block now requests cache-disable and EAGER module loading. Actual opt-in setup
+  reads both fixed keys once before opening a DLL; failed/missing/oversized or
+  nonexact values abort. Initialized raw UTF-16 scratch, lengths and errors are
+  retained before post-clock observation, including unwind. After init/version,
+  the newly reviewed cuModuleGetLoadingMode export must return EAGER (1); missing,
+  failed, LAZY or unknown returns cannot reach context/module allocation. Raw
+  integer output and original owners remain exposed by backend/failure views.
+  Ledger capacity is prepaid for two host reads and one extra CUDA query under
+  the same original setup clock/stop/deadline. Numeric workload contracts remain
+  unchanged. ABI checked against CUDA 12.9.1 and the existing pinned cudarc source;
+  no copied declarations/dependency or installed driver component. Seven CPU/
+  typed-ABI regressions plus expanded every-call clock/failure coverage exercise
+  raw retention, guards, full memory pressure and invalid modes. Initial private
+  adapter visibility and maximum-device test count failures were corrected; logs
+  remain retained. Final source-bound evidence/publication: ROADMAP.md. No actual
+  environment API/file/DLL/entry/thread/process/pipe/GPU execution or independent
+  agent review/qualification. Bounded worker setup/runtime export and strict
+  parent reading/composition with host/starting evidence remain next; complete
+  peer/image/process/consent, fresh safety/re-entry/Start, admission/main,
+  aggregate resources and real qualification remain open. E3 partial/Gate B unmet;
+  full product goal retained and hosted Actions remains removed/disabled.
+
 - 2026-11-05 starting runtime export v2: the actual starting Outcome now exports
   retained NVML file/path/metadata/hash/read/loader/init facts and complete bounded
   file-clock history into an explicit canonical v2 section. A portable detached

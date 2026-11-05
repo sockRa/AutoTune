@@ -66,6 +66,7 @@ macro_rules! api {
 }
 api! {
     init: Init = "cuInit", version: IntOut = "cuDriverGetVersion",
+    loading_mode: IntOut = "cuModuleGetLoadingMode",
     count: IntOut = "cuDeviceGetCount", device: DeviceGet = "cuDeviceGet",
     uuid: DeviceUuid = "cuDeviceGetUuid_v2", attr: Attribute = "cuDeviceGetAttribute",
     ctx_create: ContextCreate = "cuCtxCreate_v2", ctx_device: IntOut = "cuCtxGetDevice", ctx_destroy: HandleCall = "cuCtxDestroy_v2",
@@ -121,6 +122,8 @@ pub struct CudaBackend {
     driver_path: PathBuf,
     driver_version: i32,
     runtime_file: Option<autotune_probe::runtime_file::windows::Image>,
+    child_options: crate::workload::child_options::Facts,
+    module_loading_mode: i32,
 }
 impl crate::workload::producer::Driver for CudaBackend {
     fn provenance(&self) -> Provenance {
@@ -161,6 +164,12 @@ impl crate::workload::producer::Driver for CudaBackend {
     }
 }
 impl CudaBackend {
+    pub fn child_options(&self) -> crate::workload::child_options::Facts {
+        self.child_options
+    }
+    pub fn module_loading_mode(&self) -> i32 {
+        self.module_loading_mode
+    }
     pub fn runtime_file(&self) -> Option<&autotune_probe::runtime_file::windows::Image> {
         self.runtime_file.as_ref()
     }
@@ -445,9 +454,10 @@ mod tests {
     fn symbols(name: &str) -> Option<Box<dyn std::any::Any>> {
         Some(match name {
             "cuInit" => Box::new(init as Init),
-            "cuDriverGetVersion" | "cuDeviceGetCount" | "cuCtxGetDevice" => {
-                Box::new(int_out as IntOut)
-            }
+            "cuDriverGetVersion"
+            | "cuModuleGetLoadingMode"
+            | "cuDeviceGetCount"
+            | "cuCtxGetDevice" => Box::new(int_out as IntOut),
             "cuDeviceGet" => Box::new(device as DeviceGet),
             "cuDeviceGetUuid_v2" => Box::new(uuid as DeviceUuid),
             "cuDeviceGetAttribute" => Box::new(attr as Attribute),
@@ -489,6 +499,8 @@ mod tests {
             driver_path: PathBuf::from("typed-fake-not-a-DLL"),
             driver_version: 12090,
             runtime_file: None,
+            child_options: Default::default(),
+            module_loading_mode: -1,
         }
     }
     #[test]
@@ -782,7 +794,7 @@ mod tests {
         assert!(PTX.contains("fma.rn.f32 %f3, %f1, %f2, %f3"));
         assert!(PTX.contains("st.global.f32"));
         assert!(PTX.contains(".target sm_75"));
-        assert_eq!(EXPORTS.len(), 21);
+        assert_eq!(EXPORTS.len(), 22);
         assert!(!EXPORTS
             .iter()
             .any(|s| s.contains("Reset") || s.contains("Set")));

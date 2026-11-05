@@ -1,8 +1,10 @@
 // Included in the opt-in Windows CUDA adapter. No setup is executed by inclusion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetupOperation {
+    Environment(crate::workload::child_options::Variable),
     Initialize,
     DriverVersion,
+    ModuleLoadingMode,
     DeviceCount,
     Device(u32),
     Uuid(i32),
@@ -17,11 +19,16 @@ pub enum SetupOperation {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetupOutput {
+    /// Host Win32 return; SetupReturn.status is zero for this non-CUDA operation.
+    Environment(crate::workload::child_options::Read),
     None,
     Integer(i32),
     Uuid([u8; 16]),
     HandleIsNull(bool),
-    Memory { free: usize, total: usize },
+    Memory {
+        free: usize,
+        total: usize,
+    },
     AllocationIsZero(bool),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,8 +74,42 @@ pub struct SetupFailure {
     loaded_path: Option<PathBuf>,
     runtime_file: Option<autotune_probe::runtime_file::windows::Image>,
     load_error: Option<libloading::Error>,
+    child_options: crate::workload::child_options::Facts,
+}
+fn capture_child_options(
+    facts: &mut crate::workload::child_options::Facts,
+    observer: &mut impl SetupObserver,
+    mut read: impl FnMut(
+        crate::workload::child_options::Variable,
+    ) -> crate::workload::child_options::Read,
+) -> Result<(), Fault> {
+    if !facts.observe(|variable, slot| {
+        let operation = SetupOperation::Environment(variable);
+        observer.before(operation)?;
+        let read = read(variable);
+        *slot = Some(read);
+        observer.returned(
+            operation,
+            SetupReturn {
+                status: 0,
+                output: SetupOutput::Environment(read),
+            },
+        )
+    })? {
+        return Err(invalid("child CUDA environment"));
+    }
+    Ok(())
 }
 impl SetupFailure {
+    pub fn child_options(&self) -> crate::workload::child_options::Facts {
+        self.backend
+            .as_ref()
+            .map(CudaBackend::child_options)
+            .unwrap_or(self.child_options)
+    }
+    pub fn module_loading_mode(&self) -> Option<i32> {
+        self.backend.as_ref().map(CudaBackend::module_loading_mode)
+    }
     pub fn runtime_file(&self) -> Option<&autotune_probe::runtime_file::windows::Image> {
         self.runtime_file
             .as_ref()
@@ -122,11 +163,17 @@ impl CudaBackend {
             loaded_path: None,
             runtime_file: None,
             load_error: None,
+            child_options: Default::default(),
         };
         let result = (|| -> Result<(), Fault> {
             if !identity.valid() {
                 return Err(invalid("identity"));
             }
+            capture_child_options(
+                &mut failure.child_options,
+                observer,
+                crate::workload::child_options::read,
+            )?;
             use autotune_probe::runtime_file::{
                 windows::{Image, Kind},
                 Stage,
@@ -197,6 +244,8 @@ impl CudaBackend {
                 driver_path: loaded,
                 driver_version: -1,
                 runtime_file: failure.runtime_file.take(),
+                child_options: failure.child_options,
+                module_loading_mode: -1,
             });
             Ok(())
         })();
@@ -256,6 +305,17 @@ impl CudaBackend {
         );
         if self.driver_version < 10010 {
             return Err(invalid("driver version"));
+        }
+        // CUDA 12.9.1: CU_MODULE_EAGER_LOADING = 1; raw unknown values remain
+        // integers. Missing exports, failed query or LAZY cannot reach module load.
+        call!(
+            SetupOperation::ModuleLoadingMode,
+            "cuModuleGetLoadingMode",
+            (self.api.loading_mode)(&mut self.module_loading_mode),
+            SetupOutput::Integer(self.module_loading_mode)
+        );
+        if self.module_loading_mode != 1 {
+            return Err(invalid("effective CUDA module loading"));
         }
         let mut count = -1;
         call!(

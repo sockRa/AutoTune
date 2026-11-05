@@ -189,7 +189,7 @@ fn fixed_images_limits_and_child_environment_follow_role() {
     );
     assert_eq!(
         Role::Worker.environment(),
-        "CUDA_CACHE_DISABLE=1\0\0"
+        "CUDA_CACHE_DISABLE=1\0CUDA_MODULE_LOADING=EAGER\0\0"
             .encode_utf16()
             .collect::<Vec<_>>()
     );
@@ -270,4 +270,73 @@ fn cancellation_closes_an_existing_sender_without_losing_frame_or_control() {
     cancelled.store(false, Ordering::Release); // even an erroneous signal reset cannot reopen this sender
     assert!(sender.send_worker(returned).is_err());
     assert_eq!(frames.borrow().len(), 1);
+}
+
+#[test]
+fn child_options_declared_block_and_readback_values_match_without_mutating_environment() {
+    use autotune_benchmark_worker::workload::child_options::{Variable, ENVIRONMENT};
+    let entries: Vec<_> = ENVIRONMENT.trim_end_matches('\0').split('\0').collect();
+    assert_eq!(entries.len(), 2);
+    for (entry, v) in entries.iter().zip(Variable::ALL) {
+        assert_eq!(*entry, format!("{}={}", v.name(), v.expected()));
+    }
+}
+#[test]
+fn child_option_readback_rejects_failed_oversized_empty_and_nonexact_values() {
+    use autotune_benchmark_worker::workload::child_options::{Read, Variable};
+    for variable in Variable::ALL {
+        let mut raw = Read {
+            length: variable.expected().len() as u32,
+            error: None,
+            units: [0; 16],
+        };
+        for (slot, unit) in raw.units.iter_mut().zip(variable.expected().encode_utf16()) {
+            *slot = unit;
+        }
+        assert!(raw.matches(variable));
+        for length in [0, 16, u32::MAX] {
+            assert!(!Read { length, ..raw }.matches(variable));
+        }
+        assert!(!Read {
+            error: Some(203),
+            ..raw
+        }
+        .matches(variable));
+        let mut other = raw;
+        other.units[raw.length as usize] = 1;
+        assert!(!other.matches(variable));
+        other = raw;
+        other.units[0] = 0xd800;
+        assert!(!other.matches(variable));
+    }
+}
+#[test]
+fn child_option_unknown_read_stops_without_retry_and_keeps_raw_failure() {
+    use autotune_benchmark_worker::workload::child_options::{Facts, Read};
+    for raw in [
+        Read {
+            length: 0,
+            error: Some(203),
+            units: [0; 16],
+        },
+        Read {
+            length: u32::MAX,
+            error: None,
+            units: [0xd800; 16],
+        },
+    ] {
+        let mut facts = Facts::default();
+        let mut calls = 0;
+        assert_eq!(
+            facts.observe::<()>(|_, slot| {
+                calls += 1;
+                *slot = Some(raw);
+                Ok(())
+            }),
+            Ok(false)
+        );
+        assert_eq!(calls, 1);
+        assert_eq!(facts.cache_disable, Some(raw));
+        assert_eq!(facts.module_loading, None);
+    }
 }

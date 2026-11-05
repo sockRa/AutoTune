@@ -73,7 +73,7 @@ mod bound_setup_tests {
                 Some(a(n))
             }))
             .unwrap();
-        assert_eq!(ledger.entries().len(), 20);
+        assert_eq!(ledger.entries().len(), 21);
         assert!(ledger
             .entries()
             .iter()
@@ -84,7 +84,7 @@ mod bound_setup_tests {
         assert!(!shared.admission().stopped());
         assert_eq!(shared.setup_observations().1, None);
         shared.complete_setup(binding, a(n + 1000)).unwrap();
-        assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 20);
+        assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 21);
         drop(backend);
         assert_eq!(SETUP_CLEANUP.load(Ordering::SeqCst), 0);
     }
@@ -115,15 +115,15 @@ mod bound_setup_tests {
                 Some(a(n))
             }))
             .unwrap();
-        assert_eq!(ledger.entries().len(), 146);
+        assert_eq!(ledger.entries().len(), 147);
         assert_eq!(ledger.fault(), None);
-        assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 146);
+        assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 147);
         assert!(ledger.overflow().is_none());
     }
     #[test]
     fn missing_clock_or_control_stop_at_every_boundary_prevents_successor() {
         let _lock = serial();
-        for boundary in 0..40 {
+        for boundary in 0..42 {
             for clock_lost in [false, true] {
                 let (_budget, _binding, shared, mut ledger) = setup();
                 let mut backend = setup_fixture();
@@ -185,7 +185,7 @@ mod bound_setup_tests {
     #[test]
     fn raw_native_errors_and_return_survive_post_clock_panic() {
         let _lock = serial();
-        for failed in 0..20 {
+        for failed in 0..21 {
             let (_budget, _binding, shared, mut ledger) = setup();
             let mut backend = setup_fixture();
             SETUP_FAIL_AT.store(failed, Ordering::SeqCst);
@@ -251,7 +251,7 @@ mod bound_setup_tests {
             output: SetupOutput::None,
         };
         let mut n = 0;
-        for _ in 0..146 {
+        for _ in 0..149 {
             let mut o = ledger.observer(|| {
                 n += 1000;
                 Some(a(n))
@@ -263,7 +263,7 @@ mod bound_setup_tests {
             .observer(|| Some(a(n + 1000)))
             .before(SetupOperation::Initialize)
             .is_err());
-        assert_eq!(ledger.entries().len(), 146);
+        assert_eq!(ledger.entries().len(), 149);
         assert!(ledger.overflow().is_some());
         assert_eq!(ledger.fault(), Some(TraceFault::Capacity));
         assert!(shared.admission().stopped());
@@ -357,11 +357,11 @@ mod bound_setup_tests {
         drop(observer);
         assert_eq!(budget.used(), used);
         assert_eq!(ledger.file_checks().len(), 10);
-        assert_eq!(ledger.entries().len(), 20);
+        assert_eq!(ledger.entries().len(), 21);
         assert_eq!(ledger.entries()[0].before, Some(a(11_000)));
         assert_eq!(ledger.fault(), None);
         assert!(!shared.admission().pending());
-        assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 20);
+        assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), 21);
         assert!(backend.runtime_file().is_none()); // A typed fake supplies no DLL proof.
     }
     #[test]
@@ -459,5 +459,55 @@ mod bound_setup_tests {
         assert_eq!(shared.cooperative_raw(), 0);
         assert_eq!(SETUP_NATIVE.load(Ordering::SeqCst), calls);
         assert!(!shared.admission().pending());
+    }
+    #[test]
+    fn child_environment_reads_share_original_setup_clock_stop_and_prepaid_storage() {
+        for boundary in 0..4 {
+            for expires in [false, true] {
+                let (budget, _, shared, mut ledger) = setup();
+                let used = budget.used();
+                let _pressure = budget.reserve(16 * 1024 * 1024 - used).unwrap();
+                let mut facts = crate::workload::child_options::Facts::default();
+                let mut n = 0;
+                let mut reads = 0;
+                let result = capture_child_options(
+                    &mut facts,
+                    &mut ledger.observer(|| {
+                        let current = n;
+                        n += 1;
+                        if current == boundary {
+                            if expires {
+                                return Some(a(1_000_000_000));
+                            }
+                            shared.close();
+                        }
+                        Some(a((n + 1) * 1000))
+                    }),
+                    |v| {
+                        reads += 1;
+                        environment_return(v)
+                    },
+                );
+                assert!(result.is_err());
+                assert_eq!(reads, (boundary as usize).div_ceil(2));
+                assert_eq!(
+                    ledger.fault(),
+                    Some(if expires {
+                        TraceFault::Deadline
+                    } else {
+                        TraceFault::Stopped
+                    })
+                );
+                assert!(shared.admission().stopped());
+                assert!(!ledger.pending());
+                if boundary % 2 == 1 {
+                    assert!(matches!(
+                        ledger.entries().last().unwrap().raw.unwrap().output,
+                        SetupOutput::Environment(_)
+                    ));
+                }
+                assert_eq!(budget.used(), 16 * 1024 * 1024);
+            }
+        }
     }
 }
