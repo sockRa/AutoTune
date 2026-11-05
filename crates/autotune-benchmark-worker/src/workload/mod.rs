@@ -10,6 +10,9 @@ pub mod control_windows;
 pub mod cuda_setup_trace;
 pub mod dispatch;
 pub mod gate;
+pub mod host_environment;
+#[cfg(windows)]
+pub mod host_environment_windows;
 pub mod launch;
 pub mod manifest;
 pub mod nvml_trace;

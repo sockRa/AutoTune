@@ -31,6 +31,7 @@ pub enum Fault {
     Monitor,
     Protocol,
     Runtime,
+    Environment,
     Settings,
     Simulated,
     Telemetry,
@@ -152,10 +153,49 @@ pub struct ParentSampler {
     reported_finished: bool,
     miss_count: usize,
     starting_check: Option<(crate::evidence::Digest, Result<settings::Current, Fault>)>,
+    environment_check: Option<(
+        crate::evidence::Digest,
+        Result<(), super::host_environment::Fault>,
+    )>,
     budget: Budget,
     _metadata: Reservation,
 }
 impl ParentSampler {
+    pub fn environment_check(
+        &self,
+    ) -> Option<(
+        crate::evidence::Digest,
+        Result<(), super::host_environment::Fault>,
+    )> {
+        self.environment_check
+    }
+    /// Retains the reported preflight artifact check. Success authenticates no
+    /// peer, native reads or consent and cannot issue workload admission.
+    pub fn check_environment(
+        &mut self,
+        environment: &super::host_environment::Reported,
+        run: &BoundRun<'_>,
+        epoch: Anchor,
+    ) -> Result<(), Fault> {
+        if self.environment_check.is_some() {
+            self.fail(Fault::Protocol, self.now_ns);
+            return Err(Fault::Protocol);
+        }
+        let result = if WorkerBinding::new(run, self.binding.monitor.qpc_frequency, epoch).ok()
+            != Some(self.binding)
+        {
+            Err(super::host_environment::Fault::Binding)
+        } else {
+            environment
+                .snapshot()
+                .check_run(run, self.binding.monitor.qpc_frequency, epoch)
+        };
+        self.environment_check = Some((environment.snapshot().digest(), result));
+        result.map_err(|_| {
+            self.fail(Fault::Environment, self.now_ns);
+            Fault::Environment
+        })
+    }
     pub fn starting_check(
         &self,
     ) -> Option<(crate::evidence::Digest, Result<settings::Current, Fault>)> {
@@ -363,6 +403,7 @@ impl ParentSampler {
             reported_finished: false,
             miss_count: 0,
             starting_check: None,
+            environment_check: None,
             budget,
             _metadata: metadata,
         };

@@ -5,7 +5,7 @@
 ## Implementation and evidence
 
 - [Build and CLI usage](../README.md) — current tools, not a desktop MVP.
-- [Workspace CI scope](ci.md) — deterministic checks and unverified hosted-run boundary.
+- [Local verification and historical CI](ci.md) — deterministic checks; GitHub Actions was retired by the owner.
 - [Synthetic telemetry and energy evidence](measurement.md) — E3.2 recording and E3.3 estimation semantics, not live sampling or workload execution.
 - [Pure FMA contract and CPU reference](fma-reference.md) — frozen design validation, deterministic inputs and checking supplied vectors, not GPU execution or baseline acceptance.
 - [Canonical live-evidence primitives](live-evidence.md) — phase-1 compact bytes, decimal integers/ratios, domain-separated digests and strict decoding; no envelope fields, live producer, clock/process execution or evidence authority.

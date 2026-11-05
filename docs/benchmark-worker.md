@@ -1946,3 +1946,63 @@ first-fault retention, absent/expired/failed control, pending calls, every relea
 failure, exhausted prepaid budget, no retry/compute and earliest original exit.
 Source-bound checks/publication are recorded in ROADMAP.md. No native loader,
 entry, process/pipe, GPU execution or hardware qualification was performed.
+
+### Pre-manifest host environment — 2026-11-05
+
+`host_environment` captures a separate `pilot_host_environment` v1 raw artifact
+under the existing starting Scope, without an invented manifest/run. It records
+five ordered host-only observation groups: OS version/build/platform, native and
+process architecture, current parent process-token elevation, system power
+status and active power-scheme GUID. The GUID is encoded in field order
+(`data1/data2/data3` big-endian followed by `data4`), independently of host layout.
+BOOL/GetLastError, signed NTSTATUS, direct Win32 status, query output length and
+explicit token/local-allocation cleanup outcomes remain distinct. Unknown
+battery values are retained, never converted into measured percentages/durations.
+Architecture records the successful IsWow64Process2 process/native-machine pair
+and compile target separately. The native AMD64/non-WOW64/x64 screen does not
+infer native architecture from GetNativeSystemInfo's emulation view.
+
+Before/after anchors use the original clock and strict 10 s preflight boundary;
+deadline equality, missing/regressing/mismatched clocks or cancellation retain
+the current raw return and prevent successor reads. All owned/model/codec space
+is reserved before read one. The 16 KiB artifact has a domain-separated digest
+and strict bounded canonical reader, including typed raw returns on protocol
+failure. A reported source label authenticates no OS call. Fixture collection is
+always labelled simulated; matching hashes cannot issue workload admission.
+
+Owner assertions about known background load/competing tuners retain their own
+source, reference and raw assertion anchor. They are not sensor reads or human
+workload consent. Missing/competing assertions, unreadable OS/power facts,
+elevation, unsupported architecture or unsuccessful OS-resource cleanup prevent
+the host-facts check. This check does not prove exclusive GPU use or stable
+conditions throughout a run. Declared child cache settings derive from the same
+constant as the launcher's exact block; they are not effective child readback.
+
+`Reported::freeze_manifest` composes exact host and starting-setting artifact
+reference/readability checks under the same Scope. `ParentSampler` retains a
+one-shot environment digest plus exact host-check result, validates the original
+run binding and rejects preflight observations later than the run origin. A
+failed or duplicate check closes the existing parent path while preserving its
+first failure/stop. This is still reported evidence; native admission remains
+unavailable. Driver/DLL/runtime versions/builds, effective child options, actual
+peer/image/process facts, pre-setup and workload consent, fresh safety/re-entry/
+Start, aggregate export and real qualification remain separately required.
+
+`host_environment_windows::capture` supplies the actual host-only source using
+the existing WindowsClock. It preserves the first raw capture error and any
+failed OS cleanup owners in `Captured`, with no implicit retry or native Drop.
+The caller must run collection off its deadline/control thread and retain that
+owner even when snapshot creation fails. No main invokes it in this milestone.
+The Windows function is monomorphized/linked through a non-invoked function
+pointer; twelve CPU integration regressions exercise the portable engine,
+strict reader, failure/stop/budget paths and parent composition. Actual host API,
+process/pipe, vendor DLL and GPU invocation were not performed for this slice.
+
+ABI/ownership sources reviewed for the adapter: [RtlGetVersion](https://learn.microsoft.com/en-us/windows/win32/devnotes/rtlgetversion),
+[IsWow64Process2](https://learn.microsoft.com/en-us/windows/win32/api/wow64apiset/nf-wow64apiset-iswow64process2),
+[GetTokenInformation](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation),
+[GetSystemPowerStatus](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getsystempowerstatus),
+[PowerGetActiveScheme](https://learn.microsoft.com/en-us/windows/win32/api/powersetting/nf-powersetting-powergetactivescheme)
+and [LocalFree](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-localfree).
+Exact source-bound verification/publication is recorded in ROADMAP.md. Actions
+remains removed/disabled; current checks are local.

@@ -86,6 +86,37 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 pre-manifest host environment: a separate bounded canonical artifact
+  now retains five host-only raw groups (OS version/build, native/process
+  architecture, parent token elevation, system power status and active scheme),
+  original before/after clocks and distinct OS return/error/cleanup facts. It
+  reuses the existing starting Scope without inventing a manifest/run. Owner
+  background-load/competing-tuner assertions retain their own source/reference/
+  anchor, distinct from readings and workload consent. All model/codec capacity
+  is reserved before reads; clock/stop/deadline failures retain raw returns and
+  forbid successors. The strict reader preserves typed raw protocol failures.
+  Reported::freeze_manifest composes host and starting references; ParentSampler
+  retains one-shot exact environment results under original run binding/time.
+  Declared cache bytes share the actual launch constant, not an effective-child
+  claim. Actual Windows source retains the first clock API error and uncertain
+  token/local-allocation cleanup owners; it is only monomorphized/linked by a
+  non-invoked function pointer. Twelve CPU regressions cover API failures,
+  unknown/elevated conditions, all stop/clock boundaries, budget pressure,
+  canonical/reference tampering and parent composition. Initial anchor API and
+  parent test-constructor mismatches, a function-pointer type lint and div_ceil
+  test lints/type inference were corrected. Review added a raw-operation tag so
+  a wrong-kind failed return remains readable, and first clock error retention.
+  API review replaced GetNativeSystemInfo's potentially emulated architecture
+  view with IsWow64Process2's raw process/native-machine pair. A typed concrete
+  function pointer and ABI size assertions force actual host-entry codegen;
+  passing a zero-sized function item to black_box was insufficient proof.
+  Final source-bound evidence/publication: ROADMAP.md. No independent review,
+  actual host API, process/pipe/vendor DLL/GPU invocation or hardware
+  qualification. Runtime/DLL/effective child/peer/image facts, pre-setup and
+  workload consent, fresh safety/re-entry/Start, issuer/main and aggregate raw
+  export remain open. E3 partial/Gate B unmet; automatic benchmark/search/
+  validation remains the goal. Hosted Actions stays removed/disabled.
+
 - 2026-11-05 prepared-before-Start disposition: Session now explicitly disposes
   an idle successfully prepared owner under the existing original Shared stop
   window, without fabricating Start or issuing compute admission. The inline

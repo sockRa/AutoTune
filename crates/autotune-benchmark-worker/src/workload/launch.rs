@@ -5,6 +5,7 @@ use super::{
     wire::WorkerBinding,
 };
 use crate::sampler::wire::Lane;
+pub(super) const WORKER_ENVIRONMENT: &str = "CUDA_CACHE_DISABLE=1\0\0";
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -65,7 +66,7 @@ impl Role {
     /// or prove which options the driver actually used. Runtime readback follows.
     pub fn environment(self) -> Vec<u16> {
         match self {
-            Self::Worker => "CUDA_CACHE_DISABLE=1\0\0".encode_utf16().collect(),
+            Self::Worker => WORKER_ENVIRONMENT.encode_utf16().collect(),
             Self::Sampler => vec![0, 0],
         }
     }
