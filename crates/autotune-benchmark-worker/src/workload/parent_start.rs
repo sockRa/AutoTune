@@ -18,6 +18,7 @@ pub enum Fault {
     Deadline,
     Context,
     Telemetry,
+    Supervision,
     Process(process_state::Fault),
     Codec(WireError),
     Send(SendFailure),
@@ -34,6 +35,7 @@ pub struct Observation {
     pub safety: [Option<Record>; 2],
     pub reentry: Option<[Record; 2]>,
     pub consecutive: u32,
+    pub watch_ready: bool,
 }
 /// Boundaries are entry, post-collection/issued, pre-queue, and post-queue.
 /// Neither this record nor a successful result can mint NativeAdmission.
@@ -97,6 +99,9 @@ impl Attempt {
                     return Err(Fault::Deadline);
                 }
                 last = a;
+            }
+            if !raw.watch_ready {
+                return Err(Fault::Supervision);
             }
             if raw.parent_fault.is_some() || !raw.context {
                 return Err(Fault::Context);
@@ -216,6 +221,7 @@ mod tests {
             safety: [None; 2],
             reentry: None,
             consecutive: 4,
+            watch_ready: true,
         }
     }
     #[test]
@@ -453,5 +459,29 @@ mod tests {
         assert_eq!(result.checks[3], Some(Err(Fault::Deadline)));
         assert!(!result.queued);
         assert_eq!(fake.next, 4);
+    }
+    #[test]
+    fn unavailable_supervision_at_each_boundary_stops_successors_and_preserves_queue_truth() {
+        for boundary in 0..4 {
+            let mut fake = Fake::new();
+            fake.observations[boundary].watch_ready = false;
+            let result = fake.run();
+            assert_eq!(result.result, Err(Fault::Supervision));
+            assert_eq!(fake.events.contains(&"collect"), boundary > 0);
+            assert_eq!(fake.events.contains(&"encode"), boundary > 1);
+            assert_eq!(fake.events.contains(&"send"), boundary > 2);
+            assert_eq!(result.queued, boundary == 3);
+        }
+    }
+    #[test]
+    fn guard_readiness_cannot_replace_required_context_or_current_safety() {
+        let mut fake = Fake::new();
+        fake.observations[0].context = false;
+        assert_eq!(fake.run().result, Err(Fault::Context));
+        assert_eq!(fake.events, ["observe"]);
+        let mut fake = Fake::new();
+        fake.observations[0].reported_screen = false;
+        assert_eq!(fake.run().result, Err(Fault::Telemetry));
+        assert_eq!(fake.events, ["observe"]);
     }
 }

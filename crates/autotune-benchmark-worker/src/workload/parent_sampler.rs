@@ -39,6 +39,7 @@ pub enum Fault {
     Stopped,
     Transport,
     ShutdownDeadline,
+    Supervision,
 }
 #[derive(Default)]
 pub struct Reentry {
@@ -168,12 +169,18 @@ pub struct ParentSampler {
     process_frame: Option<super::process_state::Frame>,
     start_attempt: Option<super::parent_start::Attempt>,
     #[cfg(windows)]
+    watch: Option<super::parent_watch_windows::Publisher>,
+    watch_error: Option<super::parent_watch::Fault>,
+    #[cfg(windows)]
     worker_start_tx: Channel,
     unsent_worker_start: Option<EncodedFrame>,
     budget: Budget,
     _metadata: Reservation,
 }
 impl ParentSampler {
+    pub fn watch_error(&self) -> Option<super::parent_watch::Fault> {
+        self.watch_error
+    }
     pub fn start_attempt(&self) -> Option<&super::parent_start::Attempt> {
         self.start_attempt.as_ref()
     }
@@ -520,6 +527,9 @@ impl ParentSampler {
             process_frame: None,
             start_attempt: None,
             #[cfg(windows)]
+            watch: None,
+            watch_error: None,
+            #[cfg(windows)]
             worker_start_tx: Channel::new(
                 binding,
                 Lane::Ordinary,
@@ -566,6 +576,10 @@ impl ParentSampler {
                 .saturating_add(p.exit_observation_ns)
                 .min(self.binding.run_end()),
         });
+        #[cfg(windows)]
+        if let (Some(watch), Some(window)) = (&self.watch, self.stop) {
+            watch.stop(window);
+        }
     }
     fn observe(&mut self, a: Option<Anchor>) -> Result<u64, Fault> {
         let n = self.history.observe(a).map_err(|_| Fault::Clock);
@@ -651,6 +665,8 @@ impl ParentSampler {
                 self.monitor_fault();
             }
         }
+        #[cfg(windows)]
+        self.notify_watch();
     }
     /// No Start/permit is returned. This screen concerns reported sampler data;
     /// a later parent gate must prove peer/environment/consent and fresh timing.
@@ -726,6 +742,13 @@ impl ParentSampler {
     }
     #[allow(clippy::result_large_err)]
     pub fn receive(&mut self, run: &BoundRun<'_>, raw: RawReceived) -> Result<(), RawReceived> {
+        let result = self.receive_inner(run, raw);
+        #[cfg(windows)]
+        self.notify_watch();
+        result
+    }
+    #[allow(clippy::result_large_err)] // Return the original prepaid packet owner.
+    fn receive_inner(&mut self, run: &BoundRun<'_>, raw: RawReceived) -> Result<(), RawReceived> {
         self.origins.observe(raw.origin());
         if self
             .expected_origin
@@ -967,6 +990,8 @@ impl ParentSampler {
                 .saturating_add(p.exit_observation_ns)
                 .min(self.binding.run_end()),
         });
+        #[cfg(windows)]
+        self.notify_watch();
         self.queue_stop(out);
         self.fault.map_or(Ok(()), Err)
     }
@@ -1031,6 +1056,70 @@ impl<Q: Queue> super::parent_start::Source for StartSource<'_, '_, Q> {
 }
 #[cfg(windows)]
 impl ParentSampler {
+    fn watch_window(&self) -> super::parent_watch::Window {
+        super::parent_watch::Window {
+            binding: self.binding,
+            setup_deadline_ns: self.setup_deadline,
+        }
+    }
+    fn watch_peers(&self) -> Option<[super::launch_origin::Origin; 2]> {
+        self.peer_check
+            .as_ref()
+            .filter(|p| p.result.is_ok())
+            .map(|p| [p.peers[1].expected, p.peers[2].expected])
+    }
+    /// Attach exactly one actual controller publisher. Caller retains Handle,
+    /// report and operation threads through finalization; attachment/ready is
+    /// not a native permit. Poll readiness before the one-shot Start attempt.
+    pub fn attach_watch(
+        &mut self,
+        handle: &super::parent_watch_windows::Handle,
+    ) -> Result<(), super::parent_watch::Fault> {
+        if self.watch.is_some() || !self.context_open() {
+            self.watch_error
+                .get_or_insert(super::parent_watch::Fault::Binding);
+            self.fail(Fault::Supervision, self.now_ns);
+            return Err(super::parent_watch::Fault::Binding);
+        }
+        match handle.publisher(self.watch_window()) {
+            Ok(publisher) => self.watch = Some(publisher),
+            Err(f) => {
+                self.watch_error.get_or_insert(f);
+                self.fail(Fault::Supervision, self.now_ns);
+                return Err(f);
+            }
+        }
+        self.notify_watch();
+        self.watch_error.map_or(Ok(()), Err)
+    }
+    pub fn watch_ready(&self) -> bool {
+        self.watch_error.is_none()
+            && self
+                .watch
+                .as_ref()
+                .is_some_and(|w| w.ready(self.watch_window(), self.watch_peers()))
+    }
+    pub fn watch_status(&self) -> Option<super::parent_watch_publication::Status> {
+        self.watch.as_ref().map(|w| w.status())
+    }
+    fn notify_watch(&mut self) {
+        let facts = super::parent_watch_publication::Facts {
+            window: self.watch_window(),
+            anchor: self.history.raw().last().copied(),
+            open: self.context_open(),
+            stop: self.stop,
+            start_ok: self
+                .start_attempt
+                .as_ref()
+                .map(|a| a.queued && a.result.is_ok()),
+            peers: self.watch_peers(),
+            safety: *self.report().safety(),
+        };
+        if let Some(Err(f)) = self.watch.as_mut().map(|w| w.publish(facts)) {
+            self.watch_error.get_or_insert(f);
+            self.fail(Fault::Supervision, self.now_ns);
+        }
+    }
     fn observe_start(
         &mut self,
         clock: &crate::monitor::windows_clock::WindowsClock,
@@ -1060,6 +1149,7 @@ impl ParentSampler {
             safety: *self.monitor.report().safety(),
             reentry: self.reentry.latest,
             consecutive: self.reentry.consecutive,
+            watch_ready: self.watch_ready(),
         }
     }
     /// One Start intent on the worker's original parent-to-child sequence.
@@ -1096,14 +1186,25 @@ impl ParentSampler {
                 out,
             },
         );
-        let result = attempt.result;
+        let mut result = attempt.result;
         self.start_attempt = Some(attempt);
+        if result.is_ok() {
+            self.notify_watch();
+            if self.watch_error.is_some() || self.fault.is_some() {
+                result = Err(StartFault::Supervision);
+                self.start_attempt
+                    .as_mut()
+                    .expect("retained attempt")
+                    .result = result;
+            }
+        }
         if result.is_err() {
             input.setup.close_reference_path();
             self.worker_start_tx.poison();
             match result {
                 Err(StartFault::Deadline) => self.fail(Fault::SetupDeadline, self.setup_deadline),
                 Err(StartFault::Clock) => self.fail(Fault::Clock, self.now_ns),
+                Err(StartFault::Supervision) => self.fail(Fault::Supervision, self.now_ns),
                 Err(StartFault::Send(_) | StartFault::Codec(_)) => {
                     self.fail(Fault::Transport, self.now_ns)
                 }

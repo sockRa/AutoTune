@@ -10,7 +10,7 @@ use super::{
     windows_process::StopOwner,
 };
 use crate::{
-    monitor::{windows_clock::WindowsClock, Anchor, Record},
+    monitor::{windows_clock::WindowsClock, Anchor},
     sampler::budget::{Budget, Reservation},
 };
 use std::{
@@ -86,6 +86,7 @@ impl Slot {
     }
 }
 struct Control {
+    publisher_taken: AtomicBool,
     owners: [Arc<StopOwner>; 2],
     slots: [Slot; 4],
     window: Window,
@@ -100,6 +101,11 @@ struct Control {
     send_error: OnceLock<MailboxFault>,
 }
 impl Control {
+    fn ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
+            && !self.closed.load(Ordering::Acquire)
+            && self.slots.iter().all(|s| s.ready.load(Ordering::Acquire))
+    }
     fn close(&self) {
         self.closed.store(true, Ordering::Release);
         for owner in &self.owners {
@@ -157,10 +163,10 @@ pub struct Handle {
     control: Arc<Control>,
     operations: [Option<JoinHandle<()>>; 4],
     controller: Option<JoinHandle<Report>>,
-    published_setup: bool,
-    published_safety: Option<[Option<Record>; 2]>,
+
     joined_operations: [Option<Result<(), Fault>>; 4],
 }
+#[allow(clippy::large_enum_variant)] // No new allocation on startup budget failure.
 pub enum Retained {
     Owners([StopOwner; 2]),
     Partial(Handle),
@@ -228,6 +234,7 @@ impl Handle {
         };
         let (send, receive) = mpsc::sync_channel(4);
         let control = Arc::new(Control {
+            publisher_taken: AtomicBool::new(false),
             owners: owners.map(Arc::new),
             slots: std::array::from_fn(|_| Slot::new()),
             window,
@@ -245,8 +252,7 @@ impl Handle {
             control,
             operations: std::array::from_fn(|_| None),
             controller: None,
-            published_setup: false,
-            published_safety: None,
+
             joined_operations: [None; 4],
         };
         for index in 0..4 {
@@ -286,13 +292,7 @@ impl Handle {
         Ok(handle)
     }
     pub fn ready(&self) -> bool {
-        self.control.ready.load(Ordering::Acquire)
-            && !self.closed()
-            && self
-                .control
-                .slots
-                .iter()
-                .all(|s| s.ready.load(Ordering::Acquire))
+        self.control.ready()
     }
     pub fn closed(&self) -> bool {
         self.control.closed.load(Ordering::Acquire)
@@ -347,65 +347,18 @@ impl Handle {
         let _ = self.control.external.set(window);
         self.control.close();
     }
-    /// Publish only locally retained parent facts. Queue/full/disconnect fails
-    /// closed and never drops a submitted safety observation to continue load.
-    pub fn publish(&mut self, parent: &ParentSampler) -> Result<(), Fault> {
-        if parent.context_binding() != self.control.window.binding
-            || parent.consent_window().1 != self.control.window.setup_deadline_ns
-        {
+    pub(super) fn publisher(&self, window: Window) -> Result<Publisher, Fault> {
+        if window != self.control.window {
+            return Err(Fault::Binding);
+        }
+        if self.control.publisher_taken.swap(true, Ordering::AcqRel) {
             self.control.abort(Fault::Binding);
             return Err(Fault::Binding);
         }
-        if let Some(window) = parent.stop() {
-            self.request_stop(window);
-            return Ok(());
-        }
-        if self.closed() {
-            return Err(Fault::Requested);
-        }
-        let Some(attempt) = parent.start_attempt() else {
-            return Ok(());
-        };
-        if !attempt.queued || attempt.result.is_err() || !parent.context_open() {
-            self.control.abort(Fault::Binding);
-            return Err(Fault::Binding);
-        }
-        let peers = parent
-            .peer_check()
-            .filter(|p| p.result.is_ok())
-            .ok_or(Fault::Binding);
-        if peers.is_err()
-            || peers.is_ok_and(|p| {
-                [p.peers[1].expected, p.peers[2].expected]
-                    != self.control.owners.each_ref().map(|o| o.origin())
-            })
-        {
-            self.control.abort(Fault::Binding);
-            return Err(Fault::Binding);
-        }
-        let safety = *parent.report().safety();
-        if self.published_setup && self.published_safety == Some(safety) {
-            return Ok(());
-        }
-        let anchor = *parent.history().raw().last().ok_or(Fault::Clock)?;
-        let update = Update {
-            anchor,
-            setup: !self.published_setup,
-            safety,
-        };
-        if let Err(e) = self.control.send.try_send(update) {
-            let (fault, rejected) = match e {
-                mpsc::TrySendError::Full(v) => (MailboxFault::Full, v),
-                mpsc::TrySendError::Disconnected(v) => (MailboxFault::Disconnected, v),
-            };
-            let _ = self.control.rejected.set(rejected);
-            let _ = self.control.send_error.set(fault);
-            self.control.abort(Fault::Transport);
-            return Err(Fault::Transport);
-        }
-        self.published_setup = true;
-        self.published_safety = Some(safety);
-        Ok(())
+        Ok(Publisher {
+            control: self.control.clone(),
+            state: super::parent_watch_publication::Publication::new(window, self.origins()),
+        })
     }
     /// Only a confirmed finished controller is joined; pending operation lanes
     /// and original owners remain retained by this handle after its report.
@@ -424,6 +377,65 @@ impl Handle {
                 .join()
                 .map_err(|_| Fault::Thread),
         )
+    }
+}
+pub(super) struct Publisher {
+    control: Arc<Control>,
+    state: super::parent_watch_publication::Publication,
+}
+struct Endpoint<'a>(&'a Control);
+impl super::parent_watch_publication::Endpoint for Endpoint<'_> {
+    fn ready(&self) -> bool {
+        self.0.ready()
+    }
+    fn closed(&self) -> bool {
+        self.0.closed.load(Ordering::Acquire)
+    }
+    fn send(&mut self, update: Update) -> Result<(), Fault> {
+        if let Err(e) = self.0.send.try_send(update) {
+            let (fault, rejected) = match e {
+                mpsc::TrySendError::Full(v) => (MailboxFault::Full, v),
+                mpsc::TrySendError::Disconnected(v) => (MailboxFault::Disconnected, v),
+            };
+            let _ = self.0.rejected.set(rejected);
+            let _ = self.0.send_error.set(fault);
+            return Err(Fault::Transport);
+        }
+        Ok(())
+    }
+    fn stop(&mut self, window: StopWindow) {
+        let _ = self.0.external.set(window);
+        self.0.close();
+    }
+    fn abort(&mut self, fault: Fault) {
+        self.0.abort(fault);
+    }
+}
+impl Publisher {
+    pub(super) fn status(&self) -> super::parent_watch_publication::Status {
+        self.state.status()
+    }
+    pub(super) fn ready(
+        &self,
+        window: Window,
+        peers: Option<[super::launch_origin::Origin; 2]>,
+    ) -> bool {
+        self.state.ready(window, peers, &Endpoint(&self.control))
+    }
+    pub(super) fn publish(
+        &mut self,
+        facts: super::parent_watch_publication::Facts,
+    ) -> Result<(), Fault> {
+        self.state.publish(facts, &mut Endpoint(&self.control))
+    }
+    pub(super) fn stop(&self, window: StopWindow) {
+        let _ = self.control.external.set(window);
+        self.control.close();
+    }
+}
+impl Drop for Publisher {
+    fn drop(&mut self) {
+        self.control.abort(Fault::Requested);
     }
 }
 impl Drop for Handle {

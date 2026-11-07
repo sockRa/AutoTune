@@ -85,6 +85,21 @@ composition are still required before a runnable benchmark can be claimed.
   process execution, real correctness or useful-baseline acceptance.
 
 ## Execution log
+- 2026-11-07 direct controller attachment: ParentSampler now owns the unique
+  original-window/controller publisher; all Start boundaries require ready,
+  matching original peers/control. Success automatically queues setup/safety;
+  receipt/tick paths publish changed safety and forward original stop/finalize
+  windows without requiring an external publish call. Failed publication keeps
+  accepted progress/raw rejection, faults parent/Start and preserves queued
+  truth. Duplicate transfer/owner loss closes control without replacement;
+  fixed state and inline failure owners remain prepaid. Eight CPU publication
+  models plus two Start-boundary cases; non-invoked concrete attachment/codegen.
+  Initial large-Err/enum lint findings resolved with scoped ownership-preserving
+  allowances; final checks/publication: ROADMAP.md. No actual thread/adapter/
+  process/job/pipe/vendor DLL/GPU execution or qualification. Normal-exit and
+  collector ownership, remaining query/phase/native deadlines, actual timing,
+  native authority/mains and qualification remain open. E3 partial/Gate B unmet;
+  full product goal and frozen numeric limits unchanged.
 - 2026-11-07 independent parent controller source: original setup/run/safety and
   first 1 s/3 s stop windows now drive a continuous-clock controller with four
   separately owned sampler/worker stop/termination lanes. Deadlines never wait

@@ -2753,3 +2753,57 @@ per-call timing/termination/exit qualification, native authority transfer and fi
 mains still need composition. Aggregate export/resources, real pilot/repeated
 baselines, recovery/write and product release gates remain open. E3 partial/Gate B
 unmet; frozen limits and the full benchmark/search/validation goal are unchanged.
+
+## Controller attachment to Start and telemetry — 2026-11-07
+
+E3.1/E3.2 now composes the actual controller publisher into ParentSampler.
+`attach_watch` binds one original Window and consumes the controller's unique
+publisher claim; duplicate transfer fails closed without replacing the first
+publisher. The parent retains its publisher and fixed status/error slots while
+the caller retains the Handle, operation handles and report through finalization.
+Publisher or handle loss closes admission and requests independent containment.
+These are source/lifetime rules, not observed Windows behavior.
+
+Every actual Start boundary now retains `watch_ready`. Readiness requires the
+same original sampler/worker peers, original run/setup window, live ready request
+lanes and no closed/faulted publication. Missing or lost supervision prevents
+successors; loss after a successful queue handoff retains queued=true with a
+failed overall result. Existing context/consent, process, safety and re-entry
+checks still apply. Readiness cannot substitute for them or issue NativeAdmission.
+Poll the controller's own readiness for preparation and the parent's bound
+watch_ready before the one-shot Start attempt; no new grace is introduced.
+
+Successful Start automatically queues its first setup/safety update. Parent
+receipt handling publishes changed temperature/power records immediately after
+assessment; ordinary ticks deduplicate unchanged values. The external Handle
+publish API is removed, so integration does not depend on an additional caller
+remembering it. Queued setup is distinct from the controller's setup-observed
+acknowledgment. A failed handoff never commits publication progress, and later
+failure preserves the last accepted pair. Rejected data and actual queue error
+remain with the controller, while parent raw receipts remain owned as before.
+An initial setup-publication failure also faults parent admission and the retained Start attempt
+without relabelling an already accepted Start frame as unsent.
+
+Parent faults and planned finish forward the first original StopWindow directly;
+this closes both ordinary flags without an OS call on the receipt path. Tick/
+receipt notification additionally detects controller closure. The private shared
+publication policy retains first failure, accepted setup state and last accepted
+safety. No retry/reconnect/replacement occurs after rejection, even if an external
+signal is erroneously reset. Fixed state is prepaid through updated parent/control
+type sizes; original failure owners remain inline without a new allocation.
+
+Eight new CPU publication models and two Start-engine cases cover startup waiting,
+one setup publication, changed-record deduplication, failed first/later handoff,
+missing clock, peer/window mismatch, parent/controller closure, original stop
+forwarding and controller loss at every Start boundary. Concrete attachment and
+receive/start composition are forced to codegen/link without invocation. Initial
+large-Err/enum lint findings were resolved with scoped allowances that preserve
+prepaid packet/process owners instead of allocating on failure. Final source-bound
+verification/publication: ROADMAP.md.
+
+No actual controller/request threads, clock adapter, original process/job/event,
+pipe/vendor DLL/GPU calls or qualification occurred. Normal-exit finalization,
+collector ownership, pending-query/phase/native-call deadlines, actual request/
+exit timing, native authority transfer and fixed mains remain open. Readiness,
+publication and historical acknowledgment are not compute permission. E3 partial/
+Gate B unmet; frozen limits and the full automatic optimization goal are unchanged.

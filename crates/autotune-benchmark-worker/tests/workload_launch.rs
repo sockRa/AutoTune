@@ -231,9 +231,7 @@ fn provenance_composition_entries_link_without_process_invocation() {
     std::hint::black_box(
         autotune_benchmark_worker::workload::parent_watch_windows::Handle::start as *const (),
     );
-    std::hint::black_box(
-        autotune_benchmark_worker::workload::parent_watch_windows::Handle::publish as *const (),
-    );
+    std::hint::black_box(ParentSampler::attach_watch as *const ());
     struct Uncalled;
     impl autotune_benchmark_worker::workload::transport::Queue for Uncalled {
         fn try_send(
