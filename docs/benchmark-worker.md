@@ -2495,3 +2495,53 @@ qualification is claimed, and no main invokes capture. NativeAdmission still has
 no issuer. Parent consumption of setup/workload receipts, fresh process/job and
 safety/re-entry/Start checks, prompt ownership/cancellation/export, aggregate
 resources, mains and real qualification remain open; E3 partial/Gate B unmet.
+
+## Parent consent receipt ownership and launch capture binding — 2026-11-05
+
+Fixed launch now carries the exact CaptureRef returned by its consent guard into
+the created process Origin and every locally stamped packet. CaptureRef identifies
+the request digest and actual response-receipt anchor; it is a historical local
+reference, not a digest/authentication of all decision facts or an execution token.
+It stays available after later rejection, independently of eligibility. Fixture
+records cannot manufacture a concrete capture reference. Origin equality now
+includes this reference, so another capture for the same declaration is distinct.
+The larger inline receipt remains prepaid; it does not add a per-poll heap owner.
+
+Consent request v2 includes launch capture references in workload peer details.
+Its private workload fingerprint retains the exact binding, context references and
+three original Origins. Workload request issuance must follow worker readiness,
+sampler readiness and current-settings receipt. The context summary now retains
+its screened worker Ready anchor. Existing sampler/worker/starting wire bytes are
+unchanged; earlier consent request v1 remains historical, not silently reissued.
+
+`ParentSampler::accept_consent` consumes setup/workload Record owners into one
+retained Delivery, even on rejection. A duplicate returns the new original owners
+and preserves the first assessment. The original starting-read Record is borrowed
+as reusable evidence for this unchanged pre-manifest Scope, not another launch;
+the session caller must retain it and the original process/artifact owners.
+All three independent stage outcomes, capture references and the final observed
+anchor remain visible. Rejection closes ordinary worker decoding and faults the
+parent. The existing independent stop/control path remains mandatory.
+
+The screen requires concrete interactive valid decisions, exact stages/scope/
+epoch/frequency and the actual captures used by each retained launch Origin. Role
+slots must have successful original attempts/clock identity, with approval before
+launch and the reported first boundary. Setup entry/deadline must equal the
+parent's original window; the worker's raw deadline must agree. Workload must
+bind the exact current context/Origins, follow all readiness/settings receipts and
+remain inside the original setup window at final observation; equality expires.
+Independent stage failures are retained. No regeneration of JSON or allocation is
+needed while comparing; updated inline type sizes reserve storage up front.
+
+Ten new CPU comparison models, one changed-capture origin case and two concrete
+rejection/duplicate ownership cases cover consistent data, retrospective approval,
+stage/clock/window/attempt/fingerprint failures, allocation pressure and preserved
+owners. The existing private console-source model additionally verifies historical
+reference stability after invalidation; it calls no console adapter or OS API.
+An initial digit-grouping lint was corrected. Final source-bound verification and
+publication are in ROADMAP.md. No independent-agent review, actual console/clock-
+API/process/pipe/DLL/GPU invocation, human approval or qualification is claimed.
+The result assesses owned local consent evidence, not fresh process/containment
+status, safety/re-entry/Start, ongoing owner state or native admission. Native
+issuance/mains, prompt/aggregate export/resources and real qualification remain
+open; E3 partial/Gate B unmet and the full product goal is unchanged.

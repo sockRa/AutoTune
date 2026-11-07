@@ -115,7 +115,12 @@ impl<D: FixedDeclaration> Process<D> {
     pub fn reserved_control_budget(&self) -> Budget {
         self.transport.reserved_control_budget()
     }
-    fn launch(declaration: D, budget: Budget, shared: SharedLaunch) -> io::Result<Self> {
+    fn launch(
+        declaration: D,
+        budget: Budget,
+        shared: SharedLaunch,
+        consent: crate::workload::consent::CaptureRef,
+    ) -> io::Result<Self> {
         check(&shared)?;
         // Same bounded hashing/UTF-16/attribute-list allowance as the existing
         // sampler launcher, acquired before file/path/pipe/thread construction.
@@ -190,7 +195,8 @@ impl<D: FixedDeclaration> Process<D> {
                     pid,
                     creation.unwrap(),
                 )
-                .ok_or_else(|| io::Error::from_raw_os_error(ERROR_INVALID_DATA as i32))?,
+                .ok_or_else(|| io::Error::from_raw_os_error(ERROR_INVALID_DATA as i32))?
+                .with_consent(consent),
             );
             stage = "pilot_cancel_before_resume";
             check(&shared)?;
@@ -373,7 +379,7 @@ impl<D: FixedDeclaration> Launch<D> {
         clock: &crate::monitor::windows_clock::WindowsClock,
     ) -> io::Result<Self> {
         let (kind, binding, tag) = declaration.launch_origin_binding();
-        consent
+        let capture = consent
             .authorize_launch(
                 crate::workload::consent::LaunchTarget {
                     kind,
@@ -396,7 +402,7 @@ impl<D: FixedDeclaration> Launch<D> {
         let thread = thread::Builder::new()
             .name("pilot-launch".into())
             .spawn(move || {
-                let outcome = Process::launch(declaration, budget, background);
+                let outcome = Process::launch(declaration, budget, background, capture);
                 if let Err(mpsc::TrySendError::Disconnected(Ok(mut process))) =
                     send.try_send(outcome)
                 {

@@ -164,10 +164,48 @@ pub struct ParentSampler {
     origins: super::launch_origin::Chain,
     expected_origin: Option<super::launch_origin::Origin>,
     peer_check: Option<super::parent_peers::Record>,
+    consent: Option<super::consent::Delivery>,
     budget: Budget,
     _metadata: Reservation,
 }
 impl ParentSampler {
+    pub fn consent(&self) -> Option<&super::consent::Delivery> {
+        self.consent.as_ref()
+    }
+    /// Retain the first setup/workload owners even on failure. A duplicate
+    /// returns its original owners; no new heap allocation is needed to reject.
+    #[allow(clippy::result_large_err)]
+    pub fn accept_consent(
+        &mut self,
+        decisions: super::consent::Decisions,
+        input: super::consent::ParentInputs<'_>,
+    ) -> Result<(), super::consent::Rejected> {
+        use super::consent::{self, ParentFault, Rejected};
+        if self.consent.is_some() {
+            input.setup.close_reference_path();
+            self.fail(Fault::Protocol, self.now_ns);
+            return Err(Rejected {
+                fault: ParentFault::Duplicate,
+                returned: Some(decisions),
+            });
+        }
+        self.tick(Some(input.now));
+        let assessment = consent::assess_parent(self, &decisions, &input);
+        let result = assessment.result;
+        self.consent = Some(consent::Delivery {
+            decisions,
+            assessment,
+        });
+        if let Err(fault) = result {
+            input.setup.close_reference_path();
+            self.fail(Fault::Context, self.now_ns);
+            return Err(Rejected {
+                fault,
+                returned: None,
+            });
+        }
+        Ok(())
+    }
     pub(super) fn consent_window(&self) -> (Anchor, u64) {
         (self.setup_entry, self.setup_deadline)
     }
@@ -464,6 +502,7 @@ impl ParentSampler {
             origins: super::launch_origin::Chain::default(),
             expected_origin: None,
             peer_check: None,
+            consent: None,
             budget,
             _metadata: metadata,
         };

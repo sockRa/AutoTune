@@ -15,6 +15,7 @@ pub struct Origin {
     image: Digest,
     pid: u32,
     creation: u64,
+    consent: Option<super::consent::CaptureRef>,
 }
 impl Origin {
     // Only fixed launch code can mint production provenance. No decoder or
@@ -35,6 +36,7 @@ impl Origin {
             image,
             pid,
             creation,
+            consent: None,
         })
     }
     pub fn kind(self) -> Kind {
@@ -54,6 +56,14 @@ impl Origin {
     }
     pub fn creation(self) -> u64 {
         self.creation
+    }
+    pub fn consent(self) -> Option<super::consent::CaptureRef> {
+        self.consent
+    }
+    #[cfg(any(windows, test))]
+    pub(crate) fn with_consent(mut self, consent: super::consent::CaptureRef) -> Self {
+        self.consent = Some(consent);
+        self
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,5 +160,27 @@ mod tests {
         assert_eq!(c.result(), Ok(origin(1)));
         c.observe(None);
         assert_eq!(c.result(), Err(Fault::Missing));
+    }
+    #[test]
+    fn same_process_and_declaration_with_another_consent_capture_is_mixed() {
+        use crate::{monitor::Anchor, workload::consent::CaptureRef};
+        let receipt = Anchor {
+            clock_token: [1; 16],
+            qpc_before: 100,
+            qpc_after: 100,
+            interrupt_100ns: 1,
+            unbiased_100ns: 1,
+        };
+        let first = CaptureRef {
+            request: origin(1).image(),
+            receipt,
+        };
+        let mut other = first;
+        other.receipt.qpc_before = 200;
+        other.receipt.qpc_after = 200;
+        let mut c = Chain::default();
+        c.observe(Some(origin(1).with_consent(first)));
+        c.observe(Some(origin(1).with_consent(other)));
+        assert_eq!(c.result(), Err(Fault::Mixed));
     }
 }

@@ -1,4 +1,99 @@
 mod parent_context_tests {
+    fn consent_claim(
+        h: &Harness,
+        marker: u8,
+    ) -> autotune_benchmark_worker::workload::consent::Record {
+        use autotune_benchmark_worker::workload::consent::{Facts, Request};
+        let decl = Declaration::new(&h.scope, a(2100), &h.b).unwrap();
+        let request = Request::starting(&h.scope, &decl, a(2200), &h.b).unwrap();
+        let mut facts = Facts {
+            length: 1,
+            ..Default::default()
+        };
+        facts.input[0] = marker;
+        request.record_fixture(facts)
+    }
+    #[test]
+    fn rejected_consent_submission_retains_both_original_owners_without_admission() {
+        use autotune_benchmark_worker::workload::consent::{Decisions, ParentFault, ParentInputs};
+        let mut h = Harness::new(200000);
+        assert!(h.check(true, true).is_ok());
+        let read = consent_claim(&h, b'R');
+        let decisions = Decisions {
+            setup: consent_claim(&h, b'A'),
+            workload: consent_claim(&h, b'B'),
+        };
+        let result = h
+            .parent
+            .accept_consent(
+                decisions,
+                ParentInputs {
+                    starting: &read,
+                    starting_response: &h.start,
+                    setup: &mut h.worker,
+                    now: a(ORIGIN + 3100),
+                },
+            )
+            .err()
+            .unwrap();
+        assert_eq!(result.fault, ParentFault::Context);
+        assert!(result.returned.is_none());
+        let delivery = h.parent.consent().unwrap();
+        assert_eq!(delivery.decisions.setup.facts().input[0], b'A');
+        assert_eq!(delivery.decisions.workload.facts().input[0], b'B');
+        assert!(!h.parent.native_admission_available());
+        assert!(h.worker.decoder().decode(&[0; 4]).is_err());
+    }
+    #[test]
+    fn duplicate_consent_returns_new_owners_and_does_not_replace_first_assessment() {
+        use autotune_benchmark_worker::workload::consent::{Decisions, ParentFault, ParentInputs};
+        let mut h = Harness::new(200000);
+        assert!(h.check(true, true).is_ok());
+        let read = consent_claim(&h, b'R');
+        let first = Decisions {
+            setup: consent_claim(&h, b'A'),
+            workload: consent_claim(&h, b'B'),
+        };
+        assert!(h
+            .parent
+            .accept_consent(
+                first,
+                ParentInputs {
+                    starting: &read,
+                    starting_response: &h.start,
+                    setup: &mut h.worker,
+                    now: a(ORIGIN + 3100)
+                }
+            )
+            .is_err());
+        let assessment = h.parent.consent().unwrap().assessment;
+        let next = Decisions {
+            setup: consent_claim(&h, b'C'),
+            workload: consent_claim(&h, b'D'),
+        };
+        let rejection = h
+            .parent
+            .accept_consent(
+                next,
+                ParentInputs {
+                    starting: &read,
+                    starting_response: &h.start,
+                    setup: &mut h.worker,
+                    now: a(ORIGIN + 3200),
+                },
+            )
+            .err()
+            .unwrap();
+        assert_eq!(rejection.fault, ParentFault::Duplicate);
+        let returned = rejection.returned.unwrap();
+        assert_eq!(returned.setup.facts().input[0], b'C');
+        assert_eq!(returned.workload.facts().input[0], b'D');
+        assert_eq!(h.parent.consent().unwrap().assessment, assessment);
+        assert_eq!(
+            h.parent.consent().unwrap().decisions.setup.facts().input[0],
+            b'A'
+        );
+    }
     #[test]
     fn separate_starting_and_setup_requests_bind_exact_scope_run_and_operations() {
         use autotune_benchmark_worker::workload::{

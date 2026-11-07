@@ -21,6 +21,16 @@ use crate::{
 pub const CAP: usize = 64 * 1024;
 pub const INPUT_CAP: usize = 96;
 pub const MAX_EVENTS: usize = 256;
+#[path = "consent_parent.rs"]
+mod parent;
+pub use parent::{Assessment, Decisions, Delivery, ParentFault, ParentInputs, Rejected};
+pub(super) fn assess_parent(
+    p: &ParentSampler,
+    d: &Decisions,
+    input: &ParentInputs<'_>,
+) -> Assessment {
+    parent::assess(p, d, input)
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InputEvent {
     pub kind: u16,
@@ -72,6 +82,19 @@ struct Time {
     issued: Anchor,
     deadline: u64,
 }
+/// Identifies an owned local capture; it is not a digest/authentication of all
+/// decision facts and cannot reconstruct a Record or grant launch permission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CaptureRef {
+    pub request: Digest,
+    pub receipt: Anchor,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WorkloadContext {
+    binding: WorkerBinding,
+    refs: super::parent_context::References,
+    peers: [super::launch_origin::Origin; 3],
+}
 pub struct Request {
     stage: Stage,
     scope: Digest,
@@ -80,6 +103,7 @@ pub struct Request {
     canonical: String,
     digest: Digest,
     _allocation: Reservation,
+    workload_context: Option<WorkloadContext>,
 }
 pub struct Setup<'a, 'r> {
     pub run: &'a BoundRun<'r>,
@@ -278,6 +302,24 @@ impl Request {
             return Err(Fault::Binding);
         }
         let (entry, deadline) = parent.consent_window();
+        let current = parent
+            .current()
+            .and_then(|r| r.raw().receipt())
+            .ok_or(Fault::Context)?;
+        let sampler = parent
+            .ready()
+            .and_then(|r| r.message().ok())
+            .and_then(|m| match m {
+                super::wire::Message::SamplerReady { after, .. } => Some(*after),
+                _ => None,
+            })
+            .ok_or(Fault::Context)?;
+        if [context.worker_ready, current, sampler]
+            .iter()
+            .any(|a| issued.qpc_before < a.qpc_after)
+        {
+            return Err(Fault::Clock);
+        }
         let refs = context.references;
         let peer_values = peers
             .peers
@@ -290,6 +332,15 @@ impl Request {
                     ("declaration", d(o.declaration())),
                     ("binding", d(o.binding())),
                     ("image", d(o.image())),
+                    (
+                        "consent_capture",
+                        o.consent().map_or(Value::Null, |c| {
+                            object([
+                                ("request", d(c.request)),
+                                ("receipt", anchor_value(c.receipt)),
+                            ])
+                        }),
+                    ),
                 ])
             })
             .collect();
@@ -324,14 +375,20 @@ impl Request {
             ("peers", Value::Array(peer_values)),
             ("operation", Value::Text(notice(Stage::Workload).into())),
         ]);
-        Self::freeze(
+        let mut request = Self::freeze(
             Stage::Workload,
             refs.scope,
             [None, None],
             time,
             details,
             budget,
-        )
+        )?;
+        request.workload_context = Some(WorkloadContext {
+            binding,
+            refs,
+            peers: peers.peers.map(|p| p.expected),
+        });
+        Ok(request)
     }
     fn freeze(
         stage: Stage,
@@ -357,7 +414,7 @@ impl Request {
             }
         }
         let canonical = object([
-            ("version", Value::Text("1".into())),
+            ("version", Value::Text("2".into())),
             ("scope", Value::Text("owner_consent_request".into())),
             ("stage", Value::Text(stage_name(stage).into())),
             ("capture_scope", d(scope)),
@@ -385,6 +442,7 @@ impl Request {
             canonical,
             digest,
             _allocation: allocation,
+            workload_context: None,
         })
     }
     pub fn stage(&self) -> Stage {
@@ -494,6 +552,18 @@ pub struct Record {
     rejected: Option<LaunchAttempt>,
 }
 impl Record {
+    /// Historical local identity survives rejection/revocation. Eligibility is
+    /// always checked separately through result, source and original clocks.
+    pub fn capture_ref(&self) -> Option<CaptureRef> {
+        if self.source != Source::Fixture {
+            self.facts.receipt.map(|receipt| CaptureRef {
+                request: self.request.digest,
+                receipt,
+            })
+        } else {
+            None
+        }
+    }
     fn finish(request: Request, facts: Facts, source: Source) -> Self {
         let result = assess(&request, &facts).and_then(|()| {
             if source == Source::Fixture {
@@ -523,7 +593,7 @@ impl Record {
         self.usage_fault.map_or(self.result, Err)
     }
     pub fn interactive(&self) -> bool {
-        self.source != Source::Fixture
+        self.source != Source::Fixture && self.facts.stdin_terminal && self.facts.stdout_terminal
     }
     pub fn used(&self) -> [bool; 2] {
         self.used
@@ -539,7 +609,7 @@ impl Record {
         &mut self,
         target: LaunchTarget,
         clock: &crate::monitor::windows_clock::WindowsClock,
-    ) -> Result<(), Fault> {
+    ) -> Result<CaptureRef, Fault> {
         let mut error = None;
         let now = if clock.clock_token() != self.request.time.epoch.clock_token
             || clock.qpc_frequency() != self.request.time.frequency
@@ -558,7 +628,8 @@ impl Record {
             now,
             error,
             Some((clock.qpc_frequency(), clock.clock_token())),
-        )
+        )?;
+        self.capture_ref().ok_or(Fault::Untrusted)
     }
     #[cfg(test)]
     fn take_launch(
@@ -814,6 +885,22 @@ mod tests {
         let record = r.record_fixture(f);
         assert_eq!(record.result(), Err(Fault::Untrusted));
         assert!(!record.interactive());
+        assert_eq!(record.capture_ref(), None);
+        #[cfg(windows)]
+        {
+            // Private console-source model only; no adapter or OS I/O is called.
+            let (_b, r) = request(Stage::StartingRead);
+            let f = facts(&r);
+            let mut captured = Record::finish(r, f, Source::Console);
+            let reference = captured.capture_ref();
+            assert!(reference.is_some());
+            captured.usage_fault = Some(Fault::Duplicate);
+            assert_eq!(captured.result(), Err(Fault::Duplicate));
+            assert_eq!(captured.capture_ref(), reference);
+            captured.facts.stdin_terminal = false;
+            assert!(!captured.interactive());
+            assert_eq!(captured.capture_ref(), reference);
+        }
     }
     #[test]
     fn stage_and_target_are_part_of_the_exact_request() {

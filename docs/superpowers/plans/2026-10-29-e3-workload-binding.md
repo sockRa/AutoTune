@@ -86,6 +86,28 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-05 parent consent ownership/capture binding: fixed launch now carries
+  its exact guarded CaptureRef into original process/packet provenance. Capture
+  identity stays historical after invalidation and is not permission. Request v2
+  binds these refs and a private workload context/Origin fingerprint; issuance
+  follows all readiness/current receipt boundaries. Parent consumes setup/workload
+  owners into one Delivery on success or failure; duplicates return new owners
+  and preserve the first result. Starting-read evidence is borrowed for the same
+  Scope, with original owner retention still the session caller's obligation.
+  Three stage checks bind exact used capture/role/clock/attempt, causal approval,
+  original setup entry/deadline, worker raw deadline and final workload observation.
+  Failure closes ordinary paths and keeps every outcome. Comparison allocates no
+  new model; inline storage is prepaid. Ten CPU comparison models, one changed-
+  capture origin test and two concrete ownership/rejection cases are added, with
+  the existing private capture model extended for stable historical identity.
+  Digit-grouping lint corrected; initial/current manifests and final source-bound
+  publication are recorded in ROADMAP.md. No independent-agent review or actual
+  console/clock-API/process/pipe/DLL/GPU invocation, human receipt or qualification.
+  Fresh process/containment/safety/re-entry/Start, issuance/mains, ongoing owner
+  supervision, prompt/aggregate export/resources and real qualification remain
+  open. E3 partial/Gate B unmet; frozen numeric/wire contracts/full product remain
+  unchanged and Actions remains removed/disabled.
+
 - 2026-11-05 separate consent requests/guarded launch: StartingRead, PilotSetup
   and Workload requests now bind exact declarations/images, scope/manifest/profile,
   original clocks/windows and (for workload) successful parent context/peer refs.

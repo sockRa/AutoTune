@@ -39,6 +39,9 @@ impl Queue for WindowsQueue<'_> {
         self.transport.send_borrowed(lane, bytes)
     }
 }
+// Keep the original charged packet/provenance owner inline; boxing each poll
+// would introduce a new allocation and a fallible handoff on the receive path.
+#[allow(clippy::large_enum_variant)]
 pub enum Receive {
     Packet(RawReceived),
     Idle {

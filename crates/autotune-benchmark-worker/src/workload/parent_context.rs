@@ -69,6 +69,7 @@ pub struct Summary {
     pub references: References,
     pub current: Current,
     pub cuda_api: i32,
+    pub worker_ready: crate::monitor::Anchor,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Record {
@@ -309,6 +310,7 @@ pub(super) fn screen(parent: &ParentSampler, input: Inputs<'_, '_>) -> Record {
             references: refs,
             current: current.expect("checked current"),
             cuda_api: versions.expect("checked versions"),
+            worker_ready: setup.expect("checked setup").ready,
         }),
     };
     Record {
