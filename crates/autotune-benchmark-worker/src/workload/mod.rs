@@ -23,6 +23,9 @@ pub mod parent_context;
 pub mod parent_peers;
 pub mod parent_sampler;
 pub mod parent_start;
+pub mod parent_watch;
+#[cfg(windows)]
+pub mod parent_watch_windows;
 pub mod prestart;
 pub mod process_state;
 pub mod producer;

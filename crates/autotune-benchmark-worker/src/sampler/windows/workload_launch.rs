@@ -398,6 +398,11 @@ pub struct StopOwner {
     _metadata: super::super::budget::Reservation,
 }
 impl StopOwner {
+    /// Nonblocking host closure; actual signal/termination stays on its owned
+    /// operation lane. This never reopens cancellation or invokes an OS API.
+    pub fn close_admission(&self) {
+        self.shared.cancelled.store(true, Ordering::Release);
+    }
     pub fn origin(&self) -> crate::workload::launch_origin::Origin {
         self.origin
     }
@@ -413,6 +418,15 @@ impl StopOwner {
     pub fn request_termination(&self) -> RequestObservation {
         terminate(&self.shared, &self.requests)
     }
+    /// The bool distinguishes this caller's actual OS invocation from a
+    /// historical/pending shared request. Only the former is clock-bracketed
+    /// by a controller operation lane around this method.
+    pub fn request_stop_attempt(&self) -> (bool, RequestObservation) {
+        signal_attempt(&self.shared, &self.requests)
+    }
+    pub fn request_termination_attempt(&self) -> (bool, RequestObservation) {
+        terminate_attempt(&self.shared, &self.requests)
+    }
 }
 impl Drop for StopOwner {
     fn drop(&mut self) {
@@ -423,13 +437,26 @@ impl Drop for StopOwner {
     }
 }
 fn signal(shared: &SharedLaunch, requests: &Requests) -> RequestObservation {
-    requests
-        .signal(|| unsafe { ok(SetEvent(shared.stop.as_raw_handle())).map_err(|e| raw_code(&e)) })
+    signal_attempt(shared, requests).1
 }
 fn terminate(shared: &SharedLaunch, requests: &Requests) -> RequestObservation {
-    requests.terminate(|| unsafe {
+    terminate_attempt(shared, requests).1
+}
+fn signal_attempt(shared: &SharedLaunch, requests: &Requests) -> (bool, RequestObservation) {
+    let mut invoked = false;
+    let observed = requests.signal(|| unsafe {
+        invoked = true;
+        ok(SetEvent(shared.stop.as_raw_handle())).map_err(|e| raw_code(&e))
+    });
+    (invoked, observed)
+}
+fn terminate_attempt(shared: &SharedLaunch, requests: &Requests) -> (bool, RequestObservation) {
+    let mut invoked = false;
+    let observed = requests.terminate(|| unsafe {
+        invoked = true;
         ok(TerminateJobObject(shared.job.as_raw_handle(), 93)).map_err(|e| raw_code(&e))
-    })
+    });
+    (invoked, observed)
 }
 fn request_result(observed: RequestObservation) -> io::Result<()> {
     match observed.returned {

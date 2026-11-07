@@ -2696,3 +2696,60 @@ ongoing safety supervision, native authority transfer or mains. OS request APIs
 still have no measured return bound. Aggregate resource/export, pilot/baseline,
 recovery/write and product release gates remain open. E3 partial/Gate B unmet;
 the full automatic benchmark/search/validation goal is unchanged.
+
+## Independent parent controller and request lanes — 2026-11-07
+
+E3.1/E3.2 now has a fixed `parent_watch_windows::Handle` source, backed by the
+portable `parent_watch::State`. It validates the original sampler/worker stop
+Origins, distinct PIDs, binding/image references, parent setup deadline and clock
+identity before starting. One controller owns its own continuous clock history;
+four pre-created request lanes separately own sampler/worker stop and termination
+calls. No process-state query, transport receive/write, vendor callback, operation
+join or evidence writer runs on the controller loop. Both ordinary cancellation
+flags close before an operation is scheduled. Stop/termination lanes remain
+independent even if another OS call or its clock capture never returns.
+
+The original setup deadline applies until a timely locally retained successful
+Start attempt supplies the setup/safety handoff. Subsequent updates come only
+from the bound ParentSampler's retained records and accepted original peers.
+Temperature and power retain the existing query/transport/value checks; their
+original sample ends determine the 750 ms freshness deadlines. Updates cannot
+revive an expired window, rebase the original run end or grant compute. This
+controller supplements existing worker phase/count policy; full phase/controller
+composition and native permission remain unfinished. A ready flag or historical
+setup-observed flag is not NativeAdmission.
+
+The first stop/fault closes admission, preserves its original 1 s/3 s windows
+and may only tighten them. Late ticks never start fresh grace. Missing/invalid
+clock or unknown current time forces containment without borrowed grace. A
+controller's final report does not observe process exit or job emptiness; those
+need separately retained original process owners off its deadline path.
+
+Controller clocks and bounded update receipts/first overflow remain owned.
+Mailbox receipt clocks follow each actual try_recv, including racing updates;
+failed capture cannot substitute the previous clock. Pending commands survive
+in the returned report, retaining their mailbox charge and original control roots. A rejected mailbox update is retained before fail-closed
+abort. Each request slot owns actual before/after captures, raw errors, returned
+request snapshot and thread completion facts. An explicit invoked marker prevents
+historical/shared owner results from being described as newly bracketed OS calls;
+current owner ledgers remain available separately. Results are stored before
+post-call capture. Only observed finished threads may be joined; pending handles
+and original control owners remain retained, including partial spawn failures.
+Handle loss or thread unwind closes flags and requests independent containment.
+
+Application reservations precede history/mailbox/owner/thread metadata setup;
+OS thread stacks, scheduling and request return bounds are still unqualified.
+Fourteen new CPU models cover original expiry/grace, late ticks, clock faults,
+setup handoff, safety continuity through the full 45 s run, malformed/replayed
+records, missing receipts, capacity retention and budget release. Non-invoked
+pointers force concrete start/publish/request-lane codegen/linking. A Clippy
+manual-is-multiple-of finding was corrected with its log retained. Final checks
+and publication: ROADMAP.md. No controller/request thread, clock adapter, process,
+job/event, pipe, vendor DLL or GPU adapter was actually invoked or qualified.
+
+No main invokes this source. Continuous collector ownership, guard readiness and
+publication tied directly to Start/telemetry, nonfault normal-exit finalization,
+per-call timing/termination/exit qualification, native authority transfer and fixed
+mains still need composition. Aggregate export/resources, real pilot/repeated
+baselines, recovery/write and product release gates remain open. E3 partial/Gate B
+unmet; frozen limits and the full benchmark/search/validation goal are unchanged.

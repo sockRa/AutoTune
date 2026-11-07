@@ -85,6 +85,22 @@ composition are still required before a runnable benchmark can be claimed.
   process execution, real correctness or useful-baseline acceptance.
 
 ## Execution log
+- 2026-11-07 independent parent controller source: original setup/run/safety and
+  first 1 s/3 s stop windows now drive a continuous-clock controller with four
+  separately owned sampler/worker stop/termination lanes. Deadlines never wait
+  for collector/process queries, vendor calls, pipe I/O, operation joins or
+  export; request OS calls and their captures remain on independent lanes.
+  Bound parent publication retains actual Start/safety/peer facts, mailbox
+  receipt clocks/rejections, original sample-end freshness, fixed update history
+  and first overflow. Partial spawn failures/pending operations retain owners;
+  raw returns precede post-clock capture, and invoked markers distinguish fresh
+  API calls from shared historical results. Fourteen CPU policy/mailbox models plus
+  non-invoked concrete codegen/link coverage. Initial is_multiple_of lint fixed;
+  final checks/publication: ROADMAP.md. No actual thread/clock-adapter/process/
+  job/event/pipe/vendor DLL/GPU invocation or qualification. Start/telemetry guard
+  attachment, collector ownership, nonfault normal exit, actual operation timing,
+  native authority/mains and real qualification remain open. E3 partial/Gate B
+  unmet; full product goal and frozen numeric contract unchanged.
 - 2026-11-07 separate stop owner: successful Process owners can transfer one
   original-Origin/job/event/cancellation capability to independent control while
   retaining collector/transport/image ownership. Arc sharing creates no new OS
