@@ -156,7 +156,7 @@ composition are still required before a runnable benchmark can be claimed.
   frames remain owned on rejection and successful queue admission stays explicit
   even if the post-check expires. First process/send failure and later clock
   failure are both retained. Duplicate attempts preserve the first record and
-  close ordinary paths; fixed storage is prepaid. Sixteen CPU policy/engine
+  close ordinary paths; fixed storage is prepaid. Thirteen CPU policy/engine
   models and extended non-invoked concrete codegen/link coverage. Final checks
   and publication: ROADMAP.md. No actual adapter/process/native/GPU execution,
   NativeAdmission issuer or fixed main. Independent collector/control ownership,
