@@ -2545,3 +2545,54 @@ The result assesses owned local consent evidence, not fresh process/containment
 status, safety/re-entry/Start, ongoing owner state or native admission. Native
 issuance/mains, prompt/aggregate export/resources and real qualification remain
 open; E3 partial/Gate B unmet and the full product goal is unchanged.
+
+## Retained-handle process state observations — 2026-11-07
+
+`process_state` records up to six ordered operations per original process: fresh
+PID, fresh creation/exit/user/kernel times, job handle flags, current job limits,
+direct wait/exit/job accounting, and live job membership. Every attempted operation
+retains before/after anchors, typed selected raw outputs and errors. Stop, missing/
+invalid clock or original setup expiry prevents successor reads. A returned OS
+failure stays primary if the post-call clock also fails; both facts survive.
+Unobserved final cancellation stays explicitly unknown. Public fixture construction
+cannot create retained-handle provenance or pass the observed-state assessor.
+
+The concrete fixed-process adapter reads only its original owned process/job
+handles and actual WindowsClock. It never reopens a PID, waits on a job, changes
+process/driver/device state or loads a DLL. Startup configuration and fresh
+readback now share the same desired-job-limits helper, preserving the existing
+kill-on-close/process-count/commit/user-CPU configuration. The check compares fresh
+PID/creation, noninherited job handle flags, exact configured limits/returned size,
+and independent wait/exit/accounting/termination facts. Worker and sampler must
+be unsignaled with one active process and membership in their original jobs.
+The starting reader instead requires observed exit code zero and empty original
+job; post-exit membership is deliberately not queried or inferred.
+
+`ParentSampler::observe_processes` binds all three original Origins to accepted
+context/peer/consent evidence before collection. It retains one complete or partial
+frame, independent role outcomes, outer clock facts and raw snapshots; rejection
+faults parent admission and closes ordinary worker decoding. Duplicate collection
+preserves the first frame and rejects. Fixed record storage is prepaid through
+updated type sizes. Shared policy helpers are reused; these ledger checks do not
+qualify allocator behavior or aggregate OS resources.
+
+This is a historical observation interval, not an atomic OS snapshot or a lease
+on later liveness. No new numeric process-age allowance is invented. A future
+Start issuer must collect as part of that decision and combine it with fresh
+safety/re-entry checks, not reuse a cached frame as permission. OS queries can
+block: collection must remain off the independent deadline path, with retained
+collector/process owners and separate stop/termination supervision. Collector
+ownership/cancellation and actual main composition are not implemented here.
+Job/exit evidence does not prove GPU quiescence, memory release or safe recovery.
+
+Ten new CPU model tests cover live/exited roles, untrusted fixtures, every capture
+failure/stop boundary, raw-error precedence, token/regression/expiry, identity/job/
+limits/membership drift, wait/exit/accounting/termination, and batch scope/clock
+failures. The existing non-invoked Windows pointer test additionally forces the
+concrete parent/adapter path to codegen/link. Initial import/type inference and
+test rounding lints were corrected; a Linux-only unused-function warning was
+resolved by platform gating. Source-bound final checks/publication: ROADMAP.md.
+No independent-agent review, actual retained-handle/clock-API/OS/process/pipe/
+DLL/GPU invocation or qualification. Fresh safety/re-entry/Start composition,
+native issuance/mains, aggregate export/resources and real qualification remain
+open; E3 partial/Gate B unmet, with the full product goal and frozen limits intact.

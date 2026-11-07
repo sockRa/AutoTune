@@ -165,10 +165,14 @@ pub struct ParentSampler {
     expected_origin: Option<super::launch_origin::Origin>,
     peer_check: Option<super::parent_peers::Record>,
     consent: Option<super::consent::Delivery>,
+    process_frame: Option<super::process_state::Frame>,
     budget: Budget,
     _metadata: Reservation,
 }
 impl ParentSampler {
+    pub fn process_frame(&self) -> Option<&super::process_state::Frame> {
+        self.process_frame.as_ref()
+    }
     pub fn consent(&self) -> Option<&super::consent::Delivery> {
         self.consent.as_ref()
     }
@@ -503,6 +507,7 @@ impl ParentSampler {
             expected_origin: None,
             peer_check: None,
             consent: None,
+            process_frame: None,
             budget,
             _metadata: metadata,
         };
@@ -954,6 +959,89 @@ pub struct Poll {
 }
 #[cfg(windows)]
 impl ParentSampler {
+    /// Concrete reads from the three original owners. OS queries may block;
+    /// invoke off the independent deadline path and retain the collector owner.
+    /// The retained result is historical, not a cached native/Start permit.
+    pub fn observe_processes(
+        &mut self,
+        input: super::process_state::Processes<'_>,
+        clock: &crate::monitor::windows_clock::WindowsClock,
+    ) -> Result<(), super::process_state::Fault> {
+        use super::process_state::{self, Fault as StateFault, Frame, Window};
+        if self.process_frame.is_some() {
+            input.setup.close_reference_path();
+            self.fail(Fault::Protocol, self.now_ns);
+            return Err(StateFault::Duplicate);
+        }
+        let mut before_error = None;
+        let before = clock
+            .capture()
+            .map_err(|e| before_error = Some(e.into()))
+            .ok();
+        self.tick(before);
+        let expected = [
+            input.starting.origin(),
+            input.sampler.origin(),
+            input.worker.origin(),
+        ];
+        let context = self.context_open()
+            && self
+                .consent
+                .as_ref()
+                .is_some_and(|d| d.assessment.result.is_ok())
+            && self
+                .peer_check
+                .as_ref()
+                .is_some_and(|p| p.result.is_ok() && p.peers.map(|p| p.expected) == expected)
+            && self.context_check.as_ref().is_some_and(|c| {
+                c.result.is_ok() && c.references.worker_setup == input.setup.receipt().digest()
+            })
+            && input.setup.origin().ok() == Some(expected[2]);
+        let window = Window {
+            binding: self.binding.monitor(),
+            epoch: self.binding.epoch,
+            deadline_ns: self.setup_deadline,
+        };
+        let observed_clock = (clock.qpc_frequency(), clock.clock_token());
+        let eligible = context
+            && before_error.is_none()
+            && observed_clock == (window.binding.qpc_frequency, window.epoch.clock_token);
+        let snapshots = if eligible {
+            [
+                Some(input.starting.observe_state(window, clock)),
+                Some(input.sampler.observe_state(window, clock)),
+                Some(input.worker.observe_state(window, clock)),
+            ]
+        } else {
+            [None; 3]
+        };
+        let mut after_error = None;
+        let after = clock
+            .capture()
+            .map_err(|e| after_error = Some(e.into()))
+            .ok();
+        self.tick(after);
+        let mut frame = Frame {
+            window,
+            observed_clock,
+            before,
+            after,
+            before_error,
+            after_error,
+            snapshots,
+            checks: [Err(StateFault::Missing); 3],
+            clock_result: Err(StateFault::Clock),
+            result: Err(StateFault::Context),
+        };
+        process_state::screen_frame(&mut frame, expected, context && self.context_open());
+        let result = frame.result;
+        self.process_frame = Some(frame);
+        if result.is_err() {
+            input.setup.close_reference_path();
+            self.fail(Fault::Context, self.now_ns);
+        }
+        result
+    }
     /// Compare retained local launch owners with every received artifact path.
     /// Caller keeps all process/session owners; success gives no native permit.
     pub fn check_processes(

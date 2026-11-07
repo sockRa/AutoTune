@@ -23,6 +23,7 @@ pub mod parent_context;
 pub mod parent_peers;
 pub mod parent_sampler;
 pub mod prestart;
+pub mod process_state;
 pub mod producer;
 pub mod runtime_evidence;
 pub mod sampler_dispatch;

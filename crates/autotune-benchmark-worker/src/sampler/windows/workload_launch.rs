@@ -2,6 +2,8 @@
 //! Source/compile evidence only; no launch or workload execution is authorized.
 pub use super::FailedLaunch as RetainedFailure;
 use super::*;
+#[path = "workload_process_state.rs"]
+mod state;
 use crate::workload::{
     launch::{CancelQueue, Declaration, Role},
     starting_bootstrap,
@@ -112,6 +114,15 @@ impl<D: FixedDeclaration> Queue for ProcessQueue<'_, D> {
     }
 }
 impl<D: FixedDeclaration> Process<D> {
+    /// Read only from retained original handles. OS calls may block; keep this
+    /// collection off the independent deadline path and retain its owner.
+    pub fn observe_state(
+        &self,
+        window: crate::workload::process_state::Window,
+        clock: &crate::monitor::windows_clock::WindowsClock,
+    ) -> crate::workload::process_state::Snapshot {
+        state::capture(self, window, clock)
+    }
     pub fn reserved_control_budget(&self) -> Budget {
         self.transport.reserved_control_budget()
     }

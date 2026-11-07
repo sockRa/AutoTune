@@ -86,6 +86,27 @@ composition are still required before a runnable benchmark can be claimed.
 
 ## Execution log
 
+- 2026-11-07 retained-handle process state: six fixed ordered reads now retain
+  fresh PID/times, job flags/current limits, direct wait/exit/accounting and live
+  membership under per-call original-clock checks. Returned raw errors survive
+  later clock failure; stop/fault/expiry forbids successors and unobserved final
+  cancellation remains unknown. Initial/fresh limits share one configuration
+  helper without numeric changes. Parent binds original Origins and accepted
+  context/peer/consent evidence, retains one complete/partial frame and rejects
+  duplicates/failures while preserving role outcomes. Starting read requires
+  normal observed exit/empty original job; live roles require wait timeout/one
+  active process/membership. No post-exit membership inference. Ten CPU models
+  and extended non-invoked concrete codegen/link coverage; initial import/type/
+  rounding lints and Linux gating warning corrected. Final source-bound checks
+  and publication: ROADMAP.md. No independent-agent review or actual OS/clock-
+  API/process/pipe/DLL/GPU invocation/qualification. This is a historical interval,
+  not atomic state, a liveness lease or native permission; no new age threshold.
+  A future issuer must collect within its actual decision and combine fresh
+  safety/re-entry/Start. Independent collector ownership/cancellation, original
+  deadline supervision, native issuance/mains, aggregate export/resources and
+  real qualification remain open. E3 partial/Gate B unmet; full product/frozen
+  limits unchanged and Actions remains removed/disabled.
+
 - 2026-11-05 parent consent ownership/capture binding: fixed launch now carries
   its exact guarded CaptureRef into original process/packet provenance. Capture
   identity stays historical after invalidation and is not permission. Request v2

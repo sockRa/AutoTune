@@ -124,17 +124,7 @@ fn job() -> io::Result<OwnedHandle> {
 fn job_limits(commit_bytes: u64, user_cpu_ns: u64) -> io::Result<OwnedHandle> {
     unsafe {
         let job = own(CreateJobObjectW(null(), null()))?;
-        let p = autotune_fma_reference::profile::Profile::approved_design().limits;
-        let mut wanted: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
-        wanted.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
-            | JOB_OBJECT_LIMIT_PROCESS_MEMORY
-            | JOB_OBJECT_LIMIT_JOB_MEMORY
-            | JOB_OBJECT_LIMIT_PROCESS_TIME;
-        wanted.BasicLimitInformation.ActiveProcessLimit = p.processes_per_job;
-        wanted.BasicLimitInformation.PerProcessUserTimeLimit = (user_cpu_ns / 100) as i64;
-        wanted.ProcessMemoryLimit = commit_bytes as usize;
-        wanted.JobMemoryLimit = commit_bytes as usize;
+        let wanted = configured_job_limits(commit_bytes, user_cpu_ns);
         ok(SetInformationJobObject(
             job.as_raw_handle(),
             JobObjectExtendedLimitInformation,
@@ -161,6 +151,25 @@ fn job_limits(commit_bytes: u64, user_cpu_ns: u64) -> io::Result<OwnedHandle> {
         }
         Ok(job)
     }
+}
+fn configured_job_limits(
+    commit_bytes: u64,
+    user_cpu_ns: u64,
+) -> JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+    let mut wanted: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
+    wanted.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+        | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        | JOB_OBJECT_LIMIT_JOB_MEMORY
+        | JOB_OBJECT_LIMIT_PROCESS_TIME;
+    wanted.BasicLimitInformation.ActiveProcessLimit =
+        autotune_fma_reference::profile::Profile::approved_design()
+            .limits
+            .processes_per_job;
+    wanted.BasicLimitInformation.PerProcessUserTimeLimit = (user_cpu_ns / 100) as i64;
+    wanted.ProcessMemoryLimit = commit_bytes as usize;
+    wanted.JobMemoryLimit = commit_bytes as usize;
+    wanted
 }
 fn spawn(
     path: &std::path::Path,
