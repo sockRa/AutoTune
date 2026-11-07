@@ -90,7 +90,7 @@ composition are still required before a runnable benchmark can be claimed.
   matching original peers/control. Success automatically queues setup/safety;
   receipt/tick paths publish changed safety and forward original stop/finalize
   windows without requiring an external publish call. Failed publication keeps
-  accepted progress/raw rejection, faults parent/Start and preserves queued
+  accepted progress/raw rejection, faults parent and initial Start as applicable and preserves queued
   truth. Duplicate transfer/owner loss closes control without replacement;
   fixed state and inline failure owners remain prepaid. Eight CPU publication
   models plus two Start-boundary cases; non-invoked concrete attachment/codegen.
