@@ -209,6 +209,17 @@ fn provenance_composition_entries_link_without_process_invocation() {
     std::hint::black_box(ParentSampler::check_processes as *const ());
     std::hint::black_box(Process::<Declaration>::origin as *const ());
     std::hint::black_box(ParentSampler::observe_processes as *const ());
+    struct Uncalled;
+    impl autotune_benchmark_worker::workload::transport::Queue for Uncalled {
+        fn try_send(
+            &mut self,
+            _: autotune_benchmark_worker::sampler::wire::Lane,
+            _: &[u8],
+        ) -> Result<(), autotune_benchmark_worker::workload::transport::SendFailure> {
+            panic!("link-only queue must never be invoked")
+        }
+    }
+    std::hint::black_box(ParentSampler::queue_start::<Uncalled> as *const ());
     std::hint::black_box(
         autotune_benchmark_worker::workload::consent::Request::capture_console as *const (),
     );

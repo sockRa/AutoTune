@@ -2596,3 +2596,52 @@ No independent-agent review, actual retained-handle/clock-API/OS/process/pipe/
 DLL/GPU invocation or qualification. Fresh safety/re-entry/Start composition,
 native issuance/mains, aggregate export/resources and real qualification remain
 open; E3 partial/Gate B unmet, with the full product goal and frozen limits intact.
+
+## Parent Start intent with decision-time process collection — 2026-11-07
+
+E3.1/E3.2/E3.3 now has a concrete `ParentSampler::queue_start` source path.
+It requires the accepted context/peer/owned-consent chain and the existing
+reported safety/re-entry screen, then collects the three original process
+owners inside the same one-shot attempt. An earlier cached process frame is
+ineligible. The worker's ordinary parent-to-child Channel emits one Start;
+this is separate from the sampler's ordinary sequence. No public fixture or
+stored result can construct NativeAdmission, and no main calls this path.
+
+Four retained boundaries bracket entry, post-collection/issued, pre-queue and
+post-queue. Each stores the actual clock anchor/error/identity, parent fault,
+context/screen results, raw temperature/power records and latest re-entry pair
+and consecutive count. Parent ticking reuses the existing monitor, required
+metric and four-observation re-entry policy; no new numeric age allowance is
+introduced. All boundaries must precede the original setup deadline, even when
+sampler readiness has already marked its own setup complete. Encoding and queue
+time do not renew the deadline. Deadline rejection uses that original boundary
+for the stop window. The fixed attempt slot is prepaid through ParentSampler's
+existing metadata reservation and the added worker Channel has its own charge.
+
+The complete/partial process frame remains in the parent. A failed process read
+still gets a post-call observation; its original failure takes precedence over
+a later clock failure. The original encoded Start stays owned if a pre-queue
+check or the queue rejects it. A post-queue expiry retains `queued: true` and a
+failed overall result; queue acceptance cannot be relabelled as unsent or as a
+peer receipt. Send errors and later clock/expiry rejection remain separately
+visible. Duplicate attempts preserve the first record, close ordinary paths
+and fault the parent. Independent worker stop/termination remains required.
+
+The private shared engine has thirteen CPU model tests: continuous original
+clocks, every boundary's expiry, identity/regression/suspend/bracket faults,
+missing context/telemetry, capture-error retention, fixed observation ordering,
+complete collection/encoding/queue order, cached-frame rejection, process/codec/
+queue failure and secondary post-call failure. Existing transport regressions
+retain adjacent codec/ownership coverage; an extended non-invoked function
+pointer forces the concrete Windows composition to codegen/link. Final
+source-bound verification and publication are recorded in ROADMAP.md.
+
+OS queries and prompt operations can block. This source does not implement the
+independently owned collector/controller stop lane, an ongoing safety lease,
+qualified native issuance, authority transfer to the worker, or fixed mains.
+These must precede actual workload integration; a decoded Start and an `Ok`
+result are not permission. No actual clock/retained-handle/process/job/pipe/
+vendor DLL/GPU adapter invocation or qualification occurred. Aggregate export,
+resource qualification, real pilot/repeated-baseline and recovery/write gates
+remain open. E3 is partial and Gate B unmet; frozen limits and the full automatic
+benchmark/search/validation product goal are unchanged.

@@ -22,6 +22,7 @@ pub mod nvml_trace;
 pub mod parent_context;
 pub mod parent_peers;
 pub mod parent_sampler;
+pub mod parent_start;
 pub mod prestart;
 pub mod process_state;
 pub mod producer;

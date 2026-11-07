@@ -166,10 +166,20 @@ pub struct ParentSampler {
     peer_check: Option<super::parent_peers::Record>,
     consent: Option<super::consent::Delivery>,
     process_frame: Option<super::process_state::Frame>,
+    start_attempt: Option<super::parent_start::Attempt>,
+    #[cfg(windows)]
+    worker_start_tx: Channel,
+    unsent_worker_start: Option<EncodedFrame>,
     budget: Budget,
     _metadata: Reservation,
 }
 impl ParentSampler {
+    pub fn start_attempt(&self) -> Option<&super::parent_start::Attempt> {
+        self.start_attempt.as_ref()
+    }
+    pub fn unsent_worker_start(&self) -> Option<&EncodedFrame> {
+        self.unsent_worker_start.as_ref()
+    }
     pub fn process_frame(&self) -> Option<&super::process_state::Frame> {
         self.process_frame.as_ref()
     }
@@ -508,6 +518,16 @@ impl ParentSampler {
             peer_check: None,
             consent: None,
             process_frame: None,
+            start_attempt: None,
+            #[cfg(windows)]
+            worker_start_tx: Channel::new(
+                binding,
+                Lane::Ordinary,
+                Direction::ToWorker,
+                budget.clone(),
+            )
+            .map_err(|_| Fault::Capacity)?,
+            unsent_worker_start: None,
             budget,
             _metadata: metadata,
         };
@@ -636,6 +656,9 @@ impl ParentSampler {
     /// a later parent gate must prove peer/environment/consent and fresh timing.
     pub fn reported_screen(&mut self, a: Option<Anchor>) -> bool {
         self.tick(a);
+        self.reported_ready()
+    }
+    fn reported_ready(&self) -> bool {
         self.fault.is_none()
             && !self.finishing
             && self.setup_done
@@ -958,7 +981,137 @@ pub struct Poll {
     pub rejected: Option<RawReceived>,
 }
 #[cfg(windows)]
+struct StartSource<'a, 'p, Q: Queue> {
+    parent: &'a mut ParentSampler,
+    input: super::process_state::Processes<'p>,
+    clock: &'a crate::monitor::windows_clock::WindowsClock,
+    out: &'a mut Sender<Q>,
+}
+#[cfg(windows)]
+impl<Q: Queue> super::parent_start::Source for StartSource<'_, '_, Q> {
+    fn observe(&mut self) -> super::parent_start::Observation {
+        self.parent.observe_start(self.clock)
+    }
+    fn cached_process(&self) -> bool {
+        self.parent.process_frame.is_some()
+    }
+    fn collect(&mut self) -> Result<(), super::process_state::Fault> {
+        self.parent.observe_processes(
+            super::process_state::Processes {
+                starting: self.input.starting,
+                sampler: self.input.sampler,
+                worker: self.input.worker,
+                setup: &mut *self.input.setup,
+            },
+            self.clock,
+        )
+    }
+    fn encode(&mut self, issued: Anchor) -> Result<(), WireError> {
+        let frame = self
+            .parent
+            .worker_start_tx
+            .encode(&Message::Start { issued })?;
+        self.parent.unsent_worker_start = Some(frame);
+        Ok(())
+    }
+    fn send(&mut self) -> Result<(), SendFailure> {
+        let frame = self
+            .parent
+            .unsent_worker_start
+            .take()
+            .expect("encoded Start");
+        match self.out.send_worker(frame) {
+            Ok(()) => Ok(()),
+            Err(frame) => {
+                self.parent.unsent_worker_start = Some(frame);
+                Err(self.out.fault(Lane::Ordinary).unwrap_or(SendFailure::Queue))
+            }
+        }
+    }
+}
+#[cfg(windows)]
 impl ParentSampler {
+    fn observe_start(
+        &mut self,
+        clock: &crate::monitor::windows_clock::WindowsClock,
+    ) -> super::parent_start::Observation {
+        let mut capture_error = None;
+        let anchor = clock
+            .capture()
+            .map_err(|e| capture_error = Some(e.into()))
+            .ok();
+        self.tick(anchor);
+        super::parent_start::Observation {
+            anchor,
+            capture_error,
+            clock_identity: (clock.qpc_frequency(), clock.clock_token()),
+            parent_fault: self.fault,
+            context: self.context_open()
+                && self
+                    .context_check
+                    .as_ref()
+                    .is_some_and(|c| c.result.is_ok())
+                && self.peer_check.as_ref().is_some_and(|p| p.result.is_ok())
+                && self
+                    .consent
+                    .as_ref()
+                    .is_some_and(|d| d.assessment.result.is_ok()),
+            reported_screen: self.reported_ready(),
+            safety: *self.monitor.report().safety(),
+            reentry: self.reentry.latest,
+            consecutive: self.reentry.consecutive,
+        }
+    }
+    /// One Start intent on the worker's original parent-to-child sequence.
+    /// Collects original process handles inside this attempt; an earlier frame
+    /// is deliberately ineligible. The caller must retain process/collector
+    /// owners off an independent original-deadline stop/termination path:
+    /// OS reads can block. Queue acceptance is not receipt, an ongoing safety
+    /// lease or native authority. No NativeAdmission is issued here.
+    pub fn queue_start<Q: Queue>(
+        &mut self,
+        input: super::process_state::Processes<'_>,
+        clock: &crate::monitor::windows_clock::WindowsClock,
+        out: &mut Sender<Q>,
+    ) -> Result<(), super::parent_start::Fault> {
+        use super::parent_start::Fault as StartFault;
+        if self.start_attempt.is_some() {
+            input.setup.close_reference_path();
+            self.worker_start_tx.poison();
+            self.fail(Fault::Protocol, self.now_ns);
+            return Err(StartFault::Duplicate);
+        }
+        let attempt = super::parent_start::run(
+            self.binding,
+            self.setup_deadline,
+            &mut StartSource {
+                parent: self,
+                input: super::process_state::Processes {
+                    starting: input.starting,
+                    sampler: input.sampler,
+                    worker: input.worker,
+                    setup: &mut *input.setup,
+                },
+                clock,
+                out,
+            },
+        );
+        let result = attempt.result;
+        self.start_attempt = Some(attempt);
+        if result.is_err() {
+            input.setup.close_reference_path();
+            self.worker_start_tx.poison();
+            match result {
+                Err(StartFault::Deadline) => self.fail(Fault::SetupDeadline, self.setup_deadline),
+                Err(StartFault::Clock) => self.fail(Fault::Clock, self.now_ns),
+                Err(StartFault::Send(_) | StartFault::Codec(_)) => {
+                    self.fail(Fault::Transport, self.now_ns)
+                }
+                _ => self.fail(Fault::Context, self.now_ns),
+            }
+        }
+        result
+    }
     /// Concrete reads from the three original owners. OS queries may block;
     /// invoke off the independent deadline path and retain the collector owner.
     /// The retained result is historical, not a cached native/Start permit.

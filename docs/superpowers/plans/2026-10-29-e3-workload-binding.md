@@ -85,6 +85,21 @@ composition are still required before a runnable benchmark can be claimed.
   process execution, real correctness or useful-baseline acceptance.
 
 ## Execution log
+- 2026-11-07 parent Start intent: one-shot source now collects original process
+  handles inside the accepted context/peer/owned-consent and fresh monitor/
+  re-entry decision. Cached process frames cannot be reused. Four fixed raw
+  boundaries span entry, post-collection/issued, pre-queue and post-queue under
+  the original setup deadline. One worker ordinary Channel emits Start; encoded
+  frames remain owned on rejection and successful queue admission stays explicit
+  even if the post-check expires. First process/send failure and later clock
+  failure are both retained. Duplicate attempts preserve the first record and
+  close ordinary paths; fixed storage is prepaid. Thirteen CPU policy/engine
+  models and extended non-invoked concrete codegen/link coverage. Final checks
+  and publication: ROADMAP.md. No actual adapter/process/native/GPU execution,
+  NativeAdmission issuer or fixed main. Independent collector/control ownership,
+  native authority transfer, prompt/aggregate export/resources and real pilot/
+  repeated-baseline/recovery/write qualification remain open. E3 partial/Gate B
+  unmet; full product goal and frozen numeric limits unchanged.
 
 - 2026-11-07 retained-handle process state: six fixed ordered reads now retain
   fresh PID/times, job flags/current limits, direct wait/exit/accounting and live
