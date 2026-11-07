@@ -85,6 +85,22 @@ composition are still required before a runnable benchmark can be claimed.
   process execution, real correctness or useful-baseline acceptance.
 
 ## Execution log
+- 2026-11-07 separate stop owner: successful Process owners can transfer one
+  original-Origin/job/event/cancellation capability to independent control while
+  retaining collector/transport/image ownership. Arc sharing creates no new OS
+  handles or PID lookup. A separately prepaid shared request ledger publishes
+  cancellation before callbacks and retains the first requested/pending/returned
+  state across both owners. Duplicate/reentrant calls never retry; pending stop
+  leaves termination independently available. Process observations share actual
+  termination returns; host pending has no fabricated native error. Owner loss
+  requests termination directly, without a preceding potentially blocked signal.
+  Six CPU request models plus one pure Windows io-result case; non-invoked
+  pilot/starting construction/request/drop pointers and Send + Sync bounds.
+  Initial test-module placement/destructor-pointer compile errors corrected;
+  final source-bound checks/publication: ROADMAP.md. Actual controller thread,
+  original windows/per-call clocks, collector ownership, ongoing safety/native
+  issuance/mains and qualification remain open. No actual adapter/OS/process/
+  native/GPU execution. E3 partial/Gate B unmet; frozen limits/full goal unchanged.
 - 2026-11-07 parent Start intent: one-shot source now collects original process
   handles inside the accepted context/peer/owned-consent and fresh monitor/
   re-entry decision. Cached process frames cannot be reused. Four fixed raw

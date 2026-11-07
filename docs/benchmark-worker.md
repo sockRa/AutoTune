@@ -2645,3 +2645,54 @@ vendor DLL/GPU adapter invocation or qualification occurred. Aggregate export,
 resource qualification, real pilot/repeated-baseline and recovery/write gates
 remain open. E3 is partial and Gate B unmet; frozen limits and the full automatic
 benchmark/search/validation product goal are unchanged.
+
+## Separate original-handle stop owner — 2026-11-07
+
+E3.1 now has `Process::stop_owner`: one unique Send + Sync control owner can be
+moved to an independent controller while the original process/transport/image
+owner stays with a potentially blocked collector. It retains the original
+Origin and Arc references to the same job, stop event and cancellation flag.
+Construction performs no PID lookup, handle duplication, new inheritance or
+process-state query. It owns no transport, vendor callback or collector lock.
+Existing launch arguments, handle allowlist and numeric limits are unchanged.
+This applies to successfully launched pilot/starting process owners; early
+launch failure and launch-observer operations retain their separate paths.
+
+A separately charged shared request ledger is allocated before file measurement
+and process startup, and survives either owner until the final reference drops.
+Each stop/termination operation publishes cancellation before its OS callback,
+claims one atomic request slot and retains the first actual return. There is no
+lock spanning a callback. A pending/reentrant stop cannot reserve the independent
+termination lane. A duplicate request returns the original pending/result state
+without invoking a replacement or retrying a failed native request. Unwind keeps
+requested=true and returned=None; it cannot fabricate a completed operation.
+Snapshots are historical observations, not an atomic cross-operation OS snapshot.
+
+Process and StopOwner expose the same requested/returned observations. The
+existing process observation reports the shared termination return, including
+returns issued through StopOwner. A missing return does not mean no request;
+callers must retain the explicit requested flag. The existing io::Result APIs
+map pending to host WouldBlock with no invented raw OS error, and preserve
+returned native errors. Dropping either owner requests containment; StopOwner
+abandonment requests termination directly, without first waiting for a separate
+stop-signal call. An already requested operation is not retried. Neither a
+request nor an OS success proves observed exit, empty job or GPU quiescence.
+
+Six CPU atomic/request-owner models and one Windows-module CPU conversion case
+cover cancellation ordering, duplicate/pending/reentrant requests, independent
+lanes, callback unwind, retained budget ownership, capacity failure and truthful
+host-pending/native-return distinction. Non-invoked pointers force pilot/starting
+owner construction, request and drop codegen/linking; static bounds require
+Send + Sync. Review removed the sequential stop-before-terminate abandonment
+path. Initial test-module placement and explicit-destructor-pointer errors were
+corrected with failed logs retained. Final source-bound checks/publication are
+in ROADMAP.md; earlier passes do not verify the final source.
+
+No actual stop-owner construction/OS request, clock/retained-handle/process/job/
+pipe/vendor DLL/GPU invocation or qualification occurred. This separates control
+ownership; it does not yet implement the independent controller thread, original
+stop-window timing, per-call clock retention, asynchronous collector ownership,
+ongoing safety supervision, native authority transfer or mains. OS request APIs
+still have no measured return bound. Aggregate resource/export, pilot/baseline,
+recovery/write and product release gates remain open. E3 partial/Gate B unmet;
+the full automatic benchmark/search/validation goal is unchanged.

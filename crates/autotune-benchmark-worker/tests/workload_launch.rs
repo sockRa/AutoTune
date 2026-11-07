@@ -208,6 +208,25 @@ fn provenance_composition_entries_link_without_process_invocation() {
     };
     std::hint::black_box(ParentSampler::check_processes as *const ());
     std::hint::black_box(Process::<Declaration>::origin as *const ());
+    std::hint::black_box(Process::<Declaration>::stop_owner as *const ());
+    std::hint::black_box(
+        Process::<autotune_benchmark_worker::workload::starting_bootstrap::Declaration>::stop_owner
+            as *const (),
+    );
+    std::hint::black_box(Process::<Declaration>::stop_requests as *const ());
+    fn independent<T: Send + Sync>() {}
+    independent::<autotune_benchmark_worker::workload::windows_process::StopOwner>();
+    std::hint::black_box(
+        std::mem::drop::<autotune_benchmark_worker::workload::windows_process::StopOwner>
+            as *const (),
+    );
+    std::hint::black_box(
+        autotune_benchmark_worker::workload::windows_process::StopOwner::request_stop as *const (),
+    );
+    std::hint::black_box(
+        autotune_benchmark_worker::workload::windows_process::StopOwner::request_termination
+            as *const (),
+    );
     std::hint::black_box(ParentSampler::observe_processes as *const ());
     struct Uncalled;
     impl autotune_benchmark_worker::workload::transport::Queue for Uncalled {

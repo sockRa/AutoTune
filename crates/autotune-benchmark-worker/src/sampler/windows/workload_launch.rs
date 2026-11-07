@@ -7,6 +7,7 @@ mod state;
 use crate::workload::{
     launch::{CancelQueue, Declaration, Role},
     starting_bootstrap,
+    stop_requests::{Observation as RequestObservation, Requests},
     transport::{Queue, SendFailure, Sender},
     windows_transport::{InheritedTransport, Receive},
     wire::Direction,
@@ -101,7 +102,8 @@ pub struct Process<D: FixedDeclaration = Declaration> {
     creation: u64,
     origin: crate::workload::launch_origin::Origin,
     transport: InheritedTransport,
-    termination: Option<Result<(), u32>>,
+    requests: Arc<Requests>,
+    control_taken: AtomicBool,
     sender_taken: AtomicBool,
     _metadata: super::super::budget::Reservation,
 }
@@ -138,6 +140,8 @@ impl<D: FixedDeclaration> Process<D> {
         let metadata = budget
             .reserve(1024 * 1024)
             .map_err(|_| io::Error::other("pilot launch metadata capacity"))?;
+        let requests = Requests::new(shared.cancelled.clone(), &budget)
+            .map_err(|_| io::Error::other("pilot stop request capacity"))?;
         let (path, image, digest) =
             measure_path(sibling_path(declaration.launch_role().image_name())?)?;
         if &digest != declaration.launch_image().as_bytes() {
@@ -249,7 +253,8 @@ impl<D: FixedDeclaration> Process<D> {
             creation: creation.expect("successful creation observation"),
             origin: origin.expect("successful process identity"),
             transport,
-            termination: None,
+            requests,
+            control_taken: AtomicBool::new(false),
             sender_taken: AtomicBool::new(false),
             _metadata: metadata,
         })
@@ -270,14 +275,31 @@ impl<D: FixedDeclaration> Process<D> {
         self.shared.cancelled.load(Ordering::Acquire)
     }
     pub fn request_stop(&self) -> io::Result<()> {
-        self.shared.cancelled.store(true, Ordering::Release);
-        unsafe { ok(SetEvent(self.shared.stop.as_raw_handle())) }
+        request_result(signal(&self.shared, &self.requests))
     }
     pub fn request_termination(&mut self) -> io::Result<()> {
-        self.shared.cancelled.store(true, Ordering::Release);
-        let result = unsafe { ok(TerminateJobObject(self.shared.job.as_raw_handle(), 93)) };
-        self.termination = Some(result.as_ref().map(|_| ()).map_err(raw_code));
-        result
+        request_result(terminate(&self.shared, &self.requests))
+    }
+    /// Move this unique control owner to the independent controller while this
+    /// process/transport owner remains with a possibly blocked collector.
+    /// Arc clones retain the original job/event; no PID lookup, duplicated OS
+    /// handle, new inheritance or observation/query runs here.
+    pub fn stop_owner(&self, budget: &Budget) -> io::Result<StopOwner> {
+        let metadata = budget
+            .reserve(std::mem::size_of::<StopOwner>())
+            .map_err(|_| io::Error::other("pilot stop owner capacity"))?;
+        if self.control_taken.swap(true, Ordering::AcqRel) {
+            return Err(io::Error::other("pilot stop owner already transferred"));
+        }
+        Ok(StopOwner {
+            origin: self.origin,
+            shared: self.shared.clone(),
+            requests: self.requests.clone(),
+            _metadata: metadata,
+        })
+    }
+    pub fn stop_requests(&self) -> [RequestObservation; 2] {
+        [self.requests.stop(), self.requests.termination()]
     }
 }
 impl Process<Declaration> {
@@ -340,7 +362,7 @@ impl<D: FixedDeclaration> Process<D> {
             &self.process,
             &self.shared.job,
             self.creation,
-            self.termination,
+            self.requests.termination().returned,
         )
     }
     pub fn resources(&self) -> super::super::runtime::ResourceObservation {
@@ -360,9 +382,64 @@ impl<D: FixedDeclaration> Drop for Process<D> {
     fn drop(&mut self) {
         // The launch observer may still hold the shared job handle. Do not
         // depend on its eventual Drop to request containment after owner loss.
-        if self.termination.is_none() {
+        if !self.requests.termination().requested {
             let _ = self.request_termination();
         }
+    }
+}
+
+/// Unique independent stop capability for this exact original launched role.
+/// It owns no transport, query lock, vendor call, thread join or permission to
+/// launch compute. OS request return is not process exit or GPU quiescence.
+pub struct StopOwner {
+    origin: crate::workload::launch_origin::Origin,
+    shared: SharedLaunch,
+    requests: Arc<Requests>,
+    _metadata: super::super::budget::Reservation,
+}
+impl StopOwner {
+    pub fn origin(&self) -> crate::workload::launch_origin::Origin {
+        self.origin
+    }
+    pub fn cancelled(&self) -> bool {
+        self.shared.cancelled.load(Ordering::Acquire)
+    }
+    pub fn requests(&self) -> [RequestObservation; 2] {
+        [self.requests.stop(), self.requests.termination()]
+    }
+    pub fn request_stop(&self) -> RequestObservation {
+        signal(&self.shared, &self.requests)
+    }
+    pub fn request_termination(&self) -> RequestObservation {
+        terminate(&self.shared, &self.requests)
+    }
+}
+impl Drop for StopOwner {
+    fn drop(&mut self) {
+        // Do not silently leave the collector as the only containment owner.
+        // Like Process::drop, abandonment requests containment immediately;
+        // this is neither a new grace window nor observed exit evidence.
+        self.request_termination();
+    }
+}
+fn signal(shared: &SharedLaunch, requests: &Requests) -> RequestObservation {
+    requests
+        .signal(|| unsafe { ok(SetEvent(shared.stop.as_raw_handle())).map_err(|e| raw_code(&e)) })
+}
+fn terminate(shared: &SharedLaunch, requests: &Requests) -> RequestObservation {
+    requests.terminate(|| unsafe {
+        ok(TerminateJobObject(shared.job.as_raw_handle(), 93)).map_err(|e| raw_code(&e))
+    })
+}
+fn request_result(observed: RequestObservation) -> io::Result<()> {
+    match observed.returned {
+        Some(Ok(())) => Ok(()),
+        Some(Err(code)) => Err(io::Error::from_raw_os_error(code as i32)),
+        // This is host-side pending, not a fabricated OS error/return code.
+        None => Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "original pilot stop request pending",
+        )),
     }
 }
 
@@ -479,5 +556,31 @@ impl<D: FixedDeclaration> Drop for Launch<D> {
         if !self.transferred {
             let _ = self.request_termination();
         }
+    }
+}
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+    #[test]
+    fn legacy_io_result_distinguishes_pending_from_actual_os_return() {
+        let pending = request_result(RequestObservation {
+            requested: true,
+            returned: None,
+        })
+        .unwrap_err();
+        assert_eq!(pending.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(pending.raw_os_error(), None);
+        let returned = request_result(RequestObservation {
+            requested: true,
+            returned: Some(Err(232)),
+        })
+        .unwrap_err();
+        assert_eq!(returned.raw_os_error(), Some(232));
+        assert!(request_result(RequestObservation {
+            requested: true,
+            returned: Some(Ok(()))
+        })
+        .is_ok());
     }
 }
