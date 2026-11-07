@@ -24,6 +24,7 @@ pub(crate) struct Facts {
     pub anchor: Option<Anchor>,
     pub open: bool,
     pub stop: Option<StopWindow>,
+    pub planned_stop: bool,
     pub start_ok: Option<bool>,
     pub peers: Option<[Origin; 2]>,
     pub safety: [Option<Record>; 2],
@@ -33,7 +34,7 @@ pub(crate) trait Endpoint {
     fn ready(&self) -> bool;
     fn closed(&self) -> bool;
     fn send(&mut self, update: Update) -> Result<(), Fault>;
-    fn stop(&mut self, window: StopWindow);
+    fn stop(&mut self, window: StopWindow, planned: bool);
     fn abort(&mut self, fault: Fault);
 }
 #[cfg(any(windows, test))]
@@ -83,7 +84,7 @@ impl Publication {
             // Forward the parent's original stop window even when control is
             // already closed; no new timestamp or fresh grace is invented.
             if let Some(window) = facts.stop {
-                endpoint.stop(window);
+                endpoint.stop(window, facts.planned_stop);
                 return Ok(());
             }
             if endpoint.closed() {
@@ -150,6 +151,7 @@ mod tests {
         sent: Vec<Update>,
         stops: Vec<StopWindow>,
         aborts: Vec<Fault>,
+        planned: Vec<bool>,
     }
     impl Endpoint for Fake {
         fn ready(&self) -> bool {
@@ -166,9 +168,10 @@ mod tests {
                 Ok(())
             }
         }
-        fn stop(&mut self, w: StopWindow) {
+        fn stop(&mut self, w: StopWindow, planned: bool) {
             self.closed = true;
             self.stops.push(w);
+            self.planned.push(planned);
         }
         fn abort(&mut self, f: Fault) {
             self.closed = true;
@@ -243,6 +246,7 @@ mod tests {
                 anchor: Some(a(1200)),
                 open: true,
                 stop: None,
+                planned_stop: false,
                 start_ok: Some(true),
                 peers: Some(origins),
                 safety,
@@ -254,6 +258,7 @@ mod tests {
                 sent: Vec::new(),
                 stops: Vec::new(),
                 aborts: Vec::new(),
+                planned: Vec::new(),
             },
         )
     }
@@ -366,5 +371,23 @@ mod tests {
         let (p, mut f, e) = fixture();
         f.peers.as_mut().unwrap().swap(0, 1);
         assert!(!p.ready(f.window, f.peers, &e));
+    }
+    #[test]
+    fn planned_shutdown_keeps_its_original_window_and_is_distinct_from_fault_stop() {
+        let (mut p, mut f, mut e) = fixture();
+        p.publish(f, &mut e).unwrap();
+        let window = StopWindow {
+            trigger_ns: 2000,
+            cooperative_ns: 1_000_002_000,
+            exit_ns: 3_000_002_000,
+        };
+        f.stop = Some(window);
+        f.planned_stop = true;
+        p.publish(f, &mut e).unwrap();
+        assert_eq!(e.stops, [window]);
+        assert_eq!(e.planned, [true]);
+        assert!(e.aborts.is_empty());
+        assert_eq!(p.status().first_fault, None);
+        assert!(p.status().setup_sent);
     }
 }

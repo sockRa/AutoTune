@@ -4,7 +4,8 @@ use super::{
     gate::StopWindow,
     launch_origin::Kind,
     parent_sampler::ParentSampler,
-    parent_watch::{Effects, Fault, State, Update, Window},
+    parent_watch::{Effects, Fault, State, StopRequest, Update, Window},
+    parent_watch_retirement::{self as retirement, Arbitration, Frame as RetirementFrame},
     starting_export::ClockFault,
     stop_requests::Observation,
     windows_process::StopOwner,
@@ -51,6 +52,7 @@ pub struct Operation {
     pub invoked: Option<bool>,
     pub after: Option<Capture>,
     pub finished: bool,
+    pub withdrawn: bool,
 }
 struct Slot {
     ready: AtomicBool,
@@ -60,6 +62,7 @@ struct Slot {
     invoked: OnceLock<bool>,
     after: OnceLock<Capture>,
     finished: AtomicBool,
+    withdrawn: AtomicBool,
 }
 impl Slot {
     fn new() -> Self {
@@ -71,6 +74,7 @@ impl Slot {
             invoked: OnceLock::new(),
             after: OnceLock::new(),
             finished: AtomicBool::new(false),
+            withdrawn: AtomicBool::new(false),
         }
     }
     fn observe(&self) -> Operation {
@@ -82,10 +86,13 @@ impl Slot {
             invoked: self.invoked.get().copied(),
             after: self.after.get().copied(),
             finished: self.finished.load(Ordering::Acquire),
+            withdrawn: self.withdrawn.load(Ordering::Acquire),
         }
     }
 }
 struct Control {
+    arbitration: Arc<Arbitration>,
+    retirement: OnceLock<RetirementFrame>,
     publisher_taken: AtomicBool,
     owners: [Arc<StopOwner>; 2],
     slots: [Slot; 4],
@@ -94,16 +101,27 @@ struct Control {
     ready: AtomicBool,
     setup: AtomicBool,
     abort: OnceLock<Fault>,
-    external: OnceLock<StopWindow>,
+    external: OnceLock<StopRequest>,
+    unplanned: OnceLock<StopWindow>,
     send: SyncSender<Update>,
     _allocation: Arc<Reservation>,
     rejected: OnceLock<Update>,
     send_error: OnceLock<MailboxFault>,
 }
 impl Control {
+    fn request_stop(&self, window: StopWindow, planned: bool) {
+        if !planned {
+            self.arbitration.stop();
+            let _ = self.unplanned.set(window);
+        }
+        let _ = self.external.set(StopRequest { window, planned });
+        self.close();
+    }
     fn ready(&self) -> bool {
         self.ready.load(Ordering::Acquire)
             && !self.closed.load(Ordering::Acquire)
+            && self.arbitration.active()
+            && self.owners.iter().all(|o| !o.cancelled())
             && self.slots.iter().all(|s| s.ready.load(Ordering::Acquire))
     }
     fn close(&self) {
@@ -113,13 +131,14 @@ impl Control {
         }
     }
     fn apply(&self, e: Effects) {
-        if e.stop {
+        let (stop, terminate) = self.arbitration.dispatch(e.stop, e.terminate);
+        if stop {
             self.close();
             for i in [0, 2] {
                 self.slots[i].requested.store(true, Ordering::Release);
             }
         }
-        if e.terminate {
+        if terminate {
             self.close();
             for i in [1, 3] {
                 self.slots[i].requested.store(true, Ordering::Release);
@@ -133,6 +152,11 @@ impl Control {
             terminate: true,
             finished: true,
         });
+    }
+    fn abandon(&self) {
+        if !self.arbitration.retired() {
+            self.abort(Fault::Requested);
+        }
     }
 }
 pub struct Report {
@@ -234,6 +258,8 @@ impl Handle {
         };
         let (send, receive) = mpsc::sync_channel(4);
         let control = Arc::new(Control {
+            arbitration: Arc::new(Arbitration::new()),
+            retirement: OnceLock::new(),
             publisher_taken: AtomicBool::new(false),
             owners: owners.map(Arc::new),
             slots: std::array::from_fn(|_| Slot::new()),
@@ -243,6 +269,7 @@ impl Handle {
             setup: AtomicBool::new(false),
             abort: OnceLock::new(),
             external: OnceLock::new(),
+            unplanned: OnceLock::new(),
             send,
             _allocation: Arc::new(metadata),
             rejected: OnceLock::new(),
@@ -255,6 +282,19 @@ impl Handle {
 
             joined_operations: [None; 4],
         };
+        if !handle
+            .control
+            .owners
+            .iter()
+            .all(|o| o.bind_arbitration(handle.control.arbitration.clone()))
+        {
+            handle.control.abort(Fault::Binding);
+            return Err(StartFailure {
+                fault: Fault::Binding,
+                error: None,
+                retained: Retained::Partial(handle),
+            });
+        }
         for index in 0..4 {
             let owned = handle.control.clone();
             let clock = clock.clone();
@@ -310,7 +350,10 @@ impl Handle {
         self.control.send_error.get().copied()
     }
     pub fn requested_window(&self) -> Option<StopWindow> {
-        self.control.external.get().copied()
+        self.control.external.get().map(|r| r.window)
+    }
+    pub fn unplanned_window(&self) -> Option<StopWindow> {
+        self.control.unplanned.get().copied()
     }
     pub fn abort_fault(&self) -> Option<Fault> {
         self.control.abort.get().copied()
@@ -344,8 +387,71 @@ impl Handle {
         std::array::from_fn(|i| self.operations[i].as_ref().map(JoinHandle::is_finished))
     }
     pub fn request_stop(&self, window: StopWindow) {
-        let _ = self.control.external.set(window);
-        self.control.close();
+        self.control.request_stop(window, false);
+    }
+    pub fn retired(&self) -> bool {
+        self.control.arbitration.retired()
+    }
+    pub fn retirement(&self) -> Option<&RetirementFrame> {
+        self.control.retirement.get()
+    }
+    /// One normal-retirement observation, off the controller deadline path.
+    /// Caller retains both original processes, collector and returned reports.
+    /// Invoke after complete child lifecycle/exit observation, never as a poll
+    /// or a substitute for workload/correctness/native cleanup acceptance.
+    pub fn retire(
+        &mut self,
+        parent: &ParentSampler,
+        sampler: &super::windows_process::Process,
+        worker: &super::windows_process::Process,
+        clock: &WindowsClock,
+    ) -> Result<(), retirement::Fault> {
+        if self.control.retirement.get().is_some() {
+            return Err(retirement::Fault::Duplicate);
+        }
+        let stop = parent.stop().unwrap_or(StopWindow {
+            trigger_ns: 0,
+            cooperative_ns: 0,
+            exit_ns: 0,
+        });
+        let expected = self.origins();
+        let context = parent.context_binding() == self.control.window.binding
+            && parent.consent_window().1 == self.control.window.setup_deadline_ns
+            && parent.fault().is_none()
+            && parent.is_finishing()
+            && parent.reported_finished()
+            && parent.peer_check().is_some_and(|p| {
+                p.result.is_ok() && [p.peers[1].expected, p.peers[2].expected] == expected
+            })
+            && parent
+                .start_attempt()
+                .is_some_and(|a| a.queued && a.result.is_ok())
+            && self
+                .control
+                .external
+                .get()
+                .is_some_and(|r| r.planned && r.window == stop)
+            && [sampler.origin(), worker.origin()] == expected
+            && !self.control.arbitration.retired()
+            && self.control.arbitration.active()
+            && self.control.slots.iter().all(|s| {
+                !s.requested.load(Ordering::Acquire) || s.finished.load(Ordering::Acquire)
+            })
+            && self.control.abort.get().is_none();
+        let frame = retirement::collect(
+            self.control.window,
+            stop,
+            expected,
+            [sampler, worker],
+            clock,
+            context,
+        );
+        let result = frame.result();
+        let _ = self.control.retirement.set(frame);
+        if result.is_err() {
+            self.control.abort(Fault::Retirement);
+        }
+        result
     }
     pub(super) fn publisher(&self, window: Window) -> Result<Publisher, Fault> {
         if window != self.control.window {
@@ -403,9 +509,8 @@ impl super::parent_watch_publication::Endpoint for Endpoint<'_> {
         }
         Ok(())
     }
-    fn stop(&mut self, window: StopWindow) {
-        let _ = self.0.external.set(window);
-        self.0.close();
+    fn stop(&mut self, window: StopWindow, planned: bool) {
+        self.0.request_stop(window, planned);
     }
     fn abort(&mut self, fault: Fault) {
         self.0.abort(fault);
@@ -429,18 +534,17 @@ impl Publisher {
         self.state.publish(facts, &mut Endpoint(&self.control))
     }
     pub(super) fn stop(&self, window: StopWindow) {
-        let _ = self.control.external.set(window);
-        self.control.close();
+        self.control.request_stop(window, false);
     }
 }
 impl Drop for Publisher {
     fn drop(&mut self) {
-        self.control.abort(Fault::Requested);
+        self.control.abandon();
     }
 }
 impl Drop for Handle {
     fn drop(&mut self) {
-        self.control.abort(Fault::Requested);
+        self.control.abandon();
     }
 }
 struct Emergency {
@@ -465,6 +569,12 @@ fn operation(control: Arc<Control>, index: usize, clock: WindowsClock) {
         .limits
         .controller_tick_ns;
     while !slot.requested.load(Ordering::Acquire) {
+        if control.arbitration.retired() {
+            slot.withdrawn.store(true, Ordering::Release);
+            slot.finished.store(true, Ordering::Release);
+            emergency.armed = false;
+            return;
+        }
         thread::sleep(Duration::from_nanos(tick));
     }
     let _ = slot.before.set(capture(&clock));
@@ -488,6 +598,7 @@ fn controller(
     clock: WindowsClock,
 ) -> Report {
     let mut external_observed = false;
+    let mut unplanned_observed = false;
     let mut emergency = Emergency {
         control: control.clone(),
         armed: true,
@@ -499,6 +610,13 @@ fn controller(
         let raw = capture(&clock);
         let mut effects = state.tick(raw.anchor, raw.error);
         control.apply(effects);
+        // Legacy launch/process requests share the arbiter. Observe owner
+        // cancellation before closed so a concurrent planned close cannot be
+        // mistaken for an unexplained cancellation.
+        if control.owners.iter().any(|o| o.cancelled()) && !control.closed.load(Ordering::Acquire) {
+            effects = state.abort(Fault::Requested);
+            control.apply(effects);
+        }
         if let Some(fault) = control.abort.get() {
             effects = state.abort(*fault);
             control.apply(effects);
@@ -518,10 +636,53 @@ fn controller(
                 if effects.finished {
                     break;
                 }
+                let requested = state.request_stop_kind(*window);
+                control.apply(requested);
+                effects.finished |= requested.finished;
+            }
+        }
+        if !unplanned_observed {
+            if let Some(window) = control.unplanned.get() {
+                unplanned_observed = true;
+                let raw = capture(&clock);
+                let observed = state.tick(raw.anchor, raw.error);
+                control.apply(observed);
+                effects.finished |= observed.finished;
+                if effects.finished {
+                    break;
+                }
                 let requested = state.request_stop(*window);
                 control.apply(requested);
                 effects.finished |= requested.finished;
             }
+        }
+        if let Some(frame) = control.retirement.get() {
+            let raw = capture(&clock);
+            let eligible = state
+                .observe_retirement(frame, raw.anchor, raw.error)
+                .is_ok()
+                && control.abort.get().is_none()
+                && control.slots.iter().all(|s| {
+                    !s.requested.load(Ordering::Acquire) || s.finished.load(Ordering::Acquire)
+                })
+                && control.owners.iter().all(|o| {
+                    frame.certifies(o.origin())
+                        && !o.requests()[1].requested
+                        && o.requests()
+                            .iter()
+                            .all(|r| !r.requested || r.returned == Some(Ok(())))
+                });
+            if eligible && control.arbitration.retire().is_ok() {
+                control.close();
+                for owner in &control.owners {
+                    owner.retire_observed(frame);
+                }
+                state.commit_retirement();
+                break;
+            }
+            let rejected = state.abort(Fault::Retirement);
+            control.apply(rejected);
+            break;
         }
         if state.stop_window().is_none() {
             for _ in 0..4 {

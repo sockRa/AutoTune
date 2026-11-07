@@ -25,6 +25,7 @@ pub mod parent_sampler;
 pub mod parent_start;
 pub mod parent_watch;
 pub mod parent_watch_publication;
+pub mod parent_watch_retirement;
 #[cfg(windows)]
 pub mod parent_watch_windows;
 pub mod prestart;

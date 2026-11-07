@@ -2807,3 +2807,75 @@ collector ownership, pending-query/phase/native-call deadlines, actual request/
 exit timing, native authority transfer and fixed mains remain open. Readiness,
 publication and historical acknowledgment are not compute permission. E3 partial/
 Gate B unmet; frozen limits and the full automatic optimization goal are unchanged.
+
+## Normal host-controller retirement — 2026-11-07
+
+E3.1 now distinguishes planned sampler shutdown from an unplanned stop. A planned
+StopWindow retains its original trigger/cooperative/exit deadlines without itself
+creating a Requested fault. Safety and run deadlines continue to apply; no mode
+change creates new grace. A later unplanned stop remains separately retained and
+vetoes normal retirement, even when the first stop was planned.
+
+`parent_watch_windows::Handle::retire` is a one-shot original-handle observation,
+intended off the deadline path after child lifecycle/exit readiness. It requires
+matching original parent/peer ownership, a successful retained Start, no parent
+fault, planned finish and the sampler's validated RoleFinished receipt. It reads
+wait/exit/job accounting from the two original process owners, retaining outer/
+per-role clocks, actual raw returns, before/after request state, frequency/token
+and complete/partial failure. Original creation identities, signalled handles,
+exit code zero, empty jobs and no termination request are all required. Missing,
+pending, failed, stale, regressing or conflicting evidence cannot retire control.
+This is a single final observation, not a polling/retry API; callers must retain
+the collector and both original processes through acknowledgment/finalization.
+
+Detached public exit fixtures are untrusted and cannot disarm a real owner.
+Successful collection means only a retained retirement request. The independent
+controller checks its original window, fresh causal receipt and prior safety/
+fault state, then atomically arbitrates retirement against unplanned stop/force
+issuance. Force already reserved cannot be cancelled by later exit. Immediate
+abort reserves force before publishing signal gates, preventing a signal from
+being newly scheduled after retirement wins. Pending request methods/threads
+cannot be turned into successful cleanup evidence. Actual operation handles,
+controller report and raw exit frame remain required through finalization.
+
+After accepted host retirement, idle request threads withdraw without invoking
+OS APIs or fabricating returned success. Process and StopOwner abandonment
+cleanup skips a new termination request only after that private observed-exit
+marker is set. Explicit request histories remain unchanged, and ordinary
+admission stays closed. Dropping handles/publication before acknowledgment still
+requests containment. This does not prove GPU quiescence or physical memory
+release, validate workload counts/checks/cleanup, authorize another repeat, or
+accept a benchmark/profile.
+
+Launch, Process and StopOwner now share the same first-request ledger from before
+background startup; early/late launch-observer termination can no longer be
+absent from a successful process owner's exit assessment. Native errors, pending
+requests and exact original owners survive transfer. Existing job/event handles,
+launch vocabulary, stop ceilings and numeric profile remain unchanged. Fixed
+retirement/exit-marker state is prepaid through updated type sizes; no failed
+owner transfer adds an allocation.
+
+Sixteen new CPU models cover raw exit/clock/OS faults and untrusted fixtures,
+planned-vs-unplanned shutdown, retirement-vs-force arbitration, prior faults/
+expiry, shared launch/control history and non-erasing exit markers. Concrete
+normal observation and drop codegen/linking are forced without invocation. Review
+also separated known stop errors from pending returns, preserved later unplanned
+stop escalation and used the current try_update API; intermediate deprecation/
+format failures remain logged. Final source-bound verification/publication is
+in ROADMAP.md. No actual retirement/query/controller/request/clock-adapter/
+process/job/event/pipe/vendor DLL/GPU invocation or qualification occurred.
+
+Retained asynchronous collector ownership and session orchestration, remaining
+query/phase/native-call deadlines, actual request/exit timing, aggregate export/
+resources, native authority transfer and fixed mains remain open. E3 partial/
+Gate B unmet; the full automatic benchmark/search/validation goal is unchanged.
+
+The same arbitration is bound into both original request ledgers before controller
+threads start. Launch/process force calls therefore reserve force before their
+actual API invocation, not merely before a controller slot runs. Attachment
+racing existing cancellation rejects startup. Controlled signal callbacks are
+distinct from later unplanned legacy signals. Late new calls after retirement
+invoke no OS callback and retain original request snapshots; an unrequested
+retired io result is NotConnected, not fabricated pending/native success. These
+rules close the race between final exit assessment and a force call by another
+original owner. Observed exit still cannot authorize another GPU run.

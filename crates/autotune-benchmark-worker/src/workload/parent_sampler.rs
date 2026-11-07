@@ -389,6 +389,10 @@ impl ParentSampler {
     pub fn reported_finished(&self) -> bool {
         self.reported_finished
     }
+    #[cfg(windows)]
+    pub(super) fn is_finishing(&self) -> bool {
+        self.finishing
+    }
     /// The control pool must already be partitioned from this exact root. Native
     /// source/peer/runtime/environment/consent validation remains separate.
     pub fn new(
@@ -1108,6 +1112,7 @@ impl ParentSampler {
             anchor: self.history.raw().last().copied(),
             open: self.context_open(),
             stop: self.stop,
+            planned_stop: self.finishing && self.fault.is_none(),
             start_ok: self
                 .start_attempt
                 .as_ref()

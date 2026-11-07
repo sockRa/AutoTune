@@ -85,6 +85,22 @@ composition are still required before a runnable benchmark can be claimed.
   process execution, real correctness or useful-baseline acceptance.
 
 ## Execution log
+- 2026-11-07 normal host retirement: planned finish preserves original windows
+  without a Requested fault; later unplanned stop is retained and vetoes normal
+  retirement. One-shot off-deadline original-handle exit assessment retains
+  complete/partial wait/exit/job/request/clock facts and rejects untrusted,
+  missing, pending, forced or conflicting data. Controller retirement/force
+  arbitration cannot cancel an earlier force reservation; immediate abort claims
+  force before publishing signal gates. Idle request lanes withdraw without fake
+  native success. Only privately observed normal exit suppresses abandonment
+  termination, without erasing histories or proving GPU quiescence/acceptance.
+  Launch/Process/StopOwner now share the same first-request ledger. Sixteen CPU
+  models plus non-invoked concrete observation/linking; final checks/publication:
+  ROADMAP.md. Intermediate atomic API deprecation/format findings corrected with
+  logs retained. No actual OS/thread/adapter/native/GPU invocation. Asynchronous
+  collector/session ownership, remaining deadlines, actual timing, aggregate
+  export/resources and native issuance/mains/qualification remain open. E3
+  partial/Gate B unmet; full product and frozen numeric limits unchanged.
 - 2026-11-07 direct controller attachment: ParentSampler now owns the unique
   original-window/controller publisher; all Start boundaries require ready,
   matching original peers/control. Success automatically queues setup/safety;
@@ -140,7 +156,7 @@ composition are still required before a runnable benchmark can be claimed.
   frames remain owned on rejection and successful queue admission stays explicit
   even if the post-check expires. First process/send failure and later clock
   failure are both retained. Duplicate attempts preserve the first record and
-  close ordinary paths; fixed storage is prepaid. Thirteen CPU policy/engine
+  close ordinary paths; fixed storage is prepaid. Sixteen CPU policy/engine
   models and extended non-invoked concrete codegen/link coverage. Final checks
   and publication: ROADMAP.md. No actual adapter/process/native/GPU execution,
   NativeAdmission issuer or fixed main. Independent collector/control ownership,

@@ -45,9 +45,11 @@ impl Operation {
 }
 #[cfg(any(windows, test))]
 pub(crate) struct Requests {
+    arbitration: OnceLock<Arc<super::parent_watch_retirement::Arbitration>>,
     cancelled: Arc<AtomicBool>,
     stop: Operation,
     terminate: Operation,
+    exit_observed: AtomicBool,
     _allocation: Reservation,
 }
 #[cfg(any(windows, test))]
@@ -60,27 +62,67 @@ impl Requests {
         let allocation =
             budget.reserve(std::mem::size_of::<Self>() + 2 * std::mem::size_of::<usize>())?;
         Ok(Arc::new(Self {
+            arbitration: OnceLock::new(),
             cancelled,
             stop: Operation::default(),
             terminate: Operation::default(),
+            exit_observed: AtomicBool::new(false),
             _allocation: allocation,
         }))
     }
     #[cfg(any(windows, test))]
     pub(crate) fn signal(&self, call: impl FnOnce() -> Result<(), u32>) -> Observation {
         self.cancelled.store(true, Ordering::Release);
+        if let Some(a) = self.arbitration.get() {
+            a.stop();
+            if a.retired() {
+                return self.stop.observe();
+            }
+        }
+        self.stop.invoke(call)
+    }
+    pub(crate) fn signal_controlled(&self, call: impl FnOnce() -> Result<(), u32>) -> Observation {
+        self.cancelled.store(true, Ordering::Release);
+        if self.arbitration.get().is_some_and(|a| a.retired()) {
+            return self.stop.observe();
+        }
         self.stop.invoke(call)
     }
     #[cfg(any(windows, test))]
     pub(crate) fn terminate(&self, call: impl FnOnce() -> Result<(), u32>) -> Observation {
         self.cancelled.store(true, Ordering::Release);
+        if self.arbitration.get().is_some_and(|a| !a.force()) {
+            return self.terminate.observe();
+        }
         self.terminate.invoke(call)
+    }
+    pub(crate) fn bind(
+        &self,
+        arbitration: Arc<super::parent_watch_retirement::Arbitration>,
+    ) -> bool {
+        if self.arbitration.set(arbitration.clone()).is_err() {
+            return false;
+        }
+        // Cancellation is published BEFORE a request reads this binding. A
+        // request racing attachment either reserves the bound arbitration or
+        // makes this post-install check reject startup; it cannot disappear.
+        if self.cancelled.load(Ordering::Acquire) {
+            arbitration.force();
+            return false;
+        }
+        true
     }
     pub(crate) fn stop(&self) -> Observation {
         self.stop.observe()
     }
     pub(crate) fn termination(&self) -> Observation {
         self.terminate.observe()
+    }
+    pub(crate) fn exit_observed(&self) -> bool {
+        self.exit_observed.load(Ordering::Acquire)
+    }
+    pub(crate) fn mark_exit_observed(&self) {
+        self.exit_observed.store(true, Ordering::Release);
     }
 }
 
@@ -212,5 +254,79 @@ mod tests {
         ));
         assert!(!flag.load(Ordering::Acquire));
         assert_eq!(b.used(), 0);
+    }
+    #[test]
+    fn observed_exit_marker_never_erases_actual_request_or_return_state() {
+        let (flag, r, _) = requests();
+        r.signal(|| Ok(()));
+        let before = r.stop();
+        r.mark_exit_observed();
+        assert!(r.exit_observed());
+        assert_eq!(r.stop(), before);
+        assert_eq!(r.termination(), Observation::default());
+        assert!(flag.load(Ordering::Acquire));
+    }
+    #[test]
+    fn launch_process_and_control_references_share_one_first_termination() {
+        let (_, launch, _) = requests();
+        let process = launch.clone();
+        let independent = process.clone();
+        launch.terminate(|| Err(5));
+        assert_eq!(
+            process
+                .terminate(|| panic!("replacement OS request"))
+                .returned,
+            Some(Err(5))
+        );
+        assert_eq!(independent.termination(), launch.termination());
+    }
+    #[test]
+    fn bound_legacy_force_claim_precedes_retirement_and_is_never_hidden() {
+        let (_, r, _) = requests();
+        let a = Arc::new(super::super::parent_watch_retirement::Arbitration::new());
+        assert!(r.bind(a.clone()));
+        r.terminate(|| {
+            assert!(!a.active());
+            assert_eq!(
+                a.retire(),
+                Err(super::super::parent_watch_retirement::Fault::Termination)
+            );
+            Ok(())
+        });
+        assert_eq!(r.termination().returned, Some(Ok(())));
+    }
+    #[test]
+    fn retired_arbiter_refuses_late_legacy_os_calls_without_fake_pending_or_success() {
+        let (_, r, _) = requests();
+        let a = Arc::new(super::super::parent_watch_retirement::Arbitration::new());
+        assert!(r.bind(a.clone()));
+        a.retire().unwrap();
+        assert_eq!(
+            r.terminate(|| panic!("late native termination")),
+            Observation::default()
+        );
+        assert_eq!(
+            r.signal(|| panic!("late native signal")),
+            Observation::default()
+        );
+        assert_eq!(
+            r.signal_controlled(|| panic!("late controlled signal")),
+            Observation::default()
+        );
+    }
+    #[test]
+    fn attachment_rejects_existing_cancellation_and_controlled_signal_does_not_cancel_normal_finish(
+    ) {
+        let (_, r, _) = requests();
+        r.signal(|| Ok(()));
+        let a = Arc::new(super::super::parent_watch_retirement::Arbitration::new());
+        assert!(!r.bind(a.clone()));
+        assert!(!a.active());
+        let (_, r, _) = requests();
+        let a = Arc::new(super::super::parent_watch_retirement::Arbitration::new());
+        assert!(r.bind(a.clone()));
+        r.signal_controlled(|| Ok(()));
+        assert!(a.active());
+        a.retire().unwrap();
     }
 }

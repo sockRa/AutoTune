@@ -19,6 +19,12 @@ pub enum Fault {
     Requested,
     Transport,
     Thread,
+    Retirement,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StopRequest {
+    pub window: StopWindow,
+    pub planned: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Window {
@@ -60,6 +66,9 @@ pub struct State {
     stop_sent: bool,
     terminate_sent: bool,
     done: bool,
+    planned: bool,
+    retired: bool,
+    retirement_receipt: Option<Anchor>,
     _allocation: Reservation,
 }
 impl State {
@@ -109,6 +118,9 @@ impl State {
             stop_sent: false,
             terminate_sent: false,
             done: false,
+            planned: false,
+            retired: false,
+            retirement_receipt: None,
             _allocation: allocation,
         })
     }
@@ -135,6 +147,15 @@ impl State {
     }
     pub fn capture_error(&self) -> Option<ClockFault> {
         self.capture_error
+    }
+    pub fn planned_stop(&self) -> bool {
+        self.planned
+    }
+    pub fn retired(&self) -> bool {
+        self.retired
+    }
+    pub fn retirement_receipt(&self) -> Option<Anchor> {
+        self.retirement_receipt
     }
     fn fail(&mut self, fault: Fault, trigger: u64) {
         self.fault.get_or_insert(fault);
@@ -262,6 +283,13 @@ impl State {
         Ok(())
     }
     pub fn request_stop(&mut self, window: StopWindow) -> Effects {
+        self.request_stop_kind(StopRequest {
+            window,
+            planned: false,
+        })
+    }
+    pub fn request_stop_kind(&mut self, request: StopRequest) -> Effects {
+        let window = request.window;
         let p = autotune_fma_reference::profile::Profile::approved_design().limits;
         if window.trigger_ns > self.now
             || window.cooperative_ns
@@ -277,10 +305,77 @@ impl State {
         {
             return self.abort(Fault::Binding);
         }
-        self.fail(Fault::Requested, window.trigger_ns);
+        if request.planned && self.setup && self.fault.is_none() {
+            self.planned = true;
+            if self.stop.is_none_or(|w| window.trigger_ns < w.trigger_ns) {
+                self.stop = Some(window);
+            }
+        } else {
+            self.fail(Fault::Requested, window.trigger_ns);
+        }
         self.effects(false)
     }
+    /// Validate actual exit evidence before the controller's atomic arbitration.
+    /// This does not clear a prior fault or certify a GPU workload or fence.
+    pub fn observe_retirement(
+        &mut self,
+        frame: &super::parent_watch_retirement::Frame,
+        anchor: Option<Anchor>,
+        error: Option<ClockFault>,
+    ) -> Result<(), Fault> {
+        self.retirement_receipt = anchor;
+        let result = (|| {
+            if self.fault.is_some() || self.done || !self.planned {
+                return Err(Fault::Retirement);
+            }
+            self.capture_error = self.capture_error.or(error);
+            let now = self.history.observe(anchor).map_err(|_| Fault::Clock)?;
+            if error.is_some() {
+                return Err(Fault::Clock);
+            }
+            self.now = now;
+            self.last = anchor.ok_or(Fault::Clock)?;
+            self.receipt = anchor;
+            let window = self.stop.ok_or(Fault::Retirement)?;
+            if frame.window() != self.window || frame.stop() != window || frame.result().is_err() {
+                return Err(Fault::Retirement);
+            }
+            if now >= window.cooperative_ns.min(self.window.binding.run_end()) {
+                return Err(Fault::RunDeadline);
+            }
+            let end = frame.elapsed_end().map_err(|_| Fault::Retirement)?;
+            if frame
+                .after()
+                .anchor
+                .is_none_or(|a| a.qpc_after > self.last.qpc_before)
+                || end > now
+            {
+                return Err(Fault::Clock);
+            }
+            let gap = autotune_fma_reference::profile::Profile::approved_design()
+                .limits
+                .observation_gap_ns;
+            if self
+                .safety
+                .iter()
+                .any(|r| r.is_none_or(|r| end >= r.end_ns.saturating_add(gap)))
+            {
+                return Err(Fault::Safety);
+            }
+            Ok(())
+        })();
+        if let Err(f) = result {
+            self.fail(f, self.now);
+        }
+        result
+    }
+    #[cfg(any(windows, test))]
+    pub(crate) fn commit_retirement(&mut self) {
+        self.retired = true;
+        self.done = true;
+    }
     pub fn abort(&mut self, fault: Fault) -> Effects {
+        self.retired = false;
         self.fail(fault, self.now);
         self.effects(true)
     }
@@ -656,5 +751,90 @@ mod tests {
         assert_eq!(s.fault(), Some(Fault::Requested));
         assert_eq!(s.stop_window(), Some(published));
         assert_eq!(s.history().raw().last(), Some(&a(3000)));
+    }
+    #[test]
+    fn planned_finish_and_normal_exit_do_not_become_requested_fault_or_new_grace() {
+        let (mut s, _) = state();
+        setup(&mut s, 1_000_000_000);
+        s.tick(Some(a(1_100_000_000)), None);
+        let window = StopWindow {
+            trigger_ns: 1_100_000_000,
+            cooperative_ns: 2_100_000_000,
+            exit_ns: 4_100_000_000,
+        };
+        assert!(
+            s.request_stop_kind(StopRequest {
+                window,
+                planned: true
+            })
+            .stop
+        );
+        assert_eq!(s.fault(), None);
+        let frame = super::super::parent_watch_retirement::model(s.window, window);
+        s.observe_retirement(&frame, Some(a(1_100_001_000)), None)
+            .unwrap();
+        s.commit_retirement();
+        assert!(s.retired());
+        assert_eq!(s.fault(), None);
+        assert_eq!(s.stop_window(), Some(window));
+    }
+    #[test]
+    fn normal_exit_cannot_erase_prior_fault_or_expired_original_stop_window() {
+        let (mut s, _) = state();
+        setup(&mut s, 1_000_000_000);
+        s.tick(Some(a(1_100_000_000)), None);
+        let window = StopWindow {
+            trigger_ns: 1_100_000_000,
+            cooperative_ns: 2_100_000_000,
+            exit_ns: 4_100_000_000,
+        };
+        s.request_stop(window);
+        let frame = super::super::parent_watch_retirement::model(s.window, window);
+        assert_eq!(
+            s.observe_retirement(&frame, Some(a(1_100_001_000)), None),
+            Err(Fault::Retirement)
+        );
+        assert_eq!(s.fault(), Some(Fault::Requested));
+        let (mut s, _) = state();
+        setup(&mut s, 1_000_000_000);
+        s.tick(Some(a(1_100_000_000)), None);
+        s.request_stop_kind(StopRequest {
+            window,
+            planned: true,
+        });
+        assert_eq!(
+            s.observe_retirement(&frame, Some(a(window.cooperative_ns)), None),
+            Err(Fault::RunDeadline)
+        );
+        assert!(!s.retired());
+    }
+    #[test]
+    fn normal_exit_needs_original_scope_and_actual_causal_receipt_clock() {
+        let (mut s, _) = state();
+        setup(&mut s, 1_000_000_000);
+        s.tick(Some(a(1_100_000_000)), None);
+        let window = StopWindow {
+            trigger_ns: 1_100_000_000,
+            cooperative_ns: 2_100_000_000,
+            exit_ns: 4_100_000_000,
+        };
+        s.request_stop_kind(StopRequest {
+            window,
+            planned: true,
+        });
+        let frame = super::super::parent_watch_retirement::model(s.window, window);
+        assert_eq!(
+            s.observe_retirement(
+                &frame,
+                None,
+                Some(ClockFault::CounterFailed {
+                    before: true,
+                    code: 87
+                })
+            ),
+            Err(Fault::Clock)
+        );
+        assert_eq!(s.retirement_receipt(), None);
+        assert!(!s.retired());
     }
 }
