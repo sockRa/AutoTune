@@ -35,6 +35,8 @@ pub struct PilotOwners<E> {
     pub scope: super::starting::Scope,
     pub starting_process: super::windows_process::Process<super::starting_bootstrap::Declaration>,
     pub starting_launch: super::starting_launch::LaunchFacts,
+    /// Sampler then worker launch facts retained from their process guards.
+    pub pilot_launches: [super::pilot_launch::Facts; 2],
     pub starting_handoff: super::starting_launch::ClosedHandoff,
     pub starting_consent: super::consent::Record,
     pub starting_read: super::starting_read::Receipt,
@@ -55,6 +57,9 @@ impl<E> PilotOwners<E> {
         let manifest = self.manifest.manifest_draft();
         let starting_declaration = self.starting_process.declaration();
         let start_origin = self.starting_process.origin();
+        let pilot_process_roles_match = assets.sampler.origin().kind()
+            == super::launch_origin::Kind::Sampler
+            && assets.worker.origin().kind() == super::launch_origin::Kind::Worker;
         let parent = &assets.parent;
         let start_was_queued = parent
             .start_attempt()
@@ -100,6 +105,11 @@ impl<E> PilotOwners<E> {
             || self.starting_read.scope_digest() != self.scope.digest()
             || self.starting_read.declaration() != starting_declaration.tag()
             || !starting_launch_accepted
+            || !self
+                .pilot_launches
+                .iter()
+                .all(|facts| facts.admission_eligible())
+            || !pilot_process_roles_match
             || self
                 .starting_read
                 .snapshot()

@@ -1474,7 +1474,7 @@ pub fn append_pilot_owner_artifacts<E>(
     // RawBuilder charges the growing output buffer separately.
     let scratch_bytes = source_bytes
         .checked_mul(4)
-        .and_then(|n| n.checked_add(7 * 4096))
+        .and_then(|n| n.checked_add(9 * 4096))
         .and_then(|n| n.checked_add(64 * 1024))
         .and_then(|n| n.checked_add(crate::workload::consent::CAP * 16))
         .and_then(|n| {
@@ -1653,6 +1653,53 @@ pub fn append_pilot_owner_artifacts<E>(
     ])
     .to_canonical();
     output.push_line(&launch_line)?;
+    for (owner, launch_facts) in [
+        ("pilot_sampler_launch", owners.pilot_launches[0]),
+        ("pilot_worker_launch", owners.pilot_launches[1]),
+    ] {
+        let launch_bytes = object([
+            ("polls", Value::U64(launch_facts.polls)),
+            (
+                "elapsed_ns",
+                launch_facts.elapsed_ns.map_or(Value::Null, Value::U64),
+            ),
+            (
+                "deadline_exceeded",
+                Value::Bool(launch_facts.deadline_exceeded),
+            ),
+            (
+                "clock_capture_error",
+                launch_facts
+                    .clock_capture_error
+                    .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+            ),
+            (
+                "clock_domain_fault",
+                Value::Bool(launch_facts.clock_domain_fault),
+            ),
+            ("stop_request", launch_attempt(launch_facts.stop_request)),
+            (
+                "termination_request",
+                launch_attempt(launch_facts.termination_request),
+            ),
+        ])
+        .to_canonical();
+        let line = object([
+            ("kind", Value::Text("retained_owner_artifact".into())),
+            ("owner", Value::Text(owner.into())),
+            ("available", Value::Bool(true)),
+            (
+                "digest",
+                Value::Text(Digest::of(Domain::RawArtifact, launch_bytes.as_bytes()).to_hex()),
+            ),
+            (
+                "bytes_hex",
+                Value::Text(super::wire_model::hex(launch_bytes.as_bytes())),
+            ),
+        ])
+        .to_canonical();
+        output.push_line(&line)?;
+    }
     let consent_bytes = consent_capture.as_bytes();
     let consent_line = object([
         ("kind", Value::Text("retained_owner_artifact".into())),

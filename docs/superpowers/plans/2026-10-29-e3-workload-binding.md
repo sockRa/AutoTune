@@ -1590,3 +1590,11 @@ composition are still required before a runnable benchmark can be claimed.
   GNU/Linux all-target/all-feature checks plus warning-denied Clippy pass; no
   tests or runtime. Fixed parent entrypoint and failed-session cleanup remain
   open.
+- 2026-11-08 pilot launch facts carried into workload archive: sampler/worker
+  admission now requires the guarded process wrappers, validates both roles
+  and their shared `BoundRun` binding before creating channels, retains launch
+  facts through normal and failure finalizer transfers, and serializes them as
+  digest-bound raw owner artifacts. Windows GNU/Linux all-target/all-feature
+  checks, warning-denied Clippy, formatting and `git diff --check` pass. No
+  tests, process/runtime/native/GPU execution or qualification. Fixed parent
+  entrypoint, process-exit/job-empty proof and Gate B remain open.

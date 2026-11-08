@@ -63,6 +63,32 @@ impl Facts {
     }
 }
 
+/// Process handle and its exact successful launch observations. Only the
+/// clock-clean guard can construct this owner.
+#[must_use = "retain the launch facts with their process through finalization"]
+pub struct AdmissionProcess {
+    process: Process,
+    facts: Facts,
+}
+
+impl AdmissionProcess {
+    pub fn process(&self) -> &Process {
+        &self.process
+    }
+
+    pub fn process_mut(&mut self) -> &mut Process {
+        &mut self.process
+    }
+
+    pub fn facts(&self) -> Facts {
+        self.facts
+    }
+
+    pub fn into_parts(self) -> (Process, Facts) {
+        (self.process, self.facts)
+    }
+}
+
 /// One bounded observation of an asynchronous pilot process launch.
 #[must_use = "retain and poll the launch guard until its process or failure is observed"]
 pub struct Guard {
@@ -254,7 +280,7 @@ impl Guard {
     /// Transfer a process only when the original setup window and clock remain
     /// valid. A failed check returns the complete guard for explicit cleanup.
     #[allow(clippy::result_large_err)] // Keep the live process and launcher owner inline.
-    pub fn into_admission_process(mut self) -> Result<(Process, Facts), Self> {
+    pub fn into_admission_process(mut self) -> Result<AdmissionProcess, Self> {
         if !self.facts.admission_eligible()
             || self.process.is_none()
             || !self.launch.as_ref().is_none_or(Launch::thread_finished)
@@ -263,7 +289,10 @@ impl Guard {
         }
         let process = self.process.take().expect("checked process owner");
         self.launch.take();
-        Ok((process, self.facts))
+        Ok(AdmissionProcess {
+            process,
+            facts: self.facts,
+        })
     }
 
     /// Take an observed process even after a timing fault, but retain its facts

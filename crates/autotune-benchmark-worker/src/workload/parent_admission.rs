@@ -6,6 +6,7 @@
 use super::{
     consent::{self, Record as ConsentRecord},
     host_environment::Reported as HostEnvironment,
+    launch::Role,
     manifest::BoundRun,
     parent_sampler::{self, PreflightFailure, ReportedPreflight},
     parent_sampler_channel::{self, ParentSamplerChannel},
@@ -16,6 +17,7 @@ use super::{
     starting_read::Receipt as StartingReceipt,
     starting_session::Session as StartingSession,
     windows_process::Process,
+    wire::WorkerBinding,
     worker_setup_delivery::{self, ReadyDelivery, Receiver as SetupReceiver},
 };
 use crate::{
@@ -38,6 +40,7 @@ pub struct InitFailure<'s, 'w> {
     pub fault: InitFault,
     pub setup: Option<SetupReceiver>,
     pub starting_launch: super::starting_launch::LaunchFacts,
+    pub pilot_launches: [super::pilot_launch::Facts; 2],
     pub sampler: ParentSamplerChannel<'s>,
     pub worker: ParentWorkerChannel<'w>,
 }
@@ -57,6 +60,7 @@ pub enum AdmissionStartFailure<'a, 's, 'w> {
 
 #[allow(clippy::large_enum_variant)] // Keep the already-created sampler owner inline.
 pub enum ProcessAdmissionFailure<'a, 's, 'w> {
+    Binding,
     ProfileCapacity,
     SamplerChannel {
         fault: parent_sampler_channel::InitFault,
@@ -148,6 +152,8 @@ pub struct Owners {
     pub setup_receiver: Option<SetupReceiver>,
     pub setup: Option<ReadyDelivery>,
     pub controller: Option<ControllerHandle>,
+    /// Sampler then worker launch facts from their exact retained process owners.
+    pub pilot_launches: [super::pilot_launch::Facts; 2],
 }
 
 pub struct RetirementOwners {
@@ -156,6 +162,7 @@ pub struct RetirementOwners {
     pub worker_report: parent_worker_channel::WorkerReportEvidence,
     pub setup_receiver: Option<SetupReceiver>,
     pub setup: Option<ReadyDelivery>,
+    pub pilot_launches: [super::pilot_launch::Facts; 2],
 }
 
 pub struct PilotOwnerInputs<E> {
@@ -163,6 +170,7 @@ pub struct PilotOwnerInputs<E> {
     pub scope: super::starting::Scope,
     pub starting_process: Process<starting_bootstrap::Declaration>,
     pub starting_launch: super::starting_launch::LaunchFacts,
+    pub pilot_launches: [super::pilot_launch::Facts; 2],
     pub starting_handoff: super::starting_launch::ClosedHandoff,
     pub starting_consent: super::consent::Record,
     pub starting_read: super::starting_read::Receipt,
@@ -175,6 +183,7 @@ pub struct PilotOwnerInputs<E> {
 pub enum FinalizerFailureKind {
     FailureNotObserved,
     SetupIncomplete,
+    PilotLaunchBinding,
     Pilot(super::session_finalizer::StartFault),
 }
 
@@ -230,12 +239,20 @@ impl RetirementOwners {
         super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
         FinalizerFailure<E>,
     > {
+        if self.pilot_launches != inputs.pilot_launches {
+            return Err(FinalizerFailure {
+                kind: FinalizerFailureKind::PilotLaunchBinding,
+                owners: self,
+                inputs,
+            });
+        }
         let Self {
             assets,
             stage,
             worker_report,
             setup_receiver,
             setup,
+            pilot_launches,
         } = self;
         let (setup_receiver, setup) = match (setup_receiver, setup) {
             (None, Some(setup)) => (None, setup),
@@ -248,6 +265,7 @@ impl RetirementOwners {
                         worker_report,
                         setup_receiver,
                         setup,
+                        pilot_launches,
                     },
                     inputs,
                 });
@@ -259,6 +277,7 @@ impl RetirementOwners {
             scope,
             starting_process,
             starting_launch,
+            pilot_launches: input_launches,
             starting_handoff,
             starting_consent,
             starting_read,
@@ -271,6 +290,7 @@ impl RetirementOwners {
             scope,
             starting_process,
             starting_launch,
+            pilot_launches: input_launches,
             starting_handoff,
             starting_consent,
             starting_read,
@@ -292,6 +312,7 @@ impl RetirementOwners {
                     scope,
                     starting_process,
                     starting_launch,
+                    pilot_launches,
                     starting_handoff,
                     starting_consent,
                     starting_read,
@@ -310,12 +331,14 @@ impl RetirementOwners {
                         worker_report: worker_report_evidence,
                         setup_receiver: worker_setup_receiver,
                         setup: worker_setup_delivery,
+                        pilot_launches,
                     },
                     inputs: PilotOwnerInputs {
                         manifest,
                         scope,
                         starting_process,
                         starting_launch,
+                        pilot_launches,
                         starting_handoff,
                         starting_consent,
                         starting_read,
@@ -355,12 +378,20 @@ impl RetirementOwners {
                 inputs,
             });
         }
+        if self.pilot_launches != inputs.pilot_launches {
+            return Err(FinalizerFailure {
+                kind: FinalizerFailureKind::PilotLaunchBinding,
+                owners: self,
+                inputs,
+            });
+        }
         let Self {
             assets,
             stage,
             worker_report,
             setup_receiver,
             setup,
+            pilot_launches,
         } = self;
         let (setup_receiver, setup) = match (setup_receiver, setup) {
             (None, Some(setup)) => (None, Some(setup)),
@@ -375,6 +406,7 @@ impl RetirementOwners {
                         worker_report,
                         setup_receiver,
                         setup,
+                        pilot_launches,
                     },
                     inputs,
                 });
@@ -385,6 +417,7 @@ impl RetirementOwners {
             scope,
             starting_process,
             starting_launch,
+            pilot_launches: input_launches,
             starting_handoff,
             starting_consent,
             starting_read,
@@ -397,6 +430,7 @@ impl RetirementOwners {
             scope,
             starting_process,
             starting_launch,
+            pilot_launches: input_launches,
             starting_handoff,
             starting_consent,
             starting_read,
@@ -415,6 +449,7 @@ impl RetirementOwners {
                     scope,
                     starting_process,
                     starting_launch,
+                    pilot_launches,
                     starting_handoff,
                     starting_consent,
                     starting_read,
@@ -433,12 +468,14 @@ impl RetirementOwners {
                         worker_report: worker_report_evidence,
                         setup_receiver: worker_setup_receiver,
                         setup: worker_setup_delivery,
+                        pilot_launches,
                     },
                     inputs: PilotOwnerInputs {
                         manifest,
                         scope,
                         starting_process,
                         starting_launch,
+                        pilot_launches,
                         starting_handoff,
                         starting_consent,
                         starting_read,
@@ -470,31 +507,34 @@ impl Owners {
         worker: Process,
         clock: WindowsClock,
     ) -> Result<RetirementOwners, MissingController> {
-        let (stage, parent, worker_report, setup_receiver, setup, controller) = match self {
-            Self {
-                stage,
-                parent,
-                worker_report,
-                setup_receiver,
-                setup,
-                controller: Some(controller),
-            } => (
-                stage,
-                parent,
-                worker_report,
-                setup_receiver,
-                setup,
-                controller,
-            ),
-            owners => {
-                return Err(MissingController {
-                    owners,
-                    sampler,
-                    worker,
-                    clock,
-                })
-            }
-        };
+        let (stage, parent, worker_report, setup_receiver, setup, controller, pilot_launches) =
+            match self {
+                Self {
+                    stage,
+                    parent,
+                    worker_report,
+                    setup_receiver,
+                    setup,
+                    controller: Some(controller),
+                    pilot_launches,
+                } => (
+                    stage,
+                    parent,
+                    worker_report,
+                    setup_receiver,
+                    setup,
+                    controller,
+                    pilot_launches,
+                ),
+                owners => {
+                    return Err(MissingController {
+                        owners,
+                        sampler,
+                        worker,
+                        clock,
+                    })
+                }
+            };
         Ok(RetirementOwners {
             assets: super::retirement_collector::Assets::new(
                 parent, controller, sampler, worker, clock,
@@ -503,6 +543,7 @@ impl Owners {
             worker_report,
             setup_receiver,
             setup,
+            pilot_launches,
         })
     }
 }
@@ -525,6 +566,7 @@ pub struct ParentAdmission<'a, 's, 'w> {
     worker: ParentWorkerChannel<'w>,
     starting: &'a super::starting_launch::AdmissionProcess,
     starting_launch: super::starting_launch::LaunchFacts,
+    pilot_launches: [super::pilot_launch::Facts; 2],
     setup_receiver: Option<SetupReceiver>,
     setup: Option<ReadyDelivery>,
     controller: Option<ControllerHandle>,
@@ -539,8 +581,8 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
     #[allow(clippy::result_large_err)] // Keep each already-created channel owner inline on failure.
     #[allow(clippy::too_many_arguments)] // Keep exact process/run/clock inputs visible at this trust boundary.
     pub fn from_processes(
-        sampler_process: &'s mut Process,
-        worker_process: &'w mut Process,
+        sampler_process: &'s mut super::pilot_launch::AdmissionProcess,
+        worker_process: &'w mut super::pilot_launch::AdmissionProcess,
         run: &BoundRun<'_>,
         setup_entry: Anchor,
         first: Anchor,
@@ -549,6 +591,26 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         clock: &WindowsClock,
         budget: &Budget,
     ) -> Result<Self, ProcessAdmissionFailure<'a, 's, 'w>> {
+        let pilot_launches = [sampler_process.facts(), worker_process.facts()];
+        let sampler_owner = sampler_process.process();
+        let worker_owner = worker_process.process();
+        let sampler_binding = sampler_owner.binding();
+        let expected_binding = WorkerBinding::new(
+            run,
+            sampler_binding.monitor().qpc_frequency,
+            sampler_binding.epoch(),
+        )
+        .ok();
+        if !pilot_launches
+            .iter()
+            .all(|facts| facts.admission_eligible())
+            || sampler_owner.declaration().role() != Role::Sampler
+            || worker_owner.declaration().role() != Role::Worker
+            || sampler_binding != worker_owner.binding()
+            || expected_binding != Some(sampler_binding)
+        {
+            return Err(ProcessAdmissionFailure::Binding);
+        }
         let event_capacity = match usize::try_from(
             autotune_fma_reference::profile::Profile::approved_design()
                 .limits
@@ -559,81 +621,103 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
                 return Err(ProcessAdmissionFailure::ProfileCapacity);
             }
         };
-        let sampler =
-            match ParentSamplerChannel::new(sampler_process, run, setup_entry, first, budget) {
-                Ok(sampler) => sampler,
-                Err(fault) => {
-                    return Err(ProcessAdmissionFailure::SamplerChannel { fault });
-                }
-            };
-
-        let worker = match ParentWorkerChannel::new(worker_process, budget, event_capacity) {
-            Ok(worker) => worker,
+        let sampler = match ParentSamplerChannel::new(
+            sampler_process.process_mut(),
+            run,
+            setup_entry,
+            first,
+            budget,
+        ) {
+            Ok(sampler) => sampler,
             Err(fault) => {
-                return Err(ProcessAdmissionFailure::WorkerChannel { fault, sampler });
+                return Err(ProcessAdmissionFailure::SamplerChannel { fault });
             }
         };
 
-        Self::new(sampler, worker, starting, setup_receiver, clock, budget)
-            .map_err(ProcessAdmissionFailure::Admission)
+        let worker =
+            match ParentWorkerChannel::new(worker_process.process_mut(), budget, event_capacity) {
+                Ok(worker) => worker,
+                Err(fault) => {
+                    return Err(ProcessAdmissionFailure::WorkerChannel { fault, sampler });
+                }
+            };
+
+        Self::new(
+            sampler,
+            worker,
+            starting,
+            setup_receiver,
+            pilot_launches,
+            clock,
+            budget,
+        )
+        .map_err(ProcessAdmissionFailure::Admission)
     }
 
     /// Construct admission and attach the original-deadline safety controller
     /// before returning. The controller is containment only: ordered preflight,
     /// watch readiness, Start and NativeGrant retain their separate gates.
     #[allow(clippy::result_large_err)] // Preserve process/channel/controller owners on failure.
-    pub fn new(
+    fn new(
         sampler: ParentSamplerChannel<'s>,
         worker: ParentWorkerChannel<'w>,
         starting: &'a super::starting_launch::AdmissionProcess,
         setup_receiver: Option<SetupReceiver>,
+        pilot_launches: [super::pilot_launch::Facts; 2],
         clock: &WindowsClock,
         budget: &Budget,
     ) -> Result<Self, AdmissionStartFailure<'a, 's, 'w>> {
-        let mut admission = match Self::new_unwatched(sampler, worker, starting, setup_receiver) {
-            Ok(admission) => admission,
-            Err(failure) => {
-                let InitFailure {
-                    fault,
-                    setup,
-                    starting_launch,
-                    sampler,
-                    worker,
-                } = failure;
-                if fault == InitFault::SamplerAlreadyFaulted {
-                    let mut failure = InitFailure {
+        let mut admission =
+            match Self::new_unwatched(sampler, worker, starting, setup_receiver, pilot_launches) {
+                Ok(admission) => admission,
+                Err(failure) => {
+                    let InitFailure {
                         fault,
                         setup,
                         starting_launch,
+                        pilot_launches,
                         sampler,
                         worker,
-                    };
-                    failure.sampler.abort_for_parent_fault(None);
-                    failure.worker.abort_for_parent_fault();
-                    return Err(AdmissionStartFailure::Initialization(failure));
-                }
+                    } = failure;
+                    if fault == InitFault::SamplerAlreadyFaulted {
+                        let mut failure = InitFailure {
+                            fault,
+                            setup,
+                            starting_launch,
+                            pilot_launches,
+                            sampler,
+                            worker,
+                        };
+                        failure.sampler.abort_for_parent_fault(None);
+                        failure.worker.abort_for_parent_fault();
+                        return Err(AdmissionStartFailure::Initialization(failure));
+                    }
 
-                let mut admission = Self {
-                    sampler,
-                    worker,
-                    starting,
-                    starting_launch,
-                    setup_receiver: setup,
-                    setup: None,
-                    controller: None,
-                    stage: Stage::SetupPending,
-                };
-                if let Err(fault) = admission.start_safety_watch_early(clock, budget) {
+                    let mut admission = Self {
+                        sampler,
+                        worker,
+                        starting,
+                        starting_launch,
+                        pilot_launches,
+                        setup_receiver: setup,
+                        setup: None,
+                        controller: None,
+                        stage: Stage::SetupPending,
+                    };
+                    if let Err(fault) = admission.start_safety_watch_early(clock, budget) {
+                        admission.sampler.abort_for_parent_fault(None);
+                        admission.worker.abort_for_parent_fault();
+                        return Err(AdmissionStartFailure::SafetyWatch { fault, admission });
+                    }
+                    admission.stage = Stage::Failed;
                     admission.sampler.abort_for_parent_fault(None);
                     admission.worker.abort_for_parent_fault();
-                    return Err(AdmissionStartFailure::SafetyWatch { fault, admission });
+                    return Err(AdmissionStartFailure::SupervisedInitialization {
+                        fault,
+                        admission,
+                    });
                 }
-                admission.stage = Stage::Failed;
-                admission.sampler.abort_for_parent_fault(None);
-                admission.worker.abort_for_parent_fault();
-                return Err(AdmissionStartFailure::SupervisedInitialization { fault, admission });
-            }
-        };
+            };
         if let Err(fault) = admission.start_safety_watch_early(clock, budget) {
             admission.sampler.abort_for_parent_fault(None);
             admission.worker.abort_for_parent_fault();
@@ -648,6 +732,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         worker: ParentWorkerChannel<'w>,
         starting: &'a super::starting_launch::AdmissionProcess,
         setup_receiver: Option<SetupReceiver>,
+        pilot_launches: [super::pilot_launch::Facts; 2],
     ) -> Result<Self, InitFailure<'s, 'w>> {
         let starting_launch = starting.facts();
         let fault = if sampler.parent().fault().is_some() {
@@ -666,6 +751,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
                 fault,
                 setup: setup_receiver,
                 starting_launch,
+                pilot_launches,
                 sampler,
                 worker,
             });
@@ -675,6 +761,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             worker,
             starting,
             starting_launch,
+            pilot_launches,
             setup_receiver,
             setup: None,
             controller: None,
@@ -1133,6 +1220,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             stage,
             starting: _,
             starting_launch: _,
+            pilot_launches,
         } = self;
         Owners {
             stage,
@@ -1141,6 +1229,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             setup_receiver,
             setup,
             controller,
+            pilot_launches,
         }
     }
 
