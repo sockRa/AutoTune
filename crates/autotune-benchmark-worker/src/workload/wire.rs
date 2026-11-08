@@ -236,7 +236,7 @@ fn teardown_fault_value(fault: super::teardown::Fault) -> Value {
         ]),
     }
 }
-fn teardown_value(evidence: super::teardown::Evidence) -> Value {
+pub(crate) fn teardown_value(evidence: super::teardown::Evidence) -> Value {
     let entries = evidence.entries[..usize::from(evidence.len)]
         .iter()
         .flatten()

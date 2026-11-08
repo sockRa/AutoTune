@@ -344,6 +344,22 @@ impl WorkerReportEvidence {
     pub fn control_packets(&self) -> &[crate::workload::transport::WorkerReceived] {
         &self.control_packets
     }
+    /// Return the one child-reported teardown snapshot from RoleFinished.
+    /// Duplicate terminal packets are represented as unavailable here; the
+    /// control audit separately retains the protocol fault and raw packets.
+    pub fn teardown_evidence(&self) -> Option<crate::workload::teardown::Evidence> {
+        let mut found = None;
+        for packet in &self.control_packets {
+            if let Ok(crate::workload::wire::Message::RoleFinished { teardown, .. }) =
+                packet.message()
+            {
+                if found.replace(*teardown).is_some() {
+                    return None;
+                }
+            }
+        }
+        found
+    }
     pub fn receive_events(&self) -> &[ReceiveEvent] {
         &self.events
     }

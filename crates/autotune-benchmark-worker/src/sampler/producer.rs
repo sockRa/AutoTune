@@ -1419,6 +1419,7 @@ pub fn append_pilot_owner_artifacts<E>(
     budget: &Budget,
 ) -> Result<BoundText, WireError> {
     let starting_handoff = owners.starting_handoff.session.canonical();
+    let worker_teardown = owners.worker_report_evidence.teardown_evidence();
     let sources: [(&str, Option<&[u8]>); 5] = [
         ("starting_handoff", starting_handoff),
         (
@@ -1455,6 +1456,7 @@ pub fn append_pilot_owner_artifacts<E>(
     let scratch_bytes = source_bytes
         .checked_mul(4)
         .and_then(|n| n.checked_add(5 * 4096))
+        .and_then(|n| n.checked_add(64 * 1024))
         .and_then(|n| n.checked_add(crate::workload::consent::CAP * 16))
         .ok_or(WireError::Capacity)?;
     let _scratch = budget
@@ -1513,6 +1515,28 @@ pub fn append_pilot_owner_artifacts<E>(
     ])
     .to_canonical();
     output.push_line(&consent_line)?;
+    let teardown_bytes = worker_teardown
+        .map(crate::workload::wire::teardown_value)
+        .map(|value| value.to_canonical());
+    let teardown_line = object([
+        ("kind", Value::Text("retained_owner_artifact".into())),
+        ("owner", Value::Text("worker_teardown".into())),
+        ("available", Value::Bool(teardown_bytes.is_some())),
+        (
+            "digest",
+            teardown_bytes.as_ref().map_or(Value::Null, |bytes| {
+                Value::Text(Digest::of(Domain::RawArtifact, bytes.as_bytes()).to_hex())
+            }),
+        ),
+        (
+            "bytes_hex",
+            teardown_bytes.as_ref().map_or(Value::Null, |bytes| {
+                Value::Text(super::wire_model::hex(bytes.as_bytes()))
+            }),
+        ),
+    ])
+    .to_canonical();
+    output.push_line(&teardown_line)?;
     Ok(output.finish())
 }
 
