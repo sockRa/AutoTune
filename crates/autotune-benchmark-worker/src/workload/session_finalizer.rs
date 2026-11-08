@@ -250,6 +250,13 @@ impl<E> Finalized<PilotOwners<E>> {
             .map_err(|_| io::Error::other("workload raw evidence capacity/binding"))?;
             let raw = crate::sampler::producer::append_pilot_owner_artifacts(raw, evidence, budget)
                 .map_err(|_| io::Error::other("workload retained owner artifact capacity"))?;
+            let raw = crate::sampler::producer::append_pilot_process_artifacts(
+                raw,
+                parent,
+                self.retirement.assets.progress(),
+                budget,
+            )
+            .map_err(|_| io::Error::other("workload process observation artifact capacity"))?;
             let mut envelope = crate::sampler::producer::build_pilot_envelope_from_parent(
                 &evidence.manifest,
                 parent,

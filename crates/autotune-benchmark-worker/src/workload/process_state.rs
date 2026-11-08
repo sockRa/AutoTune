@@ -411,6 +411,53 @@ pub struct Frame {
     pub result: Result<(), Fault>,
 }
 impl Frame {
+    /// Full bounded process-state evidence, including failed/partial calls.
+    /// This is a report projection only and cannot be reused as an admission
+    /// token or a later liveness claim.
+    #[cfg(windows)]
+    pub(crate) fn raw_evidence_value(&self) -> Value {
+        let checks = self.checks.map(|check| match check {
+            Ok(()) => Value::Text("ok".into()),
+            Err(error) => Value::Text(format!("{error:?}")),
+        });
+        object([
+            ("window", window_value(self.window)),
+            (
+                "observed_clock",
+                object([
+                    ("frequency", Value::U64(self.observed_clock.0)),
+                    ("token", Value::Text(hex(&self.observed_clock.1))),
+                ]),
+            ),
+            ("before", self.before.map_or(Value::Null, anchor_value)),
+            ("after", self.after.map_or(Value::Null, anchor_value)),
+            (
+                "before_error",
+                self.before_error
+                    .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+            ),
+            (
+                "after_error",
+                self.after_error
+                    .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+            ),
+            (
+                "snapshots",
+                Value::Array(
+                    self.snapshots
+                        .iter()
+                        .map(|snapshot| {
+                            snapshot.map_or(Value::Null, |snapshot| snapshot.raw_evidence_value())
+                        })
+                        .collect(),
+                ),
+            ),
+            ("checks", Value::Array(checks.into())),
+            ("clock_result", result_value(self.clock_result)),
+            ("result", result_value(self.result)),
+        ])
+    }
+
     /// Commit the exact successful retained-handle observations for a parent
     /// grant. Failed/fixture frames have no commitment eligible for issuance.
     #[cfg(windows)]
@@ -467,6 +514,58 @@ impl Frame {
     }
 }
 impl Snapshot {
+    #[cfg(windows)]
+    fn raw_evidence_value(&self) -> Value {
+        let calls = self.calls.map(|call| {
+            object([
+                ("requested", Value::Bool(call.requested)),
+                ("before", call.before.map_or(Value::Null, anchor_value)),
+                ("attempted", Value::Bool(call.attempted)),
+                ("output", call.output.map_or(Value::Null, output_value)),
+                ("after", call.after.map_or(Value::Null, anchor_value)),
+            ])
+        });
+        let limits = self.expected_limits;
+        object([
+            ("origin", origin_value(self.origin)),
+            ("window", window_value(self.window)),
+            ("source", Value::Text(format!("{:?}", self.source))),
+            ("flags", Value::U64(limits.flags.into())),
+            ("active_limit", Value::U64(limits.active_limit.into())),
+            ("user_100ns", Value::I64(limits.user_100ns)),
+            ("process_memory", Value::U64(limits.process_memory)),
+            ("job_memory", Value::U64(limits.job_memory)),
+            ("limit_bytes", Value::U64(self.limit_bytes.into())),
+            ("clock_frequency", Value::U64(self.observed_clock.0)),
+            ("clock_token", Value::Text(hex(&self.observed_clock.1))),
+            ("calls", Value::Array(calls.into())),
+            (
+                "fault",
+                self.fault
+                    .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+            ),
+            (
+                "capture_error",
+                self.capture_error
+                    .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+            ),
+            (
+                "clock_error",
+                self.clock_error
+                    .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+            ),
+            (
+                "rejected_anchor",
+                self.rejected_anchor.map_or(Value::Null, anchor_value),
+            ),
+            ("cancelled_before", Value::Bool(self.cancelled_before)),
+            (
+                "cancelled_after",
+                self.cancelled_after.map_or(Value::Null, Value::Bool),
+            ),
+        ])
+    }
+
     #[cfg(windows)]
     fn native_grant_value(&self) -> Option<Value> {
         if self.fault.is_some()
@@ -537,6 +636,34 @@ fn origin_value(origin: Origin) -> Value {
             }),
         ),
     ])
+}
+#[cfg(windows)]
+fn window_value(window: Window) -> Value {
+    let binding = window.binding;
+    object([
+        ("session", Value::Text(hex(&binding.session))),
+        ("run", Value::Text(hex(&binding.run))),
+        (
+            "device",
+            object([
+                ("uuid", Value::Text(hex(&binding.device.uuid))),
+                ("domain", Value::U64(binding.device.domain.into())),
+                ("bus", Value::U64(binding.device.bus.into())),
+                ("device", Value::U64(binding.device.device.into())),
+            ]),
+        ),
+        ("clock_token", Value::Text(hex(&binding.clock_token))),
+        ("qpc_frequency", Value::U64(binding.qpc_frequency)),
+        ("epoch", anchor_value(window.epoch)),
+        ("deadline_ns", Value::U64(window.deadline_ns)),
+    ])
+}
+#[cfg(windows)]
+fn result_value(result: Result<(), Fault>) -> Value {
+    result.map_or_else(
+        |error| Value::Text(format!("error:{error:?}")),
+        |_| Value::Text("ok".into()),
+    )
 }
 #[cfg(windows)]
 fn hex(bytes: &[u8]) -> String {

@@ -3,6 +3,8 @@ use super::{
     gate::StopWindow, launch_origin::Origin, parent_watch::Window, starting_export::ClockFault,
     stop_requests::Observation,
 };
+#[cfg(windows)]
+use crate::evidence::{Object, Value};
 use crate::{
     monitor::{clock::Clock, Anchor},
     sampler::supervisor::ProcessObservation,
@@ -52,6 +54,81 @@ pub struct Frame {
     result: Result<(), Fault>,
 }
 impl Frame {
+    /// Serialize complete retained exit-query and request-lane facts without
+    /// upgrading them into GPU quiescence or workload acceptance.
+    #[cfg(windows)]
+    pub(crate) fn raw_evidence_value(&self) -> Value {
+        let binding = self.window.binding.monitor();
+        let reads = self.reads.map(|read| {
+            read.map_or(Value::Null, |read| {
+                object([
+                    ("origin", origin_value(read.origin)),
+                    ("before", capture_value(read.before)),
+                    (
+                        "requests_before",
+                        Value::Array(read.requests_before.map(request_value).into()),
+                    ),
+                    ("raw", read.raw.map_or(Value::Null, process_value)),
+                    ("after", capture_value(read.after)),
+                    (
+                        "requests_after",
+                        Value::Array(read.requests_after.map(request_value).into()),
+                    ),
+                ])
+            })
+        });
+        object([
+            (
+                "window",
+                object([
+                    ("session", Value::Text(hex(&binding.session))),
+                    ("run", Value::Text(hex(&binding.run))),
+                    ("device_uuid", Value::Text(hex(&binding.device.uuid))),
+                    ("device_domain", Value::U64(binding.device.domain.into())),
+                    ("device_bus", Value::U64(binding.device.bus.into())),
+                    ("device_number", Value::U64(binding.device.device.into())),
+                    ("frequency", Value::U64(binding.qpc_frequency)),
+                    ("clock_token", Value::Text(hex(&binding.clock_token))),
+                    ("epoch", anchor_value(self.window.binding.epoch())),
+                    (
+                        "setup_deadline_ns",
+                        Value::U64(self.window.setup_deadline_ns),
+                    ),
+                ]),
+            ),
+            (
+                "stop_window",
+                object([
+                    ("trigger_ns", Value::U64(self.stop.trigger_ns)),
+                    ("cooperative_ns", Value::U64(self.stop.cooperative_ns)),
+                    ("exit_ns", Value::U64(self.stop.exit_ns)),
+                ]),
+            ),
+            (
+                "expected",
+                Value::Array(self.expected.map(origin_value).into()),
+            ),
+            ("before", capture_value(self.before)),
+            ("after", capture_value(self.after)),
+            ("reads", Value::Array(reads.into())),
+            (
+                "clock_identity",
+                object([
+                    ("frequency", Value::U64(self.clock_identity.0)),
+                    ("token", Value::Text(hex(&self.clock_identity.1))),
+                ]),
+            ),
+            ("trusted", Value::Bool(self.trusted)),
+            (
+                "result",
+                self.result.map_or_else(
+                    |error| Value::Text(format!("error:{error:?}")),
+                    |_| Value::Text("ok".into()),
+                ),
+            ),
+        ])
+    }
+
     pub fn window(&self) -> Window {
         self.window
     }
@@ -113,6 +190,123 @@ impl Frame {
             .elapsed(self.after.anchor.ok_or(Fault::Clock)?)
             .map_err(|_| Fault::Clock)
     }
+}
+#[cfg(windows)]
+fn object(fields: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
+    let mut object = Object::new();
+    for (key, value) in fields {
+        object
+            .insert(key, value)
+            .expect("fixed unique retirement keys");
+    }
+    Value::Object(object)
+}
+#[cfg(windows)]
+fn hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[usize::from(byte >> 4)] as char);
+        output.push(HEX[usize::from(byte & 15)] as char);
+    }
+    output
+}
+#[cfg(windows)]
+fn origin_value(origin: Origin) -> Value {
+    object([
+        ("kind", Value::Text(format!("{:?}", origin.kind()))),
+        ("binding", Value::Text(origin.binding().to_hex())),
+        ("declaration", Value::Text(origin.declaration().to_hex())),
+        ("image", Value::Text(origin.image().to_hex())),
+        ("pid", Value::U64(origin.pid().into())),
+        ("creation", Value::U64(origin.creation())),
+        (
+            "consent",
+            origin.consent().map_or(Value::Null, |capture| {
+                object([
+                    ("request", Value::Text(capture.request.to_hex())),
+                    ("receipt", anchor_value(capture.receipt)),
+                ])
+            }),
+        ),
+    ])
+}
+#[cfg(windows)]
+fn capture_value(capture: Capture) -> Value {
+    object([
+        ("anchor", capture.anchor.map_or(Value::Null, anchor_value)),
+        (
+            "error",
+            capture
+                .error
+                .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+        ),
+    ])
+}
+#[cfg(windows)]
+fn request_value(observation: Observation) -> Value {
+    object([
+        ("requested", Value::Bool(observation.requested)),
+        (
+            "returned",
+            observation.returned.map_or(Value::Null, |result| {
+                result.map_or_else(|code| Value::I64(code.into()), |_| Value::Text("ok".into()))
+            }),
+        ),
+    ])
+}
+#[cfg(windows)]
+fn process_value(observation: ProcessObservation) -> Value {
+    object([
+        ("creation", Value::U64(observation.creation)),
+        ("wait_status", Value::U64(observation.wait_status.into())),
+        (
+            "wait_error",
+            observation
+                .wait_error
+                .map_or(Value::Null, |value| Value::U64(value.into())),
+        ),
+        (
+            "exit_code",
+            observation
+                .exit_code
+                .map_or(Value::Null, |value| Value::U64(value.into())),
+        ),
+        (
+            "exit_error",
+            observation
+                .exit_error
+                .map_or(Value::Null, |value| Value::U64(value.into())),
+        ),
+        (
+            "termination",
+            observation.termination.map_or(Value::Null, |result| {
+                result.map_or_else(|code| Value::I64(code.into()), |_| Value::Text("ok".into()))
+            }),
+        ),
+        (
+            "active_processes",
+            observation
+                .active_processes
+                .map_or(Value::Null, |value| Value::U64(value.into())),
+        ),
+        (
+            "accounting_error",
+            observation
+                .accounting_error
+                .map_or(Value::Null, |value| Value::U64(value.into())),
+        ),
+    ])
+}
+#[cfg(windows)]
+fn anchor_value(anchor: Anchor) -> Value {
+    object([
+        ("token", Value::Text(hex(&anchor.clock_token))),
+        ("before", Value::U64(anchor.qpc_before)),
+        ("after", Value::U64(anchor.qpc_after)),
+        ("interrupt", Value::U64(anchor.interrupt_100ns)),
+        ("unbiased", Value::U64(anchor.unbiased_100ns)),
+    ])
 }
 fn process(read: Read, expected: Origin) -> Result<(), Fault> {
     if read.origin != expected {

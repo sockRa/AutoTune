@@ -1516,6 +1516,74 @@ pub fn append_pilot_owner_artifacts<E>(
     Ok(output.finish())
 }
 
+/// Append retained Start, NativeGrant re-entry and normal-retirement process
+/// frames. The rows preserve OS calls, partial results, anchors and pending
+/// request state; they do not claim anything beyond those observed handles.
+#[cfg(windows)]
+pub fn append_pilot_process_artifacts(
+    raw: BoundText,
+    parent: &crate::workload::parent_sampler::ParentSampler,
+    retirement: Option<&crate::workload::parent_watch_retirement::Frame>,
+    budget: &Budget,
+) -> Result<BoundText, WireError> {
+    // These fixed-size models have six calls each and three process snapshots.
+    // Reserve before constructing their temporary Value trees/encoded forms.
+    let _scratch = budget
+        .reserve(crate::workload::consent::CAP * 16)
+        .map_err(|_| WireError::Capacity)?;
+    let frames = [
+        (
+            "start_process_observation",
+            parent
+                .process_frame()
+                .map(crate::workload::process_state::Frame::raw_evidence_value),
+        ),
+        (
+            "native_grant_process_observation",
+            parent
+                .native_grant_process_frame()
+                .map(crate::workload::process_state::Frame::raw_evidence_value),
+        ),
+        (
+            "normal_retirement_process_observation",
+            retirement.map(crate::workload::parent_watch_retirement::Frame::raw_evidence_value),
+        ),
+    ];
+    let BoundText {
+        text,
+        _allocation: storage,
+        ..
+    } = raw;
+    let mut output = RawBuilder {
+        text,
+        storage,
+        budget: budget.clone(),
+    };
+    for (owner, value) in frames {
+        let bytes = value.map(|value| value.to_canonical());
+        let line = object([
+            ("kind", Value::Text("retained_owner_artifact".into())),
+            ("owner", Value::Text(owner.into())),
+            ("available", Value::Bool(bytes.is_some())),
+            (
+                "digest",
+                bytes.as_ref().map_or(Value::Null, |bytes| {
+                    Value::Text(Digest::of(Domain::RawArtifact, bytes.as_bytes()).to_hex())
+                }),
+            ),
+            (
+                "bytes_hex",
+                bytes.as_ref().map_or(Value::Null, |bytes| {
+                    Value::Text(super::wire_model::hex(bytes.as_bytes()))
+                }),
+            ),
+        ])
+        .to_canonical();
+        output.push_line(&line)?;
+    }
+    Ok(output.finish())
+}
+
 /// Derive typed telemetry only from actual receipts retained by the fixed
 /// workload ParentSampler. Raw packets remain the audit source for omitted or
 /// rejected rows; this projection never promotes a rejected reading.
