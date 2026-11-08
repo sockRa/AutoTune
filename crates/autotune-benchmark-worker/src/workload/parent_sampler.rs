@@ -2012,6 +2012,11 @@ impl ParentSampler {
         }
         result
     }
+    /// Poison the current parent session when a concrete channel adapter finds
+    /// that its retained process owner differs from the preflight peer owner.
+    pub(super) fn reject_process_owner_binding(&mut self) {
+        self.fail(Fault::Binding, self.now_ns);
+    }
     pub fn for_process(
         run: &BoundRun<'_>,
         process: &super::windows_process::Process,

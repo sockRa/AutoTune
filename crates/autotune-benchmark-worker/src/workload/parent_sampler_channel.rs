@@ -63,6 +63,7 @@ impl<'a> ParentSamplerChannel<'a> {
     ) -> Result<(), PreflightFailure> {
         if !std::ptr::eq(input.processes.sampler, self.process) {
             input.processes.setup.close_reference_path();
+            self.parent.reject_process_owner_binding();
             return Err(PreflightFailure {
                 fault: PreflightFault::Peers(super::parent_peers::Fault::Binding),
                 decisions: Some(input.decisions),

@@ -1251,7 +1251,9 @@ outbound settings/query/stop traffic to those same process and sender owners;
 sampler peer to be that exact process, returning unconsumed consent decisions
 and closing the setup reference path if the supplied process owner differs.
 This closes the easy-to-miswire seams where a caller could pair one sampler's
-inbound process, preflight peer, and sender with another process.
+inbound process, preflight peer, and sender with another process. The mismatch
+also records a sticky ParentSampler binding fault, so a rejected owner check
+cannot leave this same parent session open for a later Start attempt.
 The adapter does not launch the process, start the independent controller,
 prove peer truth, grant the worker, or qualify a live sample. It does not split
 the control reader for a concurrent controller; full fixed-parent orchestration
