@@ -1132,11 +1132,13 @@ Manifest `target/workload-verification/pilot-telemetry-final-manifest.json`, SHA
 No independent-agent review is claimed. The actual Windows pipe/NVML path is
 compiled/linked only; no process, native runtime or GPU execution occurred.
 
-Fixed executable entries, complete parent fact/safety/re-entry/consent composition,
-the worker native-admission issuer and aggregate live export remain unfinished.
-Parent monitor timing across runs must preserve the original epoch and session
-ceiling. E3 remains partial and Gate B unmet; this is not a useful baseline or an
-automatic optimization delivery.
+The fixed sampler entry and the feature-gated, reject-only worker target exist
+in source. Parent executable orchestration, complete parent
+fact/safety/re-entry/consent composition, the worker native-admission issuer
+and aggregate live export remain unfinished. Parent monitor timing across runs
+must preserve the original epoch and session ceiling. E3 remains partial and
+Gate B unmet; this is not a useful baseline or an automatic optimization
+delivery.
 
 ## Fixed pilot sampler entry
 
