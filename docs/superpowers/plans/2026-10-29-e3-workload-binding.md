@@ -1572,3 +1572,12 @@ composition are still required before a runnable benchmark can be claimed.
   unreceived controller update. Added an atomic mailbox item count so querying
   emptiness cannot consume retained updates. `Report.pending` remains available
   to drain. Formatting/static review only; no tests/build/run performed.
+- 2026-11-08 successful terminal driver: `ParentAdmission::advance_successful_shutdown_once`
+  waits for complete worker report assessment, queues the planned sampler stop
+  through the retained sender, and begins the worker terminal audit against that
+  original stop window. The ready predicate requires accepted sampler
+  RoleFinished plus worker StopAck/RoleFinished, complete results, no pending
+  work/native failure/audit fault. Formatting and Windows GNU/Linux all-target/
+  all-feature checks plus warning-denied Clippy pass; no tests or runtime. Failed
+  session cleanup, process-exit retirement and fixed parent entrypoint remain
+  open.

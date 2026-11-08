@@ -859,6 +859,10 @@ impl<'a> ParentWorkerChannel<'a> {
         self.audit.as_ref().map(Audit::progress)
     }
 
+    pub fn reports_complete(&self) -> bool {
+        self.audit.as_ref().is_some_and(Audit::reports_complete)
+    }
+
     pub fn assessment_fault(&self) -> Option<assessment::Fault> {
         self.assessment_fault
             .or_else(|| self.audit.as_ref().and_then(Audit::fault))

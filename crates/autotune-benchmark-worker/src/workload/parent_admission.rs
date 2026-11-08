@@ -78,6 +78,23 @@ pub struct AdmissionTurn<'r, 's> {
     pub preflight: Option<PreflightInput<'r, 's>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalProgress {
+    AdmissionIncomplete,
+    AwaitingWorkerResults,
+    PlannedStopQueued,
+    AwaitingRoleCompletion,
+    TerminalEvidenceReady,
+    Failed,
+    StopFailed(parent_sampler::Fault),
+    ControlAuditFailed(parent_worker_channel::ControlFault),
+}
+
+pub struct TerminalTurn {
+    pub observed: Turn,
+    pub progress: TerminalProgress,
+}
+
 pub struct Owners {
     pub stage: Stage,
     pub parent: parent_sampler::ParentSampler,
@@ -476,6 +493,66 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             progress,
             preflight: unused_preflight,
         }
+    }
+
+    /// Poll once and drive the successful terminal handshake. Only complete
+    /// worker result assessment can trigger the planned stop; the subsequent
+    /// control audit is bound to that same original ParentSampler stop window.
+    pub fn advance_successful_shutdown_once(
+        &mut self,
+        run: &BoundRun<'_>,
+        clock: &WindowsClock,
+        budget: &Budget,
+    ) -> TerminalTurn {
+        let observed = self.poll_once(run, clock, budget);
+        let progress = if self.stage == Stage::Failed {
+            TerminalProgress::Failed
+        } else if self.stage != Stage::NativeGrantQueued {
+            TerminalProgress::AdmissionIncomplete
+        } else if self.sampler.parent().is_finishing() {
+            if self.worker.control_audit().is_none() {
+                match self.begin_worker_control_audit(budget) {
+                    Ok(()) => TerminalProgress::PlannedStopQueued,
+                    Err(fault) => {
+                        self.stage = Stage::Failed;
+                        TerminalProgress::ControlAuditFailed(fault)
+                    }
+                }
+            } else if self.terminal_evidence_ready() {
+                TerminalProgress::TerminalEvidenceReady
+            } else {
+                TerminalProgress::AwaitingRoleCompletion
+            }
+        } else if !self.worker.reports_complete() {
+            TerminalProgress::AwaitingWorkerResults
+        } else {
+            match self.sampler.finish(clock.capture().ok()) {
+                Err(fault) => {
+                    self.stage = Stage::Failed;
+                    TerminalProgress::StopFailed(fault)
+                }
+                Ok(()) => match self.begin_worker_control_audit(budget) {
+                    Ok(()) => TerminalProgress::PlannedStopQueued,
+                    Err(fault) => {
+                        self.stage = Stage::Failed;
+                        TerminalProgress::ControlAuditFailed(fault)
+                    }
+                },
+            }
+        };
+        TerminalTurn { observed, progress }
+    }
+
+    fn terminal_evidence_ready(&self) -> bool {
+        self.sampler.parent().fault().is_none()
+            && self.sampler.parent().reported_finished()
+            && self.worker.reports_complete()
+            && self.worker.control_audit().is_some_and(|audit| {
+                audit.stop_acknowledged()
+                    && audit.role_finished()
+                    && !audit.native_failure()
+                    && audit.fault().is_none()
+            })
     }
 
     #[allow(clippy::result_large_err)] // Return unconsumed consent and setup owners intact.

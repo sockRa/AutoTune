@@ -1319,6 +1319,14 @@ peer/setup gate is ready; every failed transition remains explicit in the
 returned progress value. The caller still owns launch, starting-session
 construction, run-loop scheduling, terminal stop/audit, finalizer polling and
 archive completion.
+`advance_successful_shutdown_once` drives the success terminal path: it waits
+for complete worker result assessment, issues one planned sampler stop through
+the retained sampler sender, and starts the worker control audit using that
+stop window. It reports terminal evidence as ready only after the parent has
+accepted sampler RoleFinished and the worker audit has accepted StopAck plus
+RoleFinished with no pending work, cleanup failure, native failure or audit
+fault. Failed admission/assessment remains failed; this helper does not turn
+fault recovery into successful completion.
 This coordinator does not launch the three processes, poll the pre-manifest
 starting session, own the whole execution/retirement loop, or prove hardware or
 GPU qualification.
