@@ -254,6 +254,15 @@ impl Receiver {
     pub fn fault(&self) -> Option<Fault> {
         self.fault
     }
+    pub fn binding(&self) -> WorkerBinding {
+        self.binding
+    }
+    pub fn deadline_raw(&self) -> u64 {
+        self.deadline_raw
+    }
+    pub fn expected(&self) -> Option<(Digest, u32, u32)> {
+        self.digest.map(|digest| (digest, self.total, self.count))
+    }
     pub fn received(&self) -> u32 {
         self.received
     }
@@ -277,6 +286,11 @@ impl Receiver {
     }
     pub fn transport(&self) -> Option<(Option<i32>, Option<Anchor>)> {
         self.transport
+    }
+    /// Exact packet owners retained before a completed ReadyDelivery exists.
+    /// Accepted chunks remain ordered before any rejected terminal packet.
+    pub fn packets(&self) -> impl Iterator<Item = &WorkerReceived> {
+        self.chunks.iter().chain(self.rejected.iter())
     }
     fn fail(&mut self, f: Fault) -> Fault {
         self.fault.get_or_insert(f);

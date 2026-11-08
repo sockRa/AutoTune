@@ -224,8 +224,8 @@ impl RetirementOwners {
             setup_receiver,
             setup,
         } = self;
-        let setup = match (setup_receiver, setup) {
-            (None, Some(setup)) => setup,
+        let (setup_receiver, setup) = match (setup_receiver, setup) {
+            (None, Some(setup)) => (None, setup),
             (setup_receiver, setup) => {
                 return Err(FinalizerFailure {
                     kind: FinalizerFailureKind::SetupIncomplete,
@@ -263,6 +263,7 @@ impl RetirementOwners {
             starting_read,
             starting_evidence,
             host_environment,
+            worker_setup_receiver: setup_receiver,
             worker_setup_delivery: Some(setup),
             worker_report_evidence: worker_report,
             additional,
@@ -283,6 +284,7 @@ impl RetirementOwners {
                     starting_read,
                     starting_evidence,
                     host_environment,
+                    worker_setup_receiver,
                     worker_setup_delivery,
                     worker_report_evidence,
                     additional,
@@ -293,7 +295,7 @@ impl RetirementOwners {
                         assets: failure.assets,
                         stage,
                         worker_report: worker_report_evidence,
-                        setup_receiver: None,
+                        setup_receiver: worker_setup_receiver,
                         setup: worker_setup_delivery,
                     },
                     inputs: PilotOwnerInputs {
@@ -347,9 +349,10 @@ impl RetirementOwners {
             setup_receiver,
             setup,
         } = self;
-        let setup = match (setup_receiver, setup) {
-            (None, Some(setup)) => Some(setup),
-            (None, None) => None,
+        let (setup_receiver, setup) = match (setup_receiver, setup) {
+            (None, Some(setup)) => (None, Some(setup)),
+            (None, None) => (None, None),
+            (Some(receiver), None) => (Some(receiver), None),
             (setup_receiver, setup) => {
                 return Err(FinalizerFailure {
                     kind: FinalizerFailureKind::SetupIncomplete,
@@ -386,6 +389,7 @@ impl RetirementOwners {
             starting_read,
             starting_evidence,
             host_environment,
+            worker_setup_receiver: setup_receiver,
             worker_setup_delivery: setup,
             worker_report_evidence: worker_report,
             additional,
@@ -403,6 +407,7 @@ impl RetirementOwners {
                     starting_read,
                     starting_evidence,
                     host_environment,
+                    worker_setup_receiver,
                     worker_setup_delivery,
                     worker_report_evidence,
                     additional,
@@ -413,7 +418,7 @@ impl RetirementOwners {
                         assets: failure.assets,
                         stage,
                         worker_report: worker_report_evidence,
-                        setup_receiver: None,
+                        setup_receiver: worker_setup_receiver,
                         setup: worker_setup_delivery,
                     },
                     inputs: PilotOwnerInputs {

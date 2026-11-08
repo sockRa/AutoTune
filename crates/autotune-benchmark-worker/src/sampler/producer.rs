@@ -1090,7 +1090,7 @@ pub fn raw_events_with_worker(
         {
             return Err(WireError::Capacity);
         }
-        append_worker_events(output, Some(setup), worker)
+        append_worker_events(output, Some(setup), None, worker)
     })
 }
 
@@ -1370,13 +1370,21 @@ pub fn raw_events_with_parent_sampler(
 pub fn raw_events_with_parent_sampler_and_worker(
     parent: &crate::workload::parent_sampler::ParentSampler,
     setup: Option<&crate::workload::worker_setup_delivery::ReadyDelivery>,
+    partial_setup: Option<&crate::workload::worker_setup_delivery::Receiver>,
     worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
     budget: &Budget,
 ) -> Result<BoundText, WireError> {
     let binding = worker.binding();
     if parent.binding() != binding
+        || (setup.is_some() && partial_setup.is_some())
         || setup.is_some_and(|setup| {
             setup.receipt().binding() != binding || setup.origin().ok() != Some(worker.origin())
+        })
+        || partial_setup.is_some_and(|setup| {
+            setup.binding() != binding
+                || setup
+                    .packets()
+                    .any(|packet| packet.raw().origin() != Some(worker.origin()))
         })
     {
         return Err(WireError::Binding);
@@ -1417,7 +1425,7 @@ pub fn raw_events_with_parent_sampler_and_worker(
         storage,
         budget: budget.clone(),
     };
-    append_worker_events(&mut output, setup, worker)?;
+    append_worker_events(&mut output, setup, partial_setup, worker)?;
     Ok(output.finish())
 }
 
@@ -1469,10 +1477,83 @@ pub fn append_pilot_owner_artifacts<E>(
         .and_then(|n| n.checked_add(7 * 4096))
         .and_then(|n| n.checked_add(64 * 1024))
         .and_then(|n| n.checked_add(crate::workload::consent::CAP * 16))
+        .and_then(|n| {
+            n.checked_add(if owners.worker_setup_receiver.is_some() {
+                4096
+            } else {
+                0
+            })
+        })
         .ok_or(WireError::Capacity)?;
     let _scratch = budget
         .reserve(scratch_bytes)
         .map_err(|_| WireError::Capacity)?;
+    let partial_setup = owners.worker_setup_receiver.as_ref().map(|setup| {
+        object([
+            ("version", Value::Text("worker-setup-partial-v1".into())),
+            ("deadline_raw", Value::U64(setup.deadline_raw())),
+            ("received_chunks", Value::U64(setup.received().into())),
+            ("payload_bytes", Value::U64(setup.payload().len() as u64)),
+            (
+                "expected",
+                setup
+                    .expected()
+                    .map_or(Value::Null, |(digest, total, count)| {
+                        object([
+                            ("digest", Value::Text(digest.to_hex())),
+                            ("total_bytes", Value::U64(total.into())),
+                            ("chunk_count", Value::U64(count.into())),
+                        ])
+                    }),
+            ),
+            (
+                "fault",
+                setup
+                    .fault()
+                    .map_or(Value::Null, |fault| Value::Text(format!("{fault:?}"))),
+            ),
+            (
+                "transport",
+                setup.transport().map_or(Value::Null, |(code, anchor)| {
+                    object([
+                        (
+                            "os_code",
+                            code.map_or(Value::Null, |code| Value::I64(code.into())),
+                        ),
+                        ("anchor", anchor.map_or(Value::Null, anchor_value)),
+                    ])
+                }),
+            ),
+            ("arrival_count", Value::U64(setup.arrivals().len() as u64)),
+        ])
+        .to_canonical()
+    });
+    let sources: [(&str, Option<&[u8]>); 6] = [
+        ("starting_handoff", starting_handoff),
+        (
+            "consent_request",
+            Some(owners.starting_consent.request().canonical().as_bytes()),
+        ),
+        (
+            "starting_read",
+            Some(owners.starting_read.canonical().as_bytes()),
+        ),
+        (
+            "host_environment",
+            Some(owners.host_environment.snapshot().canonical().as_bytes()),
+        ),
+        (
+            "worker_setup",
+            owners
+                .worker_setup_delivery
+                .as_ref()
+                .map(|setup| setup.receipt().canonical().as_bytes()),
+        ),
+        (
+            "worker_setup_partial",
+            partial_setup.as_deref().map(str::as_bytes),
+        ),
+    ];
     let consent_capture = owners.starting_consent.raw_evidence_value().to_canonical();
     let BoundText {
         text,
@@ -2336,16 +2417,31 @@ where
 fn append_worker_events(
     output: &mut RawBuilder,
     setup: Option<&crate::workload::worker_setup_delivery::ReadyDelivery>,
+    partial_setup: Option<&crate::workload::worker_setup_delivery::Receiver>,
     worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
 ) -> Result<(), WireError> {
     let binding = worker.binding();
-    if setup.is_some_and(|setup| {
-        setup.receipt().binding() != binding || setup.origin().ok() != Some(worker.origin())
-    }) {
+    if (setup.is_some() && partial_setup.is_some())
+        || setup.is_some_and(|setup| {
+            setup.receipt().binding() != binding || setup.origin().ok() != Some(worker.origin())
+        })
+        || partial_setup.is_some_and(|setup| {
+            setup.binding() != binding
+                || setup
+                    .packets()
+                    .any(|packet| packet.raw().origin() != Some(worker.origin()))
+        })
+    {
         return Err(WireError::Binding);
     }
-    let setup_packet_count = setup.map_or(0, |setup| setup.packets().count());
-    let mut setup_packets = setup.into_iter().flat_map(|setup| setup.packets());
+    let setup_packet_count = setup
+        .map_or(0, |setup| setup.packets().count())
+        .checked_add(partial_setup.map_or(0, |setup| setup.packets().count()))
+        .ok_or(WireError::Capacity)?;
+    let mut setup_packets = setup
+        .into_iter()
+        .flat_map(|setup| setup.packets())
+        .chain(partial_setup.into_iter().flat_map(|setup| setup.packets()));
     let mut result_packets = worker.result_packets().iter();
     let mut control_packets = worker.control_packets().iter();
     let mut ordinary_packet_index = 0usize;
@@ -2382,6 +2478,9 @@ fn append_worker_events(
                 packet.raw().packet().bytes(),
             ) == digest
         });
+        if packet_matches == Some(false) {
+            return Err(WireError::Body);
+        }
         let line = object([
             ("stream", Value::Text("worker_poll".into())),
             ("sequence", Value::U64(event.ordinal.into())),

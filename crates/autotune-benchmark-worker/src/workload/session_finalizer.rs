@@ -40,6 +40,8 @@ pub struct PilotOwners<E> {
     pub starting_read: super::starting_read::Receipt,
     pub starting_evidence: super::starting::ReportedSnapshot,
     pub host_environment: super::host_environment::Reported,
+    /// Incomplete strict setup receiver retained only for failed-session export.
+    pub worker_setup_receiver: Option<super::worker_setup_delivery::Receiver>,
     pub worker_setup_delivery: Option<super::worker_setup_delivery::ReadyDelivery>,
     pub worker_report_evidence: super::parent_worker_channel::WorkerReportEvidence,
     pub additional: E,
@@ -106,6 +108,7 @@ impl<E> PilotOwners<E> {
             || self.starting_evidence.snapshot().digest() != manifest.starting_evidence
             || self.host_environment.snapshot().scope().digest() != self.scope.digest()
             || self.host_environment.snapshot().digest() != manifest.environment_evidence
+            || self.worker_setup_receiver.is_some()
             || self.starting_consent.request().scope() != self.scope.digest()
             || self.starting_consent.result().is_err()
             || self.starting_consent.capture_ref() != start_origin.consent()
@@ -258,6 +261,7 @@ impl<E> Finalized<PilotOwners<E>> {
             let raw = crate::sampler::producer::raw_events_with_parent_sampler_and_worker(
                 parent,
                 evidence.worker_setup_delivery.as_ref(),
+                evidence.worker_setup_receiver.as_ref(),
                 &evidence.worker_report_evidence,
                 budget,
             )
