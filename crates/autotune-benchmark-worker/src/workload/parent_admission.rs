@@ -592,7 +592,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
     ) -> Result<Self, AdmissionStartFailure<'a, 's, 'w>> {
         let mut admission = match Self::new_unwatched(sampler, worker, starting, setup_receiver) {
             Ok(admission) => admission,
-            Err(failure) if failure.fault == InitFault::MissingSetupReceiver => {
+            Err(failure) => {
                 let InitFailure {
                     fault,
                     setup,
@@ -600,6 +600,19 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
                     sampler,
                     worker,
                 } = failure;
+                if fault == InitFault::SamplerAlreadyFaulted {
+                    let mut failure = InitFailure {
+                        fault,
+                        setup,
+                        starting_launch,
+                        sampler,
+                        worker,
+                    };
+                    failure.sampler.abort_for_parent_fault(None);
+                    failure.worker.abort_for_parent_fault();
+                    return Err(AdmissionStartFailure::Initialization(failure));
+                }
+
                 let mut admission = Self {
                     sampler,
                     worker,
@@ -619,11 +632,6 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
                 admission.sampler.abort_for_parent_fault(None);
                 admission.worker.abort_for_parent_fault();
                 return Err(AdmissionStartFailure::SupervisedInitialization { fault, admission });
-            }
-            Err(mut failure) => {
-                failure.sampler.abort_for_parent_fault(None);
-                failure.worker.abort_for_parent_fault();
-                return Err(AdmissionStartFailure::Initialization(failure));
             }
         };
         if let Err(fault) = admission.start_safety_watch_early(clock, budget) {
