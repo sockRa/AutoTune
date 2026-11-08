@@ -1528,3 +1528,12 @@ composition are still required before a runnable benchmark can be claimed.
   controller acknowledgment, complete session composition, native authority or
   GPU qualification. Full session orchestration and remaining deadline/timing
   coverage stay open; E3 partial and Gate B unmet.
+- 2026-11-08 E3 session finalizer source: added a nonblocking owner around the
+  fixed retirement collector. Caller evidence remains retained with all original
+  retirement assets; each poll joins controller/request handles only after
+  observing completion and returns collector, controller and lane failures without
+  erasure. Cancellation remains available through an independent control
+  reference. Static ownership/order review only in this entry; no new tests,
+  compile or runtime checks were run. Concrete starting-read/artifact/consent
+  ownership, fixed main, blocked-query deadlines, native issuance and
+  qualification remain open. E3 partial; Gate B unmet.

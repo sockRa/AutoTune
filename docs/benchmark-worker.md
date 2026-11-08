@@ -2880,6 +2880,32 @@ retired io result is NotConnected, not fabricated pending/native success. These
 rules close the race between final exit assessment and a force call by another
 original owner. Observed exit still cannot authorize another GPU run.
 
+## Session finalizer for retained retirement assets — 2026-11-08
+
+`workload::session_finalizer::SessionFinalizer<E>` is a caller-owned,
+nonblocking drain around the fixed retirement collector. It retains one opaque
+caller evidence owner `E` (whose own reservations live with it) alongside the
+collector assets. After final observation completes, each poll checks the
+controller's four request-lane handles and controller thread, joining only
+handles already reported finished. The terminal `Finalized<E>` retains the
+collector outcome, original assets, caller evidence, controller report/error,
+joined per-lane results and whether retirement was acknowledged. Collection,
+controller, or lane failure remains visible; `complete()` is true only for
+successful collection/frame, acknowledged retirement, a successful controller
+report and successful joined operations. Request cancellation works through the
+independent controller reference before or after collection.
+
+This type does not yet assemble a concrete owner tuple for starting reception,
+starting-read receipt, output/artifact, consent and the two workload processes,
+or invoke a fixed parent main. The caller must pass those owners as `E` and
+preserve the original process/authorization semantics. A never-returning final
+OS observation or controller operation can keep polling pending indefinitely;
+pending-query/phase/native-call deadlines and qualification of actual request
+timing remain open. Even `complete()` says only that the host retirement path
+was acknowledged and its retained controller operations joined. It does not
+establish GPU quiescence, physical release, workload correctness, profile
+acceptance, repeat permission or native authority.
+
 ## Retained asynchronous retirement collector — 2026-11-08
 
 `workload::retirement_collector::Collector` moves one final host-retirement
