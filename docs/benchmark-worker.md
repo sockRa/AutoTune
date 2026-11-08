@@ -1242,6 +1242,18 @@ Rust 1.99.1 formatting and warning-denied all-target/all-feature Clippy and
 native entry or GPU execution were run; these source checks grant no execution
 authority.
 
+`workload::parent_sampler_channel::ParentSamplerChannel` is the matching
+Windows adapter for the sampler. Its constructor validates the retained
+sampler declaration through `ParentSampler::for_process` and takes that exact
+process's unique sender. Each `poll` binds inbound receipt assessment and
+outbound settings/query/stop traffic to those same process and sender owners;
+`finish` uses the same sender. This closes the easy-to-miswire seam where a
+caller could pair one sampler's inbound process with another process's sender.
+The adapter does not launch the process, start the independent controller,
+prove peer truth, grant the worker, or qualify a live sample. It does not split
+the control reader for a concurrent controller; full fixed-parent orchestration
+must still coordinate that ownership and the remaining session roles.
+
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing
 strict settings or sampler parser; it cannot authorize it. Telemetry may support
