@@ -83,6 +83,13 @@ impl<E> PilotOwners<E> {
             .worker_report_evidence
             .control_audit()
             .is_some_and(|audit| audit.role_finished() && audit.fault().is_none());
+        let starting_launch_accepted = self.starting_launch.polls > 0
+            && self.starting_launch.elapsed_ns.is_some()
+            && !self.starting_launch.deadline_exceeded
+            && self.starting_launch.clock_capture_error.is_none()
+            && !self.starting_launch.clock_domain_fault
+            && self.starting_launch.stop_request.is_none()
+            && self.starting_launch.termination_request.is_none();
         if scope.session != manifest.session
             || scope.clock_token != manifest.clock_token
             || scope.raw_uuid != manifest.raw_uuid
@@ -92,6 +99,7 @@ impl<E> PilotOwners<E> {
             || starting_declaration.scope_digest() != self.scope.digest()
             || self.starting_read.scope_digest() != self.scope.digest()
             || self.starting_read.declaration() != starting_declaration.tag()
+            || !starting_launch_accepted
             || self
                 .starting_read
                 .snapshot()

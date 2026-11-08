@@ -3174,7 +3174,11 @@ the collector it checks fixed manifest/scope identity, starting declaration and
 response digest, original consent/process provenance, pre-manifest/environment
 artifact digests, worker setup binding/delivery, parent cross-artifact reference
 record (including the starting response's separately reported settings snapshot)
-and all three peer origins. It also requires a queued successful Start, accepted
+and all three peer origins. The original-epoch `starting_launch` facts must
+include at least one launch poll and an elapsed observation, with no deadline,
+clock-domain/capture fault, Stop request or termination request; a late or
+uncertain process launch therefore cannot pass finalizer binding. It also
+requires a queued successful Start, accepted
 RoleFinished/parent stop and matching planned controller window, no prior parent
 or controller fault, and no existing retirement. These checks bind retained reports to one
 session; they do not prove source truth, and no fixed main constructs this bundle
