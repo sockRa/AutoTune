@@ -42,6 +42,8 @@ pub mod sampler_entry;
 #[cfg(windows)]
 mod sampler_native;
 pub mod sampler_runtime;
+#[cfg(windows)]
+pub mod session_finalizer;
 pub mod settings;
 pub mod settings_transport;
 pub mod setup_model;
