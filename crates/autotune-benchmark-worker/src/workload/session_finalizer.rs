@@ -5,6 +5,12 @@ use super::{
     retirement_collector::{Assets, Collector, Fault as CollectorFault, Outcome},
 };
 use crate::sampler::budget::Budget;
+use crate::sampler::{
+    archive::{Artifact, Receipt as ArchiveReceipt},
+    producer::BoundText,
+    writer::Writer,
+};
+use std::io;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StartFault {
@@ -190,6 +196,70 @@ impl<E> Finalized<PilotOwners<E>> {
                 .assessment_fault()
                 .is_none()
             && !self.evidence.worker_report_evidence.overflowed()
+    }
+
+    /// Queue raw/session leaves and retain every finalizer and source-text owner
+    /// by borrow until the asynchronous workload writer has actually stopped.
+    /// The writer must have been created with `Writer::start_pilot_workload`.
+    pub fn queue_workload_archive<'a>(
+        &'a self,
+        writer: &'a mut Writer,
+        raw: &'a BoundText,
+        session: &'a BoundText,
+        budget: &Budget,
+    ) -> io::Result<PilotArchivePending<'a, E>> {
+        let raw_copy = BoundText::copy(raw, budget)
+            .map_err(|_| io::Error::other("workload raw evidence capacity"))?;
+        writer.enqueue(Artifact::Raw, raw_copy)?;
+        let session_copy = BoundText::copy(session, budget)
+            .map_err(|_| io::Error::other("workload session evidence capacity"))?;
+        writer.enqueue_pilot_session(&self.evidence.manifest, session_copy)?;
+        writer.finish_pilot_workload(&self.evidence.manifest, session)?;
+        Ok(PilotArchivePending {
+            _finalized: self,
+            _raw: raw,
+            _session: session,
+            writer,
+            result: None,
+            terminal: false,
+        })
+    }
+}
+
+/// Owns the borrows needed to keep finalized process/consent/evidence state and
+/// source buffers alive until the archive writer has returned. Polling is
+/// nonblocking; an unfinished writer remains pending, even after an error has
+/// arrived, until its retained thread handle is signalled finished.
+#[must_use = "retain this handle and poll it until the writer has finished"]
+pub struct PilotArchivePending<'a, E> {
+    _finalized: &'a Finalized<PilotOwners<E>>,
+    _raw: &'a BoundText,
+    _session: &'a BoundText,
+    writer: &'a mut Writer,
+    result: Option<Result<ArchiveReceipt, crate::sampler::writer::Failure>>,
+    terminal: bool,
+}
+impl<E> PilotArchivePending<'_, E> {
+    pub fn poll(&mut self) -> Option<Result<ArchiveReceipt, crate::sampler::writer::Failure>> {
+        if self.terminal {
+            return None;
+        }
+        if self.result.is_none() {
+            self.result = self.writer.poll();
+        }
+        if !self.writer.thread_finished() {
+            return None;
+        }
+        self.terminal = true;
+        Some(
+            self.result
+                .take()
+                .unwrap_or(Err(crate::sampler::writer::Failure {
+                    operation: "writer_exit_without_result",
+                    os_code: None,
+                    kind: io::ErrorKind::BrokenPipe,
+                })),
+        )
     }
 }
 
