@@ -1261,6 +1261,13 @@ must still coordinate that ownership and the remaining session roles. After
 polling/finish, `into_parent` drops the borrowing sender and transfers the
 accumulated parent state so the caller can move the same sampler process into
 `retirement_collector::Assets`; it does not certify that shutdown completed.
+`start_and_attach_watch` requires successful retained environment, starting,
+context, peer and consent checks before claiming the sampler/worker stop owners,
+starting `parent_watch_windows::Handle`, and attaching its publisher. If worker
+owner acquisition fails, the sampler stop owner stays in the returned fault;
+controller construction and attach failures likewise retain their partial
+owners/handle. Watch readiness remains a later poll before Start, and this method
+does not launch processes or authorize native execution.
 
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing

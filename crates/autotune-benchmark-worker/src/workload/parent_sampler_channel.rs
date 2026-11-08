@@ -8,14 +8,30 @@ use super::{
     windows_process::{Process, ProcessQueue},
 };
 use crate::{
-    monitor::Anchor,
+    monitor::{windows_clock::WindowsClock, Anchor},
     sampler::budget::Budget,
     workload::{manifest::BoundRun, transport::Sender},
 };
+use std::io;
 
 pub enum InitFault {
     Parent(parent_sampler::Fault),
     Sender(crate::workload::transport::SendFailure),
+}
+
+#[allow(clippy::large_enum_variant)] // Keep original stop/controller owners inline on failure.
+pub enum ControllerStartFault {
+    Parent(parent_sampler::Fault),
+    SamplerStopOwner(io::Error),
+    WorkerStopOwner {
+        sampler: super::windows_process::StopOwner,
+        error: io::Error,
+    },
+    Controller(super::parent_watch_windows::StartFailure),
+    Attach {
+        handle: super::parent_watch_windows::Handle,
+        fault: super::parent_watch::Fault,
+    },
 }
 
 /// Owns the sampler protocol state and the unique sender from one process.
@@ -70,6 +86,72 @@ impl<'a> ParentSamplerChannel<'a> {
             });
         }
         self.parent.verify_reported_preflight(input)
+    }
+
+    /// Start and attach the independent controller only after every retained
+    /// reported preflight result succeeded. Original process owners and any
+    /// partial controller remain in the error value on construction failure.
+    #[allow(clippy::result_large_err)] // Return original OS/controller owners without allocating.
+    pub fn start_and_attach_watch(
+        &mut self,
+        worker: &Process,
+        clock: &WindowsClock,
+        budget: &Budget,
+    ) -> Result<super::parent_watch_windows::Handle, ControllerStartFault> {
+        let parent_fault = self.parent.fault();
+        if let Some(fault) = parent_fault {
+            return Err(ControllerStartFault::Parent(fault));
+        }
+        if !self
+            .parent
+            .environment_check()
+            .is_some_and(|(_, result)| result.is_ok())
+            || !self
+                .parent
+                .starting_check()
+                .is_some_and(|(_, result)| result.is_ok())
+            || !self
+                .parent
+                .context_check()
+                .is_some_and(|record| record.result.is_ok())
+            || !self
+                .parent
+                .peer_check()
+                .is_some_and(|record| record.result.is_ok())
+            || !self
+                .parent
+                .consent()
+                .is_some_and(|delivery| delivery.assessment.result.is_ok())
+        {
+            return Err(ControllerStartFault::Parent(parent_sampler::Fault::Context));
+        }
+
+        let sampler_owner = self
+            .process
+            .stop_owner(budget)
+            .map_err(ControllerStartFault::SamplerStopOwner)?;
+        let worker_owner = match worker.stop_owner(budget) {
+            Ok(owner) => owner,
+            Err(error) => {
+                return Err(ControllerStartFault::WorkerStopOwner {
+                    sampler: sampler_owner,
+                    error,
+                })
+            }
+        };
+        let handle = match super::parent_watch_windows::Handle::start(
+            &self.parent,
+            [sampler_owner, worker_owner],
+            clock,
+            budget.clone(),
+        ) {
+            Ok(handle) => handle,
+            Err(failure) => return Err(ControllerStartFault::Controller(failure)),
+        };
+        match self.parent.attach_watch(&handle) {
+            Ok(()) => Ok(handle),
+            Err(fault) => Err(ControllerStartFault::Attach { handle, fault }),
+        }
     }
 
     /// Performs one nonblocking process poll and any resulting bounded query
