@@ -89,6 +89,10 @@ pub struct BoundRun<'a> {
     plan: RunPlan,
 }
 impl PilotManifest {
+    pub fn manifest_draft(&self) -> &PilotDraft {
+        &self.draft
+    }
+
     pub fn freeze(draft: PilotDraft, budget: &Budget) -> Result<Self, Error> {
         let strings = [
             &draft.raw_uuid,

@@ -1,12 +1,11 @@
 //! Actual fixed-role entry composition. The feature-gated fixed worker binary
-//! calls it with a reject-only admission callback until a parent grant issuer
-//! exists.
+//! issues NativeAdmission only from the retained, setup-bound parent grant.
 use super::{
     bootstrap::EntryClock,
     child_windows::{Context, Failure as StartupFailure},
     control_windows::{Handle, Report},
     launch::{Arguments, Role},
-    producer::{End, NativeAdmission},
+    producer::End,
     transport::WorkerReceived,
     wire::Direction,
     worker_finish::{ClockChain, Fault as FinishFault, State as Finish},
@@ -135,16 +134,10 @@ pub struct Failure {
 /// inherited endpoints. Exact native setup/manifest/device/artifact consent and
 /// independent supervision are prerequisites. A distinct post-Start
 /// NativeGrant must match the setup artifact and original deadline before
-/// `admit` is called. The callback must validate the complete parent
-/// facts/consent/safety chain; bootstrap/Ready/Start cannot issue a token.
-/// NativeAdmission deliberately still has no issuer; the fixed main rejects
-/// until one is implemented.
-pub unsafe fn entry<
-    A: FnOnce(&NativeSession, &super::worker_setup::Artifact) -> Result<NativeAdmission, Reason>,
->(
-    args: &Arguments,
-    admit: A,
-) -> Result<Outcome, Failure> {
+/// the entry issues NativeAdmission from the exact accepted grant and worker
+/// setup artifact. The fixed parent sender validates the complete parent
+/// facts/consent/safety chain; fixtures and bootstrap/Ready/Start cannot issue it.
+pub unsafe fn entry(args: &Arguments) -> Result<Outcome, Failure> {
     let p = autotune_fma_reference::profile::Profile::approved_design().limits;
     let budget = Budget::new(p.evidence_ram_bytes as usize).map_err(|_| Failure {
         fault: Fault::Capacity,
@@ -236,15 +229,10 @@ pub unsafe fn entry<
         io_receipt: None,
         _metadata: metadata,
     };
-    run(&mut out, admit);
+    run(&mut out);
     Ok(out)
 }
-fn run<
-    A: FnOnce(&NativeSession, &super::worker_setup::Artifact) -> Result<NativeAdmission, Reason>,
->(
-    out: &mut Outcome,
-    admit: A,
-) {
+fn run(out: &mut Outcome) {
     let captures = out.captures.clone();
     let (bootstrap, port, _, event, budget) = out.context.parts();
     let binding = bootstrap.binding();
@@ -383,15 +371,15 @@ fn run<
                 thread::sleep(Duration::from_nanos(p.controller_tick_ns));
             }
         }
-        let admission = match admit(
-            session,
+        let admission = match session.native_admission(
             out.setup_report
                 .as_ref()
                 .expect("setup report before Ready"),
         ) {
             Ok(v) => v,
-            Err(reason) => {
-                out.admission_rejection = Some(reason);
+            Err(_) => {
+                out.admission_rejection =
+                    Some(Reason::new("native_grant_rejected").expect("fixed reason"));
                 return Err(Fault::Admission);
             }
         };
@@ -594,12 +582,8 @@ fn run<
 mod tests {
     use super::*;
     #[test]
-    fn full_generic_entry_is_monomorphized_and_linked_without_invocation() {
-        type Admit = fn(
-            &NativeSession,
-            &super::super::worker_setup::Artifact,
-        ) -> Result<NativeAdmission, Reason>;
-        let pointer: unsafe fn(&Arguments, Admit) -> Result<Outcome, Failure> = entry::<Admit>;
+    fn full_fixed_entry_is_monomorphized_and_linked_without_invocation() {
+        let pointer: unsafe fn(&Arguments) -> Result<Outcome, Failure> = entry;
         // Force code generation of the complete real entry. Never call the
         // pointer: this test performs no adoption, thread/DLL load or GPU work.
         std::hint::black_box(pointer);

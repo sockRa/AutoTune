@@ -30,6 +30,8 @@ pub mod parent_watch_publication;
 pub mod parent_watch_retirement;
 #[cfg(windows)]
 pub mod parent_watch_windows;
+#[cfg(windows)]
+pub mod parent_worker_channel;
 pub mod prestart;
 pub mod process_state;
 pub mod producer;

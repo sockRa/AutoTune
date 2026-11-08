@@ -1,8 +1,8 @@
 //! Retain session evidence until retirement and every owned control thread end.
 //! Polling is nonblocking; it joins only handles already observed finished.
 use super::{
-    parent_watch_windows::{self, Report},
-    retirement_collector::{self, Assets, Collector, Fault as CollectorFault, Outcome},
+    parent_watch_windows::Report,
+    retirement_collector::{Assets, Collector, Fault as CollectorFault, Outcome},
 };
 use crate::sampler::budget::Budget;
 
@@ -88,7 +88,7 @@ impl<E> PilotOwners<E> {
             || self.starting_evidence.snapshot().digest() != manifest.starting_evidence
             || self.host_environment.snapshot().scope().digest() != self.scope.digest()
             || self.host_environment.snapshot().digest() != manifest.environment_evidence
-            || self.starting_consent.scope() != self.scope.digest()
+            || self.starting_consent.request().scope() != self.scope.digest()
             || self.starting_consent.result().is_err()
             || self.starting_consent.capture_ref() != start_origin.consent()
             || self.starting_handoff.session.origin().ok() != Some(start_origin)
@@ -136,9 +136,9 @@ impl<E> PilotOwners<E> {
 pub struct Finalized<E> {
     pub retirement: Outcome,
     pub evidence: E,
-    pub controller: Result<Report, parent_watch_windows::Fault>,
+    pub controller: Result<Report, super::parent_watch::Fault>,
     /// Results for operations which were actually started and joined.
-    pub operations: [Option<Result<(), parent_watch_windows::Fault>>; 4],
+    pub operations: [Option<Result<(), super::parent_watch::Fault>>; 4],
     pub retirement_acknowledged: bool,
 }
 impl<E> Finalized<E> {
@@ -172,11 +172,12 @@ pub struct SessionFinalizer<E> {
     collector: Option<Collector>,
     retirement: Option<Outcome>,
     evidence: Option<E>,
-    controller: Option<Result<Report, parent_watch_windows::Fault>>,
+    controller: Option<Result<Report, super::parent_watch::Fault>>,
 }
 impl<E> SessionFinalizer<E> {
     /// `evidence` is the caller's owned starting-read/artifact/session record;
     /// all of its own budget reservations remain alive in that value.
+    #[allow(clippy::result_large_err)] // Failure returns all original assets/evidence without allocating.
     pub fn start(assets: Assets, evidence: E, budget: &Budget) -> Result<Self, StartFailure<E>> {
         match Collector::start(assets, budget) {
             Ok(collector) => Ok(Self {
@@ -196,6 +197,7 @@ impl<E> SessionFinalizer<E> {
     /// Typed construction path for the three-role pilot. The sampler and
     /// worker process/control owners stay in `Assets`; the original starting
     /// process/reception/consent and parsed artifacts stay in `PilotOwners`.
+    #[allow(clippy::result_large_err)] // Failure returns all original assets/evidence without allocating.
     pub fn start_pilot<X>(
         assets: Assets,
         evidence: PilotOwners<X>,

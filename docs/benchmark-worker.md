@@ -1132,12 +1132,14 @@ Manifest `target/workload-verification/pilot-telemetry-final-manifest.json`, SHA
 No independent-agent review is claimed. The actual Windows pipe/NVML path is
 compiled/linked only; no process, native runtime or GPU execution occurred.
 
-The fixed sampler entry and the feature-gated, reject-only worker target exist
-in source. Parent executable orchestration, complete parent
-fact/safety/re-entry/consent composition, the worker native-admission issuer
-and aggregate live export remain unfinished. Parent monitor timing across runs
-must preserve the original epoch and session ceiling. E3 remains partial and
-Gate B unmet; this is not a useful baseline or an automatic optimization
+The fixed sampler entry and feature-gated worker target exist in source. The
+worker now constructs a one-shot `NativeAdmission` from its retained accepted
+grant and exact setup artifact. ParentSampler source checks and queues the
+matching grant, but no fixed parent executable composes these paths. Parent
+orchestration, aggregate live export, independent local source truth, and real
+Windows/native qualification remain unfinished. Parent monitor timing across
+runs must preserve the original epoch and session ceiling. E3 remains partial
+and Gate B unmet; this is not a useful baseline or an automatic optimization
 delivery.
 
 ## Fixed pilot sampler entry
@@ -1156,14 +1158,23 @@ The `autotune-pilot-worker` binary target is now declared behind the explicit
 `native-cuda` feature and routes only the fixed Worker role to
 `worker_entry::entry`. After the accepted Start, the worker now requires one
 separate ordinary-channel `NativeGrant`, bound to its exact setup artifact and
-received within the original setup deadline; its issue anchor must follow Start
-receipt. It retains that grant packet separately, and `start_native` refuses to
-run without it. The binary's callback still rejects with
-`parent_grant_unavailable`, because no parent grant issuer/sender exists yet.
-The grant's context/peer/consent/process/safety digests are references, not
-proof that the parent checked them correctly. Cargo metadata confirms the
-target is gated by `native-cuda`; formatting and `git diff --check` pass. The
-binary and native path have not been built or executed in this checkpoint.
+received within both the original setup deadline and the approved observation
+gap after issuance; its issue anchor must follow Start receipt. It retains that
+grant packet separately, and `start_native` refuses to run without it.
+The worker session's internal `native_admission` step issues the local token at
+most once and only from the retained accepted grant and exact completed setup
+artifact; the token is rechecked against every retained grant field before
+Start. The fixed worker entry uses that method only after receiving through the
+inherited transport; fixture packet APIs cannot issue the token. Its digest-only
+fields rely on the fixed parent sender to check source facts; they do not
+independently prove those facts in the child.
+The context/peer/consent/process/safety digests identify parent assertions; the
+worker cannot reconstruct the source records from hashes alone. The target's
+`native-cuda` feature gate was confirmed in the earlier worker-entry checkpoint.
+For this source set, Rust 1.99.1 formatting, warning-denied all-target/all-feature
+Clippy and all-feature `cargo check` pass for `x86_64-pc-windows-gnu` and
+`x86_64-unknown-linux-gnu`. No tests were run, and the binary/native path has
+not been executed.
 
 `ParentSampler::observe_native_grant_processes` now performs a separate fresh
 observation of the retained starting, sampler and worker process owners after a
@@ -1172,7 +1183,49 @@ the original Windows clock, requires the bound context/peer/consent chain,
 reported safety/re-entry and controller-watch readiness before and after, and
 retains a distinct frame. A prior `process_frame` remains historical and cannot
 substitute. This method runs on its caller, outside the independent controller
-deadline path. It does not yet derive the grant references or send a grant.
+deadline path. `native_grant_commitments` derives canonical digests for the
+retained setup reference, successful environment and starting-setting checks,
+exact selected starting values, parent context references, received peer
+records, interactive consent capture references, fresh retained-handle process
+frame, and bracketing safety/re-entry observations. Digest construction
+reserves bounded temporary budget before allocating canonical objects. It also
+requires the host and starting artifact digests to match the accepted context
+references. It
+fails closed if Start, required facts, context, peer, consent, process,
+controller-watch, or original-deadline evidence is missing or unsuccessful.
+The digests bind locally retained records; they do not
+attest that reported data is true. `queue_native_grant` captures and checks a
+new issue-time parent observation, requires both the retained process frame and
+the pre-send observation to be within the approved observation-gap bound,
+binds issue-time safety into the commitment, and queues at most one exact frame
+on the original Start sequence. Rejected or
+uncertain sends retain the frame and poison that channel; a successful queue
+does not prove child receipt. The worker token is accepted only after the
+child's own grant/setup/chronology/freshness checks. No fixed parent main yet
+composes this sender, so an end-to-end native session is still unavailable.
+`collect_and_queue_native_grant` composes the process re-observation and
+one-shot queue handoff so a caller cannot accidentally use an older frame.
+Because those OS queries may block, invoke it only on a retained collector lane
+outside the independent deadline controller.
+
+`workload::parent_worker_channel::ParentWorkerChannel` is a Windows-only
+composition adapter for the concrete process boundary. It takes the worker's
+unique `Process::sender` once, constructs each `process_state::Processes`
+observation with that same retained worker, and routes both `queue_start` and
+`collect_and_queue_native_grant` through the same sender value. This prevents a
+caller from accidentally restarting the sequence or pairing those process
+observations with another worker owner through this adapter. Its nonblocking
+`poll_setup` reads one stamped packet from that same process owner, advances
+the setup receiver's original deadline on idle polls, and transfers the
+`ReadyDelivery` only after the strict response and Ready are both present; the
+caller retains the receiver and its raw failure evidence on every rejection.
+It still does not launch the starting/sampler/worker processes, gather the
+required artifacts or consents, create the controller, handle worker/sampler
+receipts, export an aggregate live session, or construct a fixed parent main.
+Rust 1.99.1 formatting and warning-denied all-target/all-feature Clippy and
+`cargo check` now pass on Windows GNU and Linux targets. No tests, process calls,
+native entry or GPU execution were run; these source checks grant no execution
+authority.
 
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing

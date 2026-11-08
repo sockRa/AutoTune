@@ -172,13 +172,13 @@ pub struct Report {
 /// handle/controller has gone. This wrapper owns no OS control capability.
 pub struct Pending<T> {
     receiver: Receiver<T>,
+    pending_count: Arc<AtomicUsize>,
     _allocation: Arc<Reservation>,
 }
 impl<T> Pending<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        self.receiver.try_recv().map(|value| {
+        self.receiver.try_recv().inspect(|_| {
             self.pending_count.fetch_sub(1, Ordering::AcqRel);
-            value
         })
     }
     pub fn is_empty(&self) -> bool {

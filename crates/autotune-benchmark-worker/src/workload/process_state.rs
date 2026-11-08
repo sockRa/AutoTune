@@ -1,6 +1,8 @@
 //! Timestamped retained-handle observations, never a reusable Start/native token.
 use super::launch_origin::{Kind, Origin};
 pub use super::starting_export::ClockFault;
+#[cfg(windows)]
+use crate::evidence::{Digest, Domain, Value};
 use crate::{
     monitor::{
         clock::{Clock, ClockError},
@@ -407,6 +409,270 @@ pub struct Frame {
     pub checks: [Result<(), Fault>; 3],
     pub clock_result: Result<(), Fault>,
     pub result: Result<(), Fault>,
+}
+impl Frame {
+    /// Commit the exact successful retained-handle observations for a parent
+    /// grant. Failed/fixture frames have no commitment eligible for issuance.
+    #[cfg(windows)]
+    pub(super) fn native_grant_commitment(&self) -> Option<Digest> {
+        if self.result.is_err()
+            || self.clock_result.is_err()
+            || self.checks.iter().any(Result::is_err)
+            || self.before_error.is_some()
+            || self.after_error.is_some()
+            || self.before.is_none()
+            || self.after.is_none()
+            || self.snapshots.iter().any(Option::is_none)
+        {
+            return None;
+        }
+        let snapshots = self
+            .snapshots
+            .map(|snapshot| snapshot.as_ref().and_then(Snapshot::native_grant_value));
+        if snapshots.iter().any(Option::is_none) {
+            return None;
+        }
+        let binding = self.window.binding;
+        let payload = object([
+            ("frequency", Value::U64(binding.qpc_frequency)),
+            ("session", Value::Text(hex(&binding.session))),
+            ("run", Value::Text(hex(&binding.run))),
+            ("device_uuid", Value::Text(hex(&binding.device.uuid))),
+            ("device_domain", Value::U64(binding.device.domain.into())),
+            ("device_bus", Value::U64(binding.device.bus.into())),
+            ("device_number", Value::U64(binding.device.device.into())),
+            ("epoch", anchor_value(self.window.epoch)),
+            ("deadline_ns", Value::U64(self.window.deadline_ns)),
+            ("clock_frequency", Value::U64(self.observed_clock.0)),
+            ("clock_token", Value::Text(hex(&self.observed_clock.1))),
+            (
+                "before",
+                anchor_value(self.before.expect("checked before anchor")),
+            ),
+            (
+                "after",
+                anchor_value(self.after.expect("checked after anchor")),
+            ),
+            (
+                "snapshots",
+                Value::Array(
+                    snapshots
+                        .into_iter()
+                        .map(|value| value.expect("checked snapshot"))
+                        .collect(),
+                ),
+            ),
+        ]);
+        Some(Digest::of_value(Domain::RawArtifact, &payload))
+    }
+}
+impl Snapshot {
+    #[cfg(windows)]
+    fn native_grant_value(&self) -> Option<Value> {
+        if self.fault.is_some()
+            || self.capture_error.is_some()
+            || self.clock_error.is_some()
+            || self.rejected_anchor.is_some()
+            || self.cancelled_before
+            || self.cancelled_after != Some(false)
+            || self.source != SourceKind::RetainedHandle
+            || self.calls.iter().any(|call| {
+                call.requested != call.attempted
+                    || call.requested
+                        && (call.before.is_none() || call.after.is_none() || call.output.is_none())
+            })
+        {
+            return None;
+        }
+        let limits = self.expected_limits;
+        let calls = self.calls.map(|call| {
+            object([
+                ("requested", Value::Bool(call.requested)),
+                ("before", call.before.map_or(Value::Null, anchor_value)),
+                ("attempted", Value::Bool(call.attempted)),
+                ("output", call.output.map_or(Value::Null, output_value)),
+                ("after", call.after.map_or(Value::Null, anchor_value)),
+            ])
+        });
+        Some(object([
+            ("origin", origin_value(self.origin)),
+            ("flags", Value::U64(limits.flags.into())),
+            ("active_limit", Value::U64(limits.active_limit.into())),
+            ("user_100ns", Value::I64(limits.user_100ns)),
+            ("process_memory", Value::U64(limits.process_memory)),
+            ("job_memory", Value::U64(limits.job_memory)),
+            ("limit_bytes", Value::U64(self.limit_bytes.into())),
+            ("clock_frequency", Value::U64(self.observed_clock.0)),
+            ("clock_token", Value::Text(hex(&self.observed_clock.1))),
+            ("calls", Value::Array(calls.into())),
+        ]))
+    }
+}
+#[cfg(windows)]
+fn origin_value(origin: Origin) -> Value {
+    object([
+        (
+            "kind",
+            Value::Text(
+                match origin.kind() {
+                    Kind::Starting => "starting",
+                    Kind::Sampler => "sampler",
+                    Kind::Worker => "worker",
+                }
+                .into(),
+            ),
+        ),
+        ("binding", Value::Text(origin.binding().to_hex())),
+        ("declaration", Value::Text(origin.declaration().to_hex())),
+        ("image", Value::Text(origin.image().to_hex())),
+        ("pid", Value::U64(origin.pid().into())),
+        ("creation", Value::U64(origin.creation())),
+        (
+            "consent",
+            origin.consent().map_or(Value::Null, |capture| {
+                object([
+                    ("request", Value::Text(capture.request.to_hex())),
+                    ("receipt", anchor_value(capture.receipt)),
+                ])
+            }),
+        ),
+    ])
+}
+#[cfg(windows)]
+fn hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push(HEX[usize::from(byte >> 4)] as char);
+        text.push(HEX[usize::from(byte & 15)] as char);
+    }
+    text
+}
+#[cfg(windows)]
+fn object(fields: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
+    let mut object = crate::evidence::Object::new();
+    for (key, value) in fields {
+        object.insert(key, value).expect("fixed unique grant keys");
+    }
+    Value::Object(object)
+}
+#[cfg(windows)]
+fn anchor_value(anchor: Anchor) -> Value {
+    object([
+        ("token", Value::Text(hex(&anchor.clock_token))),
+        ("before", Value::U64(anchor.qpc_before)),
+        ("after", Value::U64(anchor.qpc_after)),
+        ("interrupt", Value::U64(anchor.interrupt_100ns)),
+        ("unbiased", Value::U64(anchor.unbiased_100ns)),
+    ])
+}
+#[cfg(windows)]
+fn output_value(output: Output) -> Value {
+    match output {
+        Output::Pid(pid) => object([
+            ("kind", Value::Text("pid".into())),
+            ("value", Value::U64(pid.value.into())),
+            (
+                "error",
+                pid.error.map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+        ]),
+        Output::Times(result) => object([
+            ("kind", Value::Text("times".into())),
+            ("status", Value::I64(result.status.into())),
+            ("creation", Value::U64(result.value.creation)),
+            ("exit", Value::U64(result.value.exit)),
+            ("kernel", Value::U64(result.value.kernel)),
+            ("user", Value::U64(result.value.user)),
+            (
+                "error",
+                result.error.map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+        ]),
+        Output::JobFlags(result) => object([
+            ("kind", Value::Text("job_flags".into())),
+            ("status", Value::I64(result.status.into())),
+            ("value", Value::U64(result.value.into())),
+            (
+                "error",
+                result.error.map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+        ]),
+        Output::Limits(result) => object([
+            ("kind", Value::Text("limits".into())),
+            ("status", Value::I64(result.status.into())),
+            ("flags", Value::U64(result.value.limits.flags.into())),
+            (
+                "active_limit",
+                Value::U64(result.value.limits.active_limit.into()),
+            ),
+            ("user_100ns", Value::I64(result.value.limits.user_100ns)),
+            (
+                "process_memory",
+                Value::U64(result.value.limits.process_memory),
+            ),
+            ("job_memory", Value::U64(result.value.limits.job_memory)),
+            (
+                "returned_bytes",
+                Value::U64(result.value.returned_bytes.into()),
+            ),
+            (
+                "error",
+                result.error.map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+        ]),
+        Output::Process(result) => object([
+            ("kind", Value::Text("process".into())),
+            ("creation", Value::U64(result.creation)),
+            ("wait_status", Value::U64(result.wait_status.into())),
+            (
+                "wait_error",
+                result
+                    .wait_error
+                    .map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+            (
+                "exit_code",
+                result
+                    .exit_code
+                    .map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+            (
+                "exit_error",
+                result
+                    .exit_error
+                    .map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+            (
+                "termination",
+                result.termination.map_or(Value::Null, |v| match v {
+                    Ok(()) => Value::Text("ok".into()),
+                    Err(code) => Value::I64(code.into()),
+                }),
+            ),
+            (
+                "active_processes",
+                result
+                    .active_processes
+                    .map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+            (
+                "accounting_error",
+                result
+                    .accounting_error
+                    .map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+        ]),
+        Output::Membership(result) => object([
+            ("kind", Value::Text("membership".into())),
+            ("status", Value::I64(result.status.into())),
+            ("value", Value::I64(result.value.into())),
+            (
+                "error",
+                result.error.map_or(Value::Null, |v| Value::U64(v.into())),
+            ),
+        ]),
+    }
 }
 #[cfg(any(windows, test))]
 pub(crate) fn screen_frame(frame: &mut Frame, expected: [Origin; 3], context: bool) {

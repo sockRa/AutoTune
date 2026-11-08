@@ -57,10 +57,79 @@ pub trait FrameSink {
     fn send(&mut self, frame: EncodedFrame) -> Result<(), EncodedFrame>;
 }
 
-/// There is deliberately no issuer/constructor until actual parent admission
-/// validates exact consent, required facts, safety, re-entry and supervision.
+/// Issuance is restricted to the worker session after it accepts the exact
+/// parent grant and matches the completed setup artifact. The fixed parent
+/// sender must validate consent, required facts, safety, re-entry and supervision.
 pub struct NativeAdmission {
     binding: WorkerBinding,
+    issued: Anchor,
+    setup: Digest,
+    context: Digest,
+    peers: Digest,
+    consent: Digest,
+    process: Digest,
+    safety: Digest,
+}
+impl NativeAdmission {
+    /// Constructed only from a worker session's accepted, setup-bound grant.
+    /// Parent facts are trusted only at the explicit inherited-channel
+    /// boundary; callers cannot create this token from Ready or Start alone.
+    #[cfg(all(windows, target_arch = "x86_64", feature = "native-cuda"))]
+    pub(super) fn from_native_grant(
+        binding: WorkerBinding,
+        message: &Message,
+        expected_setup: Digest,
+    ) -> Option<Self> {
+        match message {
+            Message::NativeGrant {
+                issued,
+                setup,
+                context,
+                peers,
+                consent,
+                process,
+                safety,
+                ..
+            } if *setup == expected_setup
+                && [setup, context, peers, consent, process, safety]
+                    .iter()
+                    .all(|digest| digest.as_bytes().iter().any(|byte| *byte != 0)) =>
+            {
+                Some(Self {
+                    binding,
+                    issued: *issued,
+                    setup: *setup,
+                    context: *context,
+                    peers: *peers,
+                    consent: *consent,
+                    process: *process,
+                    safety: *safety,
+                })
+            }
+            _ => None,
+        }
+    }
+    pub(super) fn matches_grant(&self, binding: WorkerBinding, message: &Message) -> bool {
+        self.binding == binding
+            && matches!(
+                message,
+                Message::NativeGrant {
+                    issued,
+                    setup,
+                    context,
+                    peers,
+                    consent,
+                    process,
+                    safety,
+                } if *issued == self.issued
+                    && *setup == self.setup
+                    && *context == self.context
+                    && *peers == self.peers
+                    && *consent == self.consent
+                    && *process == self.process
+                    && *safety == self.safety
+            )
+    }
 }
 /// Preserve the original native owner and callback owners on every recoverable
 /// preparation failure. No speculative close/retry is performed on this path.
@@ -428,7 +497,7 @@ impl<
         self.context.borrow_mut().shared = self.control.clone();
         Ok(())
     }
-    pub fn start_native(
+    pub(super) fn start_native(
         &mut self,
         start: StartObservation,
         admission: NativeAdmission,

@@ -1,5 +1,5 @@
 //! Bound preparation/Ready/Start/native-grant reception/producer composition.
-//! The grant issuer is still absent. Reported Ready is not consent.
+//! The fixed parent orchestrator is still absent. Reported Ready is not consent.
 use super::{
     bootstrap::Bound,
     control::Shared,
@@ -53,6 +53,7 @@ pub struct Session<B, C, S> {
     ready_receipt: Option<Anchor>,
     start_packet: Option<WorkerReceived>,
     native_grant_packet: Option<WorkerReceived>,
+    native_admission_issued: bool,
     rejected: Option<WorkerReceived>,
     fault: Option<Fault>,
     started: bool,
@@ -162,6 +163,7 @@ impl<
             ready_receipt: None,
             start_packet: None,
             native_grant_packet: None,
+            native_admission_issued: false,
             rejected: None,
             fault,
             started: false,
@@ -230,10 +232,45 @@ impl<
     pub fn start_packet(&self) -> Option<&WorkerReceived> {
         self.start_packet.as_ref()
     }
-    /// Parent authorization is retained separately from Start. Its digest
-    /// references remain claims until the parent-side issuer is implemented.
+    /// Parent authorization is retained separately from Start. Digest
+    /// references bind the packet, but never issue NativeAdmission by themselves.
     pub fn native_grant_packet(&self) -> Option<&WorkerReceived> {
         self.native_grant_packet.as_ref()
+    }
+    /// Issue workload admission only from the retained grant that already
+    /// passed Start chronology, setup digest, issue/receipt freshness and the
+    /// original setup deadline. The fixed parent sender is the trust boundary
+    /// for its digest-only facts; this does not authenticate arbitrary input.
+    #[cfg(all(windows, target_arch = "x86_64", feature = "native-cuda"))]
+    pub(super) fn native_admission(
+        &mut self,
+        setup: &super::worker_setup::Artifact,
+    ) -> Result<NativeAdmission, Fault> {
+        if self.fault.is_some()
+            || self.started
+            || self.native_admission_issued
+            || self.shared.admission().stopped()
+            || self.start_packet.is_none()
+        {
+            return Err(Fault::Protocol);
+        }
+        let expected_setup = self
+            .setup_delivery
+            .filter(|delivery| delivery.sent == delivery.count)
+            .map(|delivery| delivery.digest)
+            .ok_or(Fault::Protocol)?;
+        if setup.digest() != expected_setup {
+            return Err(Fault::Protocol);
+        }
+        let grant = self.native_grant_packet.as_ref().ok_or(Fault::Protocol)?;
+        if !self.grant_matches_start_and_setup(grant) {
+            return Err(Fault::Protocol);
+        }
+        let message = grant.message().map_err(|_| Fault::Protocol)?;
+        let admission = NativeAdmission::from_native_grant(self.binding, message, expected_setup)
+            .ok_or(Fault::Protocol)?;
+        self.native_admission_issued = true;
+        Ok(admission)
     }
     pub fn rejected(&self) -> Option<&WorkerReceived> {
         self.rejected.as_ref()
@@ -396,10 +433,16 @@ impl<
         let Ok(receipt_ns) = self.binding.elapsed(receipt) else {
             return false;
         };
+        let Some(grant_age_ns) = receipt_ns.checked_sub(issue_ns) else {
+            return false;
+        };
         *setup == expected_setup
             && start_ns <= start_received_ns
             && issue_ns >= start_received_ns
-            && issue_ns <= receipt_ns
+            && grant_age_ns
+                < autotune_fma_reference::profile::Profile::approved_design()
+                    .limits
+                    .observation_gap_ns
             && receipt_ns < self.deadline
     }
     fn take_start(&mut self) -> Result<super::gate::StartObservation, Fault> {
@@ -421,7 +464,12 @@ impl<
         }
     }
     pub fn start_native(&mut self, admission: NativeAdmission) -> Result<(), Fault> {
-        if self.native_grant_packet.is_none() {
+        let grant_matches = self.native_grant_packet.as_ref().is_some_and(|grant| {
+            grant
+                .message()
+                .is_ok_and(|message| admission.matches_grant(self.binding, message))
+        });
+        if !self.native_admission_issued || !grant_matches {
             return Err(self.fail(Fault::Protocol));
         }
         let start = self.take_start()?;

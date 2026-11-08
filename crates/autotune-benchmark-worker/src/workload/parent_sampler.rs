@@ -11,8 +11,10 @@ use super::{
     transport::{Queue, RawReceived, SendFailure, Sender, SettingsReceived, WorkerReceived},
     wire::{Channel, Direction, EncodedFrame, Message, WorkerBinding},
 };
+#[cfg(windows)]
+use crate::evidence::{Domain, Value};
 use crate::{
-    evidence::Reason,
+    evidence::{Digest, Reason},
     monitor::{Anchor, Controller, Metric, Record, Status, Ticket},
     sampler::{
         budget::{Budget, Reservation},
@@ -40,6 +42,24 @@ pub enum Fault {
     Transport,
     ShutdownDeadline,
     Supervision,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeGrantCommitments {
+    pub setup: Digest,
+    pub context: Digest,
+    pub peers: Digest,
+    pub consent: Digest,
+    pub process: Digest,
+    pub safety: Digest,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeGrantAttempt {
+    pub observations: [Option<super::parent_start::Observation>; 3],
+    pub checks: [Option<Result<(), Fault>>; 3],
+    pub codec_error: Option<WireError>,
+    pub send_error: Option<SendFailure>,
+    pub queued: bool,
+    pub result: Result<(), Fault>,
 }
 #[derive(Default)]
 pub struct Reentry {
@@ -167,7 +187,15 @@ pub struct ParentSampler {
     peer_check: Option<super::parent_peers::Record>,
     consent: Option<super::consent::Delivery>,
     process_frame: Option<super::process_state::Frame>,
+    #[cfg(windows)]
     native_grant_process_frame: Option<super::process_state::Frame>,
+    #[cfg(windows)]
+    native_grant_observations: Option<(
+        super::parent_start::Observation,
+        Option<super::parent_start::Observation>,
+    )>,
+    #[cfg(windows)]
+    native_grant_attempt: Option<NativeGrantAttempt>,
     start_attempt: Option<super::parent_start::Attempt>,
     #[cfg(windows)]
     watch: Option<super::parent_watch_windows::Publisher>,
@@ -175,6 +203,8 @@ pub struct ParentSampler {
     #[cfg(windows)]
     worker_start_tx: Channel,
     unsent_worker_start: Option<EncodedFrame>,
+    #[cfg(windows)]
+    unsent_native_grant: Option<EncodedFrame>,
     budget: Budget,
     _metadata: Reservation,
 }
@@ -196,6 +226,315 @@ impl ParentSampler {
     #[cfg(windows)]
     pub fn native_grant_process_frame(&self) -> Option<&super::process_state::Frame> {
         self.native_grant_process_frame.as_ref()
+    }
+    #[cfg(windows)]
+    pub fn native_grant_attempt(&self) -> Option<&NativeGrantAttempt> {
+        self.native_grant_attempt.as_ref()
+    }
+    #[cfg(windows)]
+    pub fn unsent_native_grant(&self) -> Option<&EncodedFrame> {
+        self.unsent_native_grant.as_ref()
+    }
+    /// Canonical references to the exact parent-side records retained after
+    /// fresh checks. A digest binds those records; it is not an attestation.
+    #[cfg(windows)]
+    pub fn native_grant_commitments(&self) -> Option<NativeGrantCommitments> {
+        let _scratch = self.budget.reserve(64 * 1024).ok()?;
+        self.derive_native_grant_commitments()
+    }
+    #[cfg(windows)]
+    fn derive_native_grant_commitments(&self) -> Option<NativeGrantCommitments> {
+        let attempt = self.start_attempt.as_ref()?;
+        if !attempt.queued
+            || attempt.result.is_err()
+            || self.fault.is_some()
+            || !self.context_open()
+            || !self.watch_ready()
+        {
+            return None;
+        }
+        let (environment_digest, environment_result) = self.environment_check?;
+        if environment_result.is_err() {
+            return None;
+        }
+        let (starting_digest, starting_result) = self.starting_check?;
+        let starting_current = starting_result.ok()?;
+        let context = self.context_check.as_ref()?;
+        if context.result.is_err() {
+            return None;
+        }
+        let refs = context.references;
+        if refs.host != Some(environment_digest) || refs.starting != Some(starting_digest) {
+            return None;
+        }
+        let peers = self.peer_check.as_ref()?;
+        if peers.result.is_err()
+            || peers.context != Some(refs)
+            || peers.starting_response != refs.starting_response
+        {
+            return None;
+        }
+        let consent = self.consent.as_ref()?;
+        if consent.assessment.result.is_err()
+            || consent.assessment.references != Some(refs)
+            || consent.assessment.captures.iter().any(Option::is_none)
+        {
+            return None;
+        }
+        let process_frame = self.native_grant_process_frame.as_ref()?;
+        let process = process_frame.native_grant_commitment()?;
+        let (first, last) = self.native_grant_observations?;
+        let last = last?;
+        if !grant_observation_eligible(first, self.binding, self.setup_deadline)
+            || !grant_observation_eligible(last, self.binding, self.setup_deadline)
+            || process_frame.before != first.anchor
+            || process_frame.after != last.anchor
+        {
+            return None;
+        }
+        let context_value = grant_object([
+            ("references", grant_references_value(refs)),
+            ("environment", grant_digest_value(environment_digest)),
+            ("starting", grant_digest_value(starting_digest)),
+            (
+                "starting_current",
+                grant_object([
+                    (
+                        "power_limit_mw",
+                        Value::U64(starting_current.power_limit_mw.into()),
+                    ),
+                    (
+                        "graphics_offset_p0_mhz",
+                        Value::I64(starting_current.graphics_offset_p0_mhz.into()),
+                    ),
+                    (
+                        "memory_offset_p0_mhz",
+                        Value::I64(starting_current.memory_offset_p0_mhz.into()),
+                    ),
+                ]),
+            ),
+        ]);
+        let peer_value = grant_object([
+            ("context", context_value.clone()),
+            (
+                "starting_response",
+                refs.starting_response
+                    .map_or(Value::Null, grant_digest_value),
+            ),
+            (
+                "peers",
+                Value::Array(
+                    peers
+                        .peers
+                        .map(|peer| {
+                            let received = peer.received.ok()?;
+                            Some(grant_object([
+                                ("expected", grant_origin_value(peer.expected)),
+                                ("received", grant_origin_value(received)),
+                                ("cancelled", Value::Bool(peer.cancelled)),
+                            ]))
+                        })
+                        .into_iter()
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            ),
+        ]);
+        let captures = consent.assessment.captures.map(|capture| {
+            capture.map(|capture| {
+                grant_object([
+                    ("request", grant_digest_value(capture.request)),
+                    ("receipt", grant_anchor_value(capture.receipt)),
+                ])
+            })
+        });
+        let consent_value = grant_object([
+            ("context", context_value.clone()),
+            ("starting", captures[0].clone().unwrap_or(Value::Null)),
+            ("setup", captures[1].clone().unwrap_or(Value::Null)),
+            ("workload", captures[2].clone().unwrap_or(Value::Null)),
+            (
+                "setup_request",
+                grant_digest_value(consent.decisions.setup.request().digest()),
+            ),
+            (
+                "workload_request",
+                grant_digest_value(consent.decisions.workload.request().digest()),
+            ),
+            ("now", grant_anchor_value(consent.assessment.now)),
+        ]);
+        let safety_value = Value::Array(
+            [first, last]
+                .into_iter()
+                .map(grant_observation_value)
+                .collect::<Option<Vec<_>>>()?,
+        );
+        Some(NativeGrantCommitments {
+            setup: refs.worker_setup,
+            context: grant_value_digest(context_value),
+            peers: grant_value_digest(peer_value),
+            consent: grant_value_digest(consent_value),
+            process,
+            safety: grant_value_digest(safety_value),
+        })
+    }
+    /// Queue a separate NativeGrant exactly once on the worker's original
+    /// ordinary-channel sequence. Every pre-queue boundary is fresh and bound
+    /// to the original setup deadline; failed/uncertain frames remain owned.
+    #[cfg(windows)]
+    pub fn queue_native_grant<Q: Queue>(
+        &mut self,
+        clock: &crate::monitor::windows_clock::WindowsClock,
+        out: &mut Sender<Q>,
+    ) -> Result<(), Fault> {
+        if self.native_grant_attempt.is_some() {
+            self.worker_start_tx.poison();
+            self.fail(Fault::Protocol, self.now_ns);
+            return Err(Fault::Protocol);
+        }
+        let mut attempt = NativeGrantAttempt {
+            observations: [None; 3],
+            checks: [None; 3],
+            codec_error: None,
+            send_error: None,
+            queued: false,
+            result: Err(Fault::Context),
+        };
+        self.native_grant_attempt = Some(attempt);
+        let result = (|| {
+            let _scratch = self
+                .budget
+                .reserve(64 * 1024)
+                .map_err(|_| Fault::Capacity)?;
+            if self.unsent_worker_start.is_some() || self.unsent_native_grant.is_some() {
+                return Err(Fault::Protocol);
+            }
+            let issued_observation = self.observe_start(clock);
+            attempt.observations[0] = Some(issued_observation);
+            let issued_check =
+                grant_observation_check(issued_observation, self.binding, self.setup_deadline);
+            attempt.checks[0] = Some(issued_check);
+            issued_check?;
+            let process_after = self
+                .native_grant_process_frame
+                .as_ref()
+                .and_then(|frame| frame.after)
+                .ok_or(Fault::Context)?;
+            let process_age = self
+                .binding
+                .elapsed(issued_observation.anchor.ok_or(Fault::Clock)?)
+                .ok()
+                .and_then(|issued_ns| {
+                    self.binding
+                        .elapsed(process_after)
+                        .ok()
+                        .and_then(|process_ns| issued_ns.checked_sub(process_ns))
+                })
+                .ok_or(Fault::Clock)?;
+            if process_age
+                >= autotune_fma_reference::profile::Profile::approved_design()
+                    .limits
+                    .observation_gap_ns
+            {
+                return Err(Fault::Context);
+            }
+            let mut commitments = self
+                .derive_native_grant_commitments()
+                .ok_or(Fault::Context)?;
+            let issued_value = grant_observation_value(issued_observation).ok_or(Fault::Context)?;
+            commitments.safety = grant_value_digest(grant_object([
+                ("prior", grant_digest_value(commitments.safety)),
+                ("issued", issued_value),
+            ]));
+            let issued = issued_observation.anchor.ok_or(Fault::Clock)?;
+            let message = Message::NativeGrant {
+                issued,
+                setup: commitments.setup,
+                context: commitments.context,
+                peers: commitments.peers,
+                consent: commitments.consent,
+                process: commitments.process,
+                safety: commitments.safety,
+            };
+            let frame = match self.worker_start_tx.encode(&message) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    attempt.codec_error = Some(error);
+                    return Err(Fault::Transport);
+                }
+            };
+            self.unsent_native_grant = Some(frame);
+            let before_send = self.observe_start(clock);
+            attempt.observations[1] = Some(before_send);
+            let before_check =
+                grant_observation_check(before_send, self.binding, self.setup_deadline);
+            attempt.checks[1] = Some(before_check);
+            before_check?;
+            let issue_ns = self.binding.elapsed(issued).map_err(|_| Fault::Clock)?;
+            let send_ns = self
+                .binding
+                .elapsed(before_send.anchor.ok_or(Fault::Clock)?)
+                .map_err(|_| Fault::Clock)?;
+            if send_ns.checked_sub(issue_ns).is_none_or(|age| {
+                age >= autotune_fma_reference::profile::Profile::approved_design()
+                    .limits
+                    .observation_gap_ns
+            }) {
+                return Err(Fault::Context);
+            }
+            let frame = self
+                .unsent_native_grant
+                .take()
+                .expect("retained grant frame");
+            match out.send_worker(frame) {
+                Ok(()) => attempt.queued = true,
+                Err(frame) => {
+                    self.unsent_native_grant = Some(frame);
+                    attempt.send_error =
+                        Some(out.fault(Lane::Ordinary).unwrap_or(SendFailure::Queue));
+                    self.worker_start_tx.poison();
+                    return Err(Fault::Transport);
+                }
+            }
+            self.notify_watch();
+            let after_send = self.observe_start(clock);
+            attempt.observations[2] = Some(after_send);
+            let after_check =
+                grant_observation_check(after_send, self.binding, self.setup_deadline);
+            attempt.checks[2] = Some(after_check);
+            after_check?;
+            if self.watch_error.is_some() || self.fault.is_some() {
+                return Err(Fault::Supervision);
+            }
+            Ok(())
+        })();
+        attempt.result = result;
+        if result.is_err() {
+            self.worker_start_tx.poison();
+            let fault = result.expect_err("checked grant failure");
+            let trigger = if fault == Fault::SetupDeadline {
+                self.setup_deadline
+            } else {
+                self.now_ns
+            };
+            self.fail(fault, trigger);
+        }
+        self.native_grant_attempt = Some(attempt);
+        result
+    }
+    /// Collect the three retained process owners and queue their matching
+    /// grant in one ordered call. Process-handle queries can block: callers
+    /// must run this on the retained collector lane, outside deadline control.
+    #[cfg(windows)]
+    pub fn collect_and_queue_native_grant<Q: Queue>(
+        &mut self,
+        input: super::process_state::Processes<'_>,
+        clock: &crate::monitor::windows_clock::WindowsClock,
+        out: &mut Sender<Q>,
+    ) -> Result<(), Fault> {
+        if self.observe_native_grant_processes(input, clock).is_err() {
+            return Err(self.fault.unwrap_or(Fault::Context));
+        }
+        self.queue_native_grant(clock, out)
     }
     pub fn consent(&self) -> Option<&super::consent::Delivery> {
         self.consent.as_ref()
@@ -536,7 +875,12 @@ impl ParentSampler {
             peer_check: None,
             consent: None,
             process_frame: None,
+            #[cfg(windows)]
             native_grant_process_frame: None,
+            #[cfg(windows)]
+            native_grant_observations: None,
+            #[cfg(windows)]
+            native_grant_attempt: None,
             start_attempt: None,
             #[cfg(windows)]
             watch: None,
@@ -550,6 +894,8 @@ impl ParentSampler {
             )
             .map_err(|_| Fault::Capacity)?,
             unsent_worker_start: None,
+            #[cfg(windows)]
+            unsent_native_grant: None,
             budget,
             _metadata: metadata,
         };
@@ -1391,6 +1737,7 @@ impl ParentSampler {
         } else {
             None
         };
+        self.native_grant_observations = Some((first, last));
         let last_ok = last.is_some_and(|observation| {
             observation.capture_error.is_none()
                 && observation.clock_identity
@@ -1666,4 +2013,243 @@ pub(super) fn runtime_valid(r: &Runtime) -> bool {
         && r.cuda_driver_version.unit == "CUDA encoded integer"
         && r.cuda_driver_version.symbol_presence == SymbolPresence::Present
         && matches!(&r.cuda_driver_version.reading,Reading::Available{value} if value.as_i64().is_some_and(|n|n>0&&n<=i32::MAX as i64))
+}
+
+#[cfg(windows)]
+fn grant_observation_eligible(
+    observation: super::parent_start::Observation,
+    binding: WorkerBinding,
+    deadline: u64,
+) -> bool {
+    observation.capture_error.is_none()
+        && observation.clock_identity
+            == (binding.monitor().qpc_frequency, binding.epoch.clock_token)
+        && observation.anchor.is_some_and(|anchor| {
+            binding
+                .elapsed(anchor)
+                .is_ok_and(|elapsed| elapsed < deadline)
+        })
+        && observation.parent_fault.is_none()
+        && observation.context
+        && observation.reported_screen
+        && observation.watch_ready
+        && observation.safety.iter().all(Option::is_some)
+        && observation.reentry.is_some()
+}
+
+#[cfg(windows)]
+fn grant_observation_check(
+    observation: super::parent_start::Observation,
+    binding: WorkerBinding,
+    deadline: u64,
+) -> Result<(), Fault> {
+    if observation.capture_error.is_some()
+        || observation.clock_identity
+            != (binding.monitor().qpc_frequency, binding.epoch.clock_token)
+    {
+        return Err(Fault::Clock);
+    }
+    let elapsed = observation
+        .anchor
+        .and_then(|anchor| binding.elapsed(anchor).ok())
+        .ok_or(Fault::Clock)?;
+    if elapsed >= deadline {
+        return Err(Fault::SetupDeadline);
+    }
+    if observation.parent_fault.is_some() || !observation.watch_ready {
+        return Err(Fault::Supervision);
+    }
+    if !observation.context {
+        return Err(Fault::Context);
+    }
+    if !observation.reported_screen || !grant_observation_eligible(observation, binding, deadline) {
+        return Err(Fault::ReentryDeadline);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn grant_observation_value(observation: super::parent_start::Observation) -> Option<Value> {
+    if !observation.context
+        || !observation.reported_screen
+        || !observation.watch_ready
+        || observation.capture_error.is_some()
+        || observation.parent_fault.is_some()
+    {
+        return None;
+    }
+    let safety = observation
+        .safety
+        .map(|record| record.map(grant_monitor_record_value));
+    let safety = safety.map(Option::unwrap);
+    let reentry = observation.reentry?;
+    Some(grant_object([
+        ("anchor", grant_anchor_value(observation.anchor?)),
+        ("clock_frequency", Value::U64(observation.clock_identity.0)),
+        (
+            "clock_token",
+            Value::Text(grant_hex(&observation.clock_identity.1)),
+        ),
+        ("context", Value::Bool(observation.context)),
+        ("reported_screen", Value::Bool(observation.reported_screen)),
+        ("watch_ready", Value::Bool(observation.watch_ready)),
+        (
+            "consecutive_reentry",
+            Value::U64(observation.consecutive.into()),
+        ),
+        ("safety", Value::Array(safety.into_iter().collect())),
+        (
+            "reentry",
+            Value::Array(reentry.map(grant_monitor_record_value).into()),
+        ),
+    ]))
+}
+
+#[cfg(windows)]
+fn grant_monitor_record_value(record: Record) -> Value {
+    let ticket = record.ticket;
+    let binding = ticket.binding;
+    let metric = match ticket.metric {
+        Metric::Temperature => "temperature",
+        Metric::Power => "power",
+        Metric::GraphicsClock => "graphics_clock",
+        Metric::MemoryClock => "memory_clock",
+        Metric::GpuUtilization => "gpu_utilization",
+        Metric::MemoryUtilization => "memory_utilization",
+    };
+    let unit = match record.unit {
+        crate::monitor::Unit::DegC => "deg_c",
+        crate::monitor::Unit::Milliwatt => "milliwatt",
+        crate::monitor::Unit::MHz => "mhz",
+        crate::monitor::Unit::Percent => "percent",
+    };
+    let status = match record.status {
+        Status::Available => Value::Text("available".into()),
+        Status::Unsupported => Value::Text("unsupported".into()),
+        Status::Unavailable => Value::Text("unavailable".into()),
+        Status::Failed(code) => grant_object([("failed", Value::I64(code.into()))]),
+    };
+    grant_object([
+        ("session", Value::Text(grant_hex(&binding.session))),
+        ("run", Value::Text(grant_hex(&binding.run))),
+        ("device_uuid", Value::Text(grant_hex(&binding.device.uuid))),
+        ("device_domain", Value::U64(binding.device.domain.into())),
+        ("device_bus", Value::U64(binding.device.bus.into())),
+        ("device_number", Value::U64(binding.device.device.into())),
+        ("clock_token", Value::Text(grant_hex(&binding.clock_token))),
+        ("frequency", Value::U64(binding.qpc_frequency)),
+        ("metric", Value::Text(metric.into())),
+        ("slot", Value::U64(ticket.slot)),
+        ("scheduled", Value::U64(ticket.scheduled_ns)),
+        ("start", Value::U64(ticket.start_ns)),
+        ("end", Value::U64(record.end_ns)),
+        ("receipt", Value::U64(record.receipt_ns)),
+        ("unit", Value::Text(unit.into())),
+        ("status", status),
+        ("value", record.value.map_or(Value::Null, Value::I64)),
+    ])
+}
+
+#[cfg(windows)]
+fn grant_references_value(refs: super::parent_context::References) -> Value {
+    grant_object([
+        ("manifest", grant_digest_value(refs.manifest)),
+        ("scope", grant_digest_value(refs.scope)),
+        ("host", refs.host.map_or(Value::Null, grant_digest_value)),
+        (
+            "starting",
+            refs.starting.map_or(Value::Null, grant_digest_value),
+        ),
+        (
+            "starting_response",
+            refs.starting_response
+                .map_or(Value::Null, grant_digest_value),
+        ),
+        ("worker_setup", grant_digest_value(refs.worker_setup)),
+        (
+            "current",
+            refs.current.map_or(Value::Null, grant_digest_value),
+        ),
+        (
+            "sampler_ready",
+            refs.sampler_ready.map_or(Value::Null, grant_digest_value),
+        ),
+        (
+            "current_response",
+            refs.current_response
+                .map_or(Value::Null, grant_digest_value),
+        ),
+    ])
+}
+
+#[cfg(windows)]
+fn grant_origin_value(origin: super::launch_origin::Origin) -> Value {
+    grant_object([
+        (
+            "kind",
+            Value::Text(
+                match origin.kind() {
+                    super::launch_origin::Kind::Starting => "starting",
+                    super::launch_origin::Kind::Sampler => "sampler",
+                    super::launch_origin::Kind::Worker => "worker",
+                }
+                .into(),
+            ),
+        ),
+        ("binding", grant_digest_value(origin.binding())),
+        ("declaration", grant_digest_value(origin.declaration())),
+        ("image", grant_digest_value(origin.image())),
+        ("pid", Value::U64(origin.pid().into())),
+        ("creation", Value::U64(origin.creation())),
+        (
+            "consent",
+            origin.consent().map_or(Value::Null, |capture| {
+                grant_object([
+                    ("request", grant_digest_value(capture.request)),
+                    ("receipt", grant_anchor_value(capture.receipt)),
+                ])
+            }),
+        ),
+    ])
+}
+
+#[cfg(windows)]
+fn grant_anchor_value(anchor: Anchor) -> Value {
+    grant_object([
+        ("token", Value::Text(grant_hex(&anchor.clock_token))),
+        ("before", Value::U64(anchor.qpc_before)),
+        ("after", Value::U64(anchor.qpc_after)),
+        ("interrupt", Value::U64(anchor.interrupt_100ns)),
+        ("unbiased", Value::U64(anchor.unbiased_100ns)),
+    ])
+}
+
+#[cfg(windows)]
+fn grant_digest_value(digest: Digest) -> Value {
+    Value::Text(digest.to_hex())
+}
+
+#[cfg(windows)]
+fn grant_value_digest(value: Value) -> Digest {
+    Digest::of_value(Domain::RawArtifact, &value)
+}
+
+#[cfg(windows)]
+fn grant_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push(HEX[usize::from(byte >> 4)] as char);
+        text.push(HEX[usize::from(byte & 15)] as char);
+    }
+    text
+}
+
+#[cfg(windows)]
+fn grant_object(fields: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
+    let mut object = crate::evidence::Object::new();
+    for (key, value) in fields {
+        object.insert(key, value).expect("fixed unique grant keys");
+    }
+    Value::Object(object)
 }
