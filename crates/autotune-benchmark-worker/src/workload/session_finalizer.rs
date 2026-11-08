@@ -217,13 +217,118 @@ impl<E> Finalized<PilotOwners<E>> {
         writer.finish_pilot_workload(&self.evidence.manifest, session)?;
         Ok(PilotArchivePending {
             _finalized: self,
-            _raw: raw,
-            _session: session,
+            _texts: PilotArchiveTexts::Borrowed {
+                _raw: raw,
+                _session: session,
+            },
             writer,
             result: None,
+            queue_failure: None,
             terminal: false,
         })
     }
+
+    /// Build the workload raw stream and pilot envelope from the finalized
+    /// ParentSampler/setup/worker owners, then queue them into an already
+    /// pilot-bound writer. The returned guard owns both generated buffers and
+    /// borrows every finalizer owner until the writer thread has stopped.
+    pub fn build_and_queue_workload_archive<'a>(
+        &'a self,
+        writer: &'a mut Writer,
+        provenance: crate::evidence::Provenance,
+        budget: &Budget,
+    ) -> PilotArchivePending<'a, E> {
+        let prepared = (|| {
+            let evidence = &self.evidence;
+            let parent = &self.retirement.assets.parent;
+            let raw = crate::sampler::producer::raw_events_with_parent_sampler_and_worker(
+                parent,
+                &evidence.worker_setup_delivery,
+                &evidence.worker_report_evidence,
+                budget,
+            )
+            .map_err(|_| io::Error::other("workload raw evidence capacity/binding"))?;
+            let mut envelope = crate::sampler::producer::build_pilot_envelope_from_parent(
+                &evidence.manifest,
+                parent,
+                &evidence.worker_setup_delivery,
+                &evidence.worker_report_evidence,
+                provenance,
+                budget,
+            )
+            .map_err(|_| io::Error::other("workload envelope capacity/binding"))?;
+            envelope
+                .account_artifacts(
+                    evidence.manifest.canonical(),
+                    evidence.manifest.profile_canonical(),
+                    &raw,
+                )
+                .map_err(|_| io::Error::other("workload artifact accounting"))?;
+            let session = envelope
+                .encode()
+                .map_err(|_| io::Error::other("workload session encoding"))?;
+            let raw_copy = BoundText::copy(&raw, budget)
+                .map_err(|_| io::Error::other("workload raw queue capacity"))?;
+            let session_copy = BoundText::copy(&session, budget)
+                .map_err(|_| io::Error::other("workload session queue capacity"))?;
+            Ok::<_, io::Error>((raw, session, raw_copy, session_copy))
+        })();
+        let (raw, session, raw_copy, session_copy) = match prepared {
+            Ok(artifacts) => artifacts,
+            Err(error) => {
+                writer.close();
+                return PilotArchivePending {
+                    _finalized: self,
+                    _texts: PilotArchiveTexts::Empty,
+                    writer,
+                    result: None,
+                    queue_failure: Some(crate::sampler::writer::Failure {
+                        operation: "workload_export_prepare",
+                        os_code: error.raw_os_error(),
+                        kind: error.kind(),
+                    }),
+                    terminal: false,
+                };
+            }
+        };
+        let evidence = &self.evidence;
+        let queue_failure = writer
+            .enqueue(Artifact::Raw, raw_copy)
+            .and_then(|()| writer.enqueue_pilot_session(&evidence.manifest, session_copy))
+            .and_then(|()| writer.finish_pilot_workload(&evidence.manifest, &session))
+            .err()
+            .map(|error| {
+                writer.close();
+                crate::sampler::writer::Failure {
+                    operation: "workload_archive_enqueue",
+                    os_code: error.raw_os_error(),
+                    kind: error.kind(),
+                }
+            });
+        PilotArchivePending {
+            _finalized: self,
+            _texts: PilotArchiveTexts::Owned {
+                _raw: raw,
+                _session: session,
+            },
+            writer,
+            result: None,
+            queue_failure,
+            terminal: false,
+        }
+    }
+}
+
+enum PilotArchiveTexts<'a> {
+    Empty,
+    Borrowed {
+        _raw: &'a BoundText,
+        _session: &'a BoundText,
+    },
+    Owned {
+        _raw: BoundText,
+        _session: BoundText,
+    },
 }
 
 /// Owns the borrows needed to keep finalized process/consent/evidence state and
@@ -233,10 +338,10 @@ impl<E> Finalized<PilotOwners<E>> {
 #[must_use = "retain this handle and poll it until the writer has finished"]
 pub struct PilotArchivePending<'a, E> {
     _finalized: &'a Finalized<PilotOwners<E>>,
-    _raw: &'a BoundText,
-    _session: &'a BoundText,
+    _texts: PilotArchiveTexts<'a>,
     writer: &'a mut Writer,
     result: Option<Result<ArchiveReceipt, crate::sampler::writer::Failure>>,
+    queue_failure: Option<crate::sampler::writer::Failure>,
     terminal: bool,
 }
 impl<E> PilotArchivePending<'_, E> {
@@ -251,15 +356,20 @@ impl<E> PilotArchivePending<'_, E> {
             return None;
         }
         self.terminal = true;
-        Some(
-            self.result
+        let result = self.result.take();
+        Some(match result {
+            Some(Err(failure)) => Err(failure),
+            Some(Ok(receipt)) if self.queue_failure.is_none() => Ok(receipt),
+            Some(Ok(_)) => Err(self.queue_failure.take().expect("queue failure retained")),
+            None => Err(self
+                .queue_failure
                 .take()
-                .unwrap_or(Err(crate::sampler::writer::Failure {
+                .unwrap_or(crate::sampler::writer::Failure {
                     operation: "writer_exit_without_result",
                     os_code: None,
                     kind: io::ErrorKind::BrokenPipe,
                 })),
-        )
+        })
     }
 }
 
