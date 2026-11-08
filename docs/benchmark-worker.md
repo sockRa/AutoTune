@@ -1274,6 +1274,31 @@ exact retained sampler process into the worker channel's process observations;
 Start remains gated on watch readiness and NativeGrant retains its fresh checks
 and original worker sequence.
 
+### Parent admission coordinator
+
+`workload::parent_admission::ParentAdmission` composes the already-launched
+starting, sampler and worker owners through the admission boundary. A
+`poll_once` takes one nonblocking sampler poll, one worker setup poll while the
+strict receiver remains open, and one worker control poll; after Start creates
+the result audit, ordinary worker packets are routed to result assessment. The
+coordinator retains `ReadyDelivery`, the setup receiver on failure, and the
+controller handle after successful attachment.
+
+Preflight can be attempted only after the worker setup delivery, sampler Ready,
+runtime and current-settings response are present. Successful ordered preflight
+is required before controller creation; Start is only queued by the
+watch-readiness path, and NativeGrant is only attempted after successful Start.
+Out-of-order requests fail closed. A failed stage still permits `poll_once` and
+`finish_sampler` so callers can retain further evidence and request shutdown.
+The caller must keep this owner and its controller alive, run the blocking
+NativeGrant process observation off the controller deadline path, and transfer
+the returned owners into retirement/finalization after channel borrows end.
+After recording the planned sampler finish, `begin_worker_control_audit` binds
+the worker's StopAck/RoleFinished reports to that same original StopWindow.
+This coordinator does not launch the three processes, poll the pre-manifest
+starting session, own the whole execution/retirement loop, or prove hardware or
+GPU qualification.
+
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing
 strict settings or sampler parser; it cannot authorize it. Telemetry may support

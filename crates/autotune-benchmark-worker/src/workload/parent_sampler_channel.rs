@@ -45,6 +45,12 @@ pub struct ParentSamplerChannel<'a> {
 }
 
 impl<'a> ParentSamplerChannel<'a> {
+    /// Exact sampler process whose sender and ParentSampler receive state this
+    /// channel retains. Exposed for fixed parent composition, not replacement.
+    pub fn process(&self) -> &'a Process {
+        self.process
+    }
+
     /// Constructs ParentSampler from this process declaration and takes its
     /// unique sender. A second channel cannot restart either lane sequence.
     pub fn new(

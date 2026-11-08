@@ -436,6 +436,12 @@ fn reserve_events(
 }
 
 impl<'a> ParentWorkerChannel<'a> {
+    /// Exact worker process whose unique sender/control and receive lanes this
+    /// channel retains. Exposed for fixed parent composition, not replacement.
+    pub fn process(&self) -> &'a windows_process::Process {
+        self.worker
+    }
+
     /// Takes the worker's single sender. A second channel cannot be created
     /// from this process owner, preventing sequence restarts between frames.
     pub fn new(
@@ -856,6 +862,10 @@ impl<'a> ParentWorkerChannel<'a> {
     pub fn assessment_fault(&self) -> Option<assessment::Fault> {
         self.assessment_fault
             .or_else(|| self.audit.as_ref().and_then(Audit::fault))
+    }
+
+    pub fn overflowed(&self) -> bool {
+        self.overflowed
     }
 
     pub fn failure_vector(&self) -> Option<&FailureVector> {
