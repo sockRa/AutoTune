@@ -4,7 +4,7 @@
 //! retained sampler process. It does not launch, wait for exit, or grant compute.
 use super::{
     launch::CancelQueue,
-    parent_sampler::{self, ParentSampler},
+    parent_sampler::{self, ParentSampler, PreflightFailure, PreflightFault, ReportedPreflight},
     windows_process::{Process, ProcessQueue},
 };
 use crate::{
@@ -51,6 +51,24 @@ impl<'a> ParentSamplerChannel<'a> {
 
     pub fn parent_mut(&mut self) -> &mut ParentSampler {
         &mut self.parent
+    }
+
+    /// Run the ordered reported-evidence gate only when its sampler peer is
+    /// this channel's process. A mismatch closes setup's reference path and
+    /// returns untouched consent decisions to the caller.
+    #[allow(clippy::result_large_err)] // Preserve the original consent owner without allocating.
+    pub fn verify_reported_preflight(
+        &mut self,
+        input: ReportedPreflight<'_, '_>,
+    ) -> Result<(), PreflightFailure> {
+        if !std::ptr::eq(input.processes.sampler, self.process) {
+            input.processes.setup.close_reference_path();
+            return Err(PreflightFailure {
+                fault: PreflightFault::Peers(super::parent_peers::Fault::Binding),
+                decisions: Some(input.decisions),
+            });
+        }
+        self.parent.verify_reported_preflight(input)
     }
 
     /// Performs one nonblocking process poll and any resulting bounded query

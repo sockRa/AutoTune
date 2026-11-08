@@ -1247,8 +1247,11 @@ Windows adapter for the sampler. Its constructor validates the retained
 sampler declaration through `ParentSampler::for_process` and takes that exact
 process's unique sender. Each `poll` binds inbound receipt assessment and
 outbound settings/query/stop traffic to those same process and sender owners;
-`finish` uses the same sender. This closes the easy-to-miswire seam where a
-caller could pair one sampler's inbound process with another process's sender.
+`finish` uses the same sender. Its ordered preflight entry also requires the
+sampler peer to be that exact process, returning unconsumed consent decisions
+and closing the setup reference path if the supplied process owner differs.
+This closes the easy-to-miswire seams where a caller could pair one sampler's
+inbound process, preflight peer, and sender with another process.
 The adapter does not launch the process, start the independent controller,
 prove peer truth, grant the worker, or qualify a live sample. It does not split
 the control reader for a concurrent controller; full fixed-parent orchestration
