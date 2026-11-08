@@ -32,6 +32,7 @@ pub struct PilotOwners<E> {
     pub manifest: super::manifest::PilotManifest,
     pub scope: super::starting::Scope,
     pub starting_process: super::windows_process::Process<super::starting_bootstrap::Declaration>,
+    pub starting_launch: super::starting_launch::LaunchFacts,
     pub starting_handoff: super::starting_launch::ClosedHandoff,
     pub starting_consent: super::consent::Record,
     pub starting_read: super::starting_read::Receipt,

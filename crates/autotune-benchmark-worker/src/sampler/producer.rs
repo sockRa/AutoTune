@@ -1455,7 +1455,7 @@ pub fn append_pilot_owner_artifacts<E>(
     // RawBuilder charges the growing output buffer separately.
     let scratch_bytes = source_bytes
         .checked_mul(4)
-        .and_then(|n| n.checked_add(5 * 4096))
+        .and_then(|n| n.checked_add(6 * 4096))
         .and_then(|n| n.checked_add(64 * 1024))
         .and_then(|n| n.checked_add(crate::workload::consent::CAP * 16))
         .ok_or(WireError::Capacity)?;
@@ -1499,6 +1499,68 @@ pub fn append_pilot_owner_artifacts<E>(
         .to_canonical();
         output.push_line(&line)?;
     }
+    let launch_attempt = |attempt: Option<crate::workload::starting_launch::RequestAttempt>| {
+        attempt.map_or(Value::Null, |attempt| {
+            object([
+                ("succeeded", Value::Bool(attempt.succeeded)),
+                (
+                    "os_code",
+                    attempt
+                        .os_code
+                        .map_or(Value::Null, |code| Value::I64(code.into())),
+                ),
+                (
+                    "error_kind",
+                    attempt
+                        .error_kind
+                        .map_or(Value::Null, |kind| Value::Text(format!("{kind:?}"))),
+                ),
+            ])
+        })
+    };
+    let launch_facts = owners.starting_launch;
+    let launch_bytes = object([
+        ("polls", Value::U64(launch_facts.polls)),
+        (
+            "elapsed_ns",
+            launch_facts.elapsed_ns.map_or(Value::Null, Value::U64),
+        ),
+        (
+            "deadline_exceeded",
+            Value::Bool(launch_facts.deadline_exceeded),
+        ),
+        (
+            "clock_capture_error",
+            launch_facts
+                .clock_capture_error
+                .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+        ),
+        (
+            "clock_domain_fault",
+            Value::Bool(launch_facts.clock_domain_fault),
+        ),
+        ("stop_request", launch_attempt(launch_facts.stop_request)),
+        (
+            "termination_request",
+            launch_attempt(launch_facts.termination_request),
+        ),
+    ])
+    .to_canonical();
+    let launch_line = object([
+        ("kind", Value::Text("retained_owner_artifact".into())),
+        ("owner", Value::Text("starting_launch".into())),
+        ("available", Value::Bool(true)),
+        (
+            "digest",
+            Value::Text(Digest::of(Domain::RawArtifact, launch_bytes.as_bytes()).to_hex()),
+        ),
+        (
+            "bytes_hex",
+            Value::Text(super::wire_model::hex(launch_bytes.as_bytes())),
+        ),
+    ])
+    .to_canonical();
+    output.push_line(&launch_line)?;
     let consent_bytes = consent_capture.as_bytes();
     let consent_line = object([
         ("kind", Value::Text("retained_owner_artifact".into())),

@@ -1782,9 +1782,14 @@ requests job termination at the fixed response-arrival bound. Clock failure or
 regression requests termination immediately. It retains the first clock and
 OS-request outcomes, launch errors, and a process that arrives after a stop
 request; the caller receives the process and facts together before creating the
-one-shot `Handoff`. This is bounded launch source only: it does not poll the
-starting response, create a controller/watchdog for the parent, or prove child
-exit/native cleanup. No process was launched in verification.
+one-shot `Handoff`. The retained launch facts now transfer through
+`PilotOwnerInputs` into `PilotOwners` and are exported in a canonical,
+digest-bound `starting_launch` raw artifact beside the other finalized owner
+artifacts. This preserves the parent's request results and original-epoch
+deadline observations in the eventual workload archive. It is bounded launch
+source only: it does not poll the starting response, create a
+controller/watchdog for the parent, or prove child exit/native cleanup. No
+process was launched in verification.
 
 Three compile-only cases cover the handoff composition and the session driver
 wiring, and one portable case covers anchor conversion and rejection. No process is
