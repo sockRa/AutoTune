@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
+    Incomplete,
     Context,
     Binding,
     Clock,
@@ -265,14 +266,15 @@ impl Arbitration {
 }
 
 #[cfg(windows)]
-pub(crate) fn collect(
+pub(crate) fn collect_into(
     window: Window,
     stop: StopWindow,
     expected: [Origin; 2],
     processes: [&super::windows_process::Process; 2],
     clock: &crate::monitor::windows_clock::WindowsClock,
     context: bool,
-) -> Frame {
+    output: &mut Option<Frame>,
+) {
     fn capture(clock: &crate::monitor::windows_clock::WindowsClock) -> Capture {
         match clock.capture() {
             Ok(a) => Capture {
@@ -285,11 +287,14 @@ pub(crate) fn collect(
             },
         }
     }
-    let mut f = Frame {
+    *output = Some(Frame {
         window,
         stop,
         expected,
-        before: capture(clock),
+        before: Capture {
+            anchor: None,
+            error: None,
+        },
         after: Capture {
             anchor: None,
             error: None,
@@ -297,8 +302,10 @@ pub(crate) fn collect(
         reads: [None; 2],
         clock_identity: (clock.qpc_frequency(), clock.clock_token()),
         trusted: true,
-        result: Err(Fault::Context),
-    };
+        result: Err(Fault::Incomplete),
+    });
+    let f = output.as_mut().expect("initialized retirement evidence");
+    f.before = capture(clock);
     let mut validator = Clock::new(window.binding.monitor(), window.binding.epoch).ok();
     let mut last = window.binding.epoch;
     let mut observe = |c: Capture| -> bool {
@@ -336,6 +343,9 @@ pub(crate) fn collect(
                 },
                 requests_after: requests_before,
             };
+            // Preserve pre-call facts even if the original-handle query blocks
+            // or unwinds before returning. No raw return is invented.
+            f.reads[i] = Some(read);
             if observe(before) {
                 read.raw = Some(p.observe());
             }
@@ -351,11 +361,10 @@ pub(crate) fn collect(
     }
     f.after = capture(clock);
     f.result = if context {
-        assess(&f)
+        assess(f)
     } else {
         Err(Fault::Context)
     };
-    f
 }
 
 #[cfg(test)]

@@ -4,6 +4,8 @@ pub mod bootstrap;
 pub mod child_options;
 #[cfg(windows)]
 pub mod child_windows;
+#[cfg(any(windows, test))]
+mod collector_task;
 pub mod consent;
 pub mod control;
 #[cfg(windows)]
@@ -31,6 +33,8 @@ pub mod parent_watch_windows;
 pub mod prestart;
 pub mod process_state;
 pub mod producer;
+#[cfg(windows)]
+pub mod retirement_collector;
 pub mod runtime_evidence;
 pub mod sampler_dispatch;
 #[cfg(windows)]

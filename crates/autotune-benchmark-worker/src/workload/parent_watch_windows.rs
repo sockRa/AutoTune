@@ -183,6 +183,21 @@ pub enum MailboxFault {
     Full,
     Disconnected,
 }
+/// Independent cancellation never acquires the collector's owner mutex.
+#[derive(Clone)]
+pub struct Cancellation {
+    control: Arc<Control>,
+}
+impl Cancellation {
+    pub fn cancel(&self) {
+        self.control.abort(Fault::Requested);
+    }
+}
+impl super::collector_task::Cancel for Cancellation {
+    fn cancel(&self) {
+        Cancellation::cancel(self);
+    }
+}
 pub struct Handle {
     control: Arc<Control>,
     operations: [Option<JoinHandle<()>>; 4],
@@ -201,6 +216,11 @@ pub struct StartFailure {
     pub retained: Retained,
 }
 impl Handle {
+    pub fn cancellation(&self) -> Cancellation {
+        Cancellation {
+            control: self.control.clone(),
+        }
+    }
     #[allow(clippy::result_large_err)] // Failure transfers all original owners.
     pub fn start(
         parent: &ParentSampler,
@@ -406,6 +426,16 @@ impl Handle {
         worker: &super::windows_process::Process,
         clock: &WindowsClock,
     ) -> Result<(), retirement::Fault> {
+        self.retire_into(parent, sampler, worker, clock, &mut None)
+    }
+    pub(super) fn retire_into(
+        &mut self,
+        parent: &ParentSampler,
+        sampler: &super::windows_process::Process,
+        worker: &super::windows_process::Process,
+        clock: &WindowsClock,
+        progress: &mut Option<RetirementFrame>,
+    ) -> Result<(), retirement::Fault> {
         if self.control.retirement.get().is_some() {
             return Err(retirement::Fault::Duplicate);
         }
@@ -438,14 +468,16 @@ impl Handle {
                 !s.requested.load(Ordering::Acquire) || s.finished.load(Ordering::Acquire)
             })
             && self.control.abort.get().is_none();
-        let frame = retirement::collect(
+        retirement::collect_into(
             self.control.window,
             stop,
             expected,
             [sampler, worker],
             clock,
             context,
+            progress,
         );
+        let frame = progress.expect("completed retirement observation");
         let result = frame.result();
         let _ = self.control.retirement.set(frame);
         if result.is_err() {

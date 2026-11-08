@@ -207,6 +207,9 @@ fn provenance_composition_entries_link_without_process_invocation() {
         parent_sampler::ParentSampler, windows_process::Process,
     };
     std::hint::black_box(ParentSampler::check_processes as *const ());
+    std::hint::black_box(
+        autotune_benchmark_worker::workload::retirement_collector::Collector::start as *const (),
+    );
     std::hint::black_box(Process::<Declaration>::origin as *const ());
     std::hint::black_box(Process::<Declaration>::stop_owner as *const ());
     std::hint::black_box(
