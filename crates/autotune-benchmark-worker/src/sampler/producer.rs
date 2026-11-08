@@ -840,6 +840,212 @@ pub fn raw_events_with_worker(
     })
 }
 
+/// Compose raw evidence retained by the fixed workload ParentSampler. Packet
+/// bytes and their independently parsed parent-side result are emitted together;
+/// the report, receipt anchors and clock history remain separate owner streams.
+/// This is a raw artifact adapter only and does not establish qualification.
+#[cfg(windows)]
+pub fn raw_events_with_parent_sampler(
+    parent: &crate::workload::parent_sampler::ParentSampler,
+    budget: &Budget,
+) -> Result<BoundText, WireError> {
+    let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+    let report_events = parent.report().events().count();
+    let total_events = parent
+        .records()
+        .len()
+        .checked_add(parent.controls().len())
+        .and_then(|n| n.checked_add(usize::from(parent.ready().is_some())))
+        .and_then(|n| n.checked_add(usize::from(parent.rejected().is_some())))
+        .and_then(|n| n.checked_add(parent.history().raw().len()))
+        .and_then(|n| n.checked_add(report_events))
+        .and_then(|n| n.checked_add(1))
+        .ok_or(WireError::Capacity)?;
+    if total_events as u64 > p.event_capacity {
+        return Err(WireError::Capacity);
+    }
+    let _temporary = budget
+        .reserve(p.frame_bytes as usize * 16)
+        .map_err(|_| WireError::Capacity)?;
+    let mut output = RawBuilder::new(budget.clone())?;
+    let binding = parent.binding();
+    for (sequence, receipt) in parent.records().iter().enumerate() {
+        let line = object([
+            ("stream", Value::Text("parent_sampler_receipt".into())),
+            ("sequence", Value::U64(sequence as u64)),
+            (
+                "receipt",
+                receipt
+                    .raw
+                    .raw()
+                    .receipt()
+                    .map_or(Value::Null, anchor_value),
+            ),
+            ("kind", Value::Text("sampler_record".into())),
+            (
+                "body",
+                object([
+                    ("packet", worker_packet_value(&receipt.raw)),
+                    (
+                        "assessment",
+                        receipt.record.as_ref().map_or_else(
+                            |error| Value::Text(format!("rejected:{error:?}")),
+                            |record| Value::Text(format!("accepted:{record:?}")),
+                        ),
+                    ),
+                ]),
+            ),
+        ])
+        .to_canonical();
+        output.push_line(&line)?;
+    }
+    for (sequence, packet) in parent.controls().iter().enumerate() {
+        let line = object([
+            ("stream", Value::Text("parent_sampler_control".into())),
+            ("sequence", Value::U64(sequence as u64)),
+            (
+                "receipt",
+                packet.raw().receipt().map_or(Value::Null, anchor_value),
+            ),
+            ("kind", Value::Text("control_packet".into())),
+            (
+                "body",
+                object([
+                    ("packet", worker_packet_value(packet)),
+                    (
+                        "decoded",
+                        packet.message().map_or_else(
+                            |error| Value::Text(format!("error:{error:?}")),
+                            |message| {
+                                Value::Text(format!("ok:{:?}", std::mem::discriminant(message)))
+                            },
+                        ),
+                    ),
+                ]),
+            ),
+        ])
+        .to_canonical();
+        output.push_line(&line)?;
+    }
+    for (kind, packet) in [("ready", parent.ready()), ("rejected", parent.rejected())] {
+        if let Some(packet) = packet {
+            let line = object([
+                (
+                    "stream",
+                    Value::Text("parent_sampler_retained_packet".into()),
+                ),
+                ("sequence", Value::U64(0)),
+                (
+                    "receipt",
+                    packet.raw().receipt().map_or(Value::Null, anchor_value),
+                ),
+                ("kind", Value::Text(kind.into())),
+                (
+                    "body",
+                    object([
+                        ("packet", worker_packet_value(packet)),
+                        (
+                            "decoded",
+                            packet.message().map_or_else(
+                                |error| Value::Text(format!("error:{error:?}")),
+                                |message| {
+                                    Value::Text(format!("ok:{:?}", std::mem::discriminant(message)))
+                                },
+                            ),
+                        ),
+                    ]),
+                ),
+            ])
+            .to_canonical();
+            output.push_line(&line)?;
+        }
+    }
+    for (sequence, anchor) in parent.history().raw().iter().enumerate() {
+        let line = object([
+            ("stream", Value::Text("parent_clock_history".into())),
+            ("sequence", Value::U64(sequence as u64)),
+            ("receipt", anchor_value(*anchor)),
+            ("kind", Value::Text("clock_anchor".into())),
+            (
+                "body",
+                object([(
+                    "manifest_digest",
+                    Value::Text(binding.manifest_digest().to_hex()),
+                )]),
+            ),
+        ])
+        .to_canonical();
+        output.push_line(&line)?;
+    }
+    for (sequence, event) in parent.report().events().enumerate() {
+        let line = object([
+            ("stream", Value::Text("parent_monitor".into())),
+            ("sequence", Value::U64(sequence as u64)),
+            ("receipt", anchor_value(event.anchor)),
+            ("kind", Value::Text("monitor_event".into())),
+            (
+                "body",
+                object([
+                    ("action", Value::Text(format!("{:?}", event.action))),
+                    (
+                        "time",
+                        event.time.map_or_else(
+                            |error| Value::Text(format!("error:{error:?}")),
+                            Value::U64,
+                        ),
+                    ),
+                    (
+                        "record_error",
+                        event
+                            .record_error
+                            .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+                    ),
+                    ("missed", Value::Text(format!("{:?}", event.missed))),
+                ]),
+            ),
+        ])
+        .to_canonical();
+        output.push_line(&line)?;
+    }
+    let line = object([
+        ("stream", Value::Text("parent_sampler_assessment".into())),
+        ("sequence", Value::U64(0)),
+        ("receipt", Value::Null),
+        ("kind", Value::Text("summary".into())),
+        (
+            "body",
+            object([
+                (
+                    "manifest_digest",
+                    Value::Text(binding.manifest_digest().to_hex()),
+                ),
+                (
+                    "clock_overflow",
+                    parent
+                        .history()
+                        .overflow()
+                        .map_or(Value::Null, anchor_value),
+                ),
+                ("clock_missing", Value::Bool(parent.history().missing())),
+                (
+                    "clock_error",
+                    Value::Text(format!("{:?}", parent.history().clock_error())),
+                ),
+                ("fault", Value::Text(format!("{:?}", parent.fault()))),
+                ("reported_finished", Value::Bool(parent.reported_finished())),
+                (
+                    "current_clock_valid",
+                    Value::Bool(parent.report().current_clock_valid()),
+                ),
+                ("event_count", Value::U64(total_events as u64)),
+            ]),
+        ),
+    ])
+    .to_canonical();
+    output.push_line(&line)?;
+    Ok(output.finish())
+}
+
 fn raw_events_inner<F>(s: &Supervisor, append: F) -> Result<BoundText, WireError>
 where
     F: FnOnce(&mut RawBuilder) -> Result<(), WireError>,

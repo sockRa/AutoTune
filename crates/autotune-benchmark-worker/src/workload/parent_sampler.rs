@@ -209,6 +209,10 @@ pub struct ParentSampler {
     _metadata: Reservation,
 }
 impl ParentSampler {
+    /// Immutable binding used by the fixed parent export path.
+    pub fn binding(&self) -> WorkerBinding {
+        self.binding
+    }
     pub fn watch_error(&self) -> Option<super::parent_watch::Fault> {
         self.watch_error
     }
