@@ -55,6 +55,29 @@ pub struct Turn {
     pub worker_result: Option<parent_worker_channel::ResultPoll>,
 }
 
+#[allow(clippy::large_enum_variant)] // Keep unconsumed consent decisions inline on rejection.
+pub enum AdmissionProgress {
+    SetupPending,
+    AwaitingPreflight,
+    PreflightAccepted,
+    ControllerAttached,
+    WaitingForWatch,
+    StartQueued,
+    NativeGrantQueued,
+    PreflightRejected(PreflightFailure),
+    ControllerStartFailed(parent_sampler_channel::ControllerStartFault),
+    StartFailed(super::parent_start::Fault),
+    NativeGrantFailed(parent_sampler::Fault),
+    Failed,
+}
+
+pub struct AdmissionTurn<'r, 's> {
+    pub observed: Turn,
+    pub progress: AdmissionProgress,
+    /// Remains owned by the caller until required peers/setup are ready.
+    pub preflight: Option<PreflightInput<'r, 's>>,
+}
+
 pub struct Owners {
     pub stage: Stage,
     pub parent: parent_sampler::ParentSampler,
@@ -405,6 +428,53 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             setup,
             worker_control,
             worker_result,
+        }
+    }
+
+    /// Poll once, then perform at most one ordered admission transition. The
+    /// caller may prepare preflight evidence in advance, but it is returned
+    /// untouched until all required peer/setup reports have arrived.
+    pub fn advance_admission_once<'r, 'p>(
+        &mut self,
+        run: &BoundRun<'_>,
+        clock: &WindowsClock,
+        budget: &Budget,
+        preflight: Option<PreflightInput<'r, 'p>>,
+    ) -> AdmissionTurn<'r, 'p> {
+        let observed = self.poll_once(run, clock, budget);
+        let mut unused_preflight = preflight;
+        let progress = match self.stage {
+            Stage::SetupPending => AdmissionProgress::SetupPending,
+            Stage::SetupReady if !self.preflight_ready() => AdmissionProgress::SetupPending,
+            Stage::SetupReady => match unused_preflight.take() {
+                None => AdmissionProgress::AwaitingPreflight,
+                Some(input) => match self.verify_reported_preflight(input) {
+                    Ok(()) => AdmissionProgress::PreflightAccepted,
+                    Err(failure) => AdmissionProgress::PreflightRejected(failure),
+                },
+            },
+            Stage::PreflightAccepted => match self.start_and_attach_watch(clock, budget) {
+                Ok(()) => AdmissionProgress::ControllerAttached,
+                Err(fault) => AdmissionProgress::ControllerStartFailed(fault),
+            },
+            Stage::ControllerAttached => match self.queue_start_when_watch_ready(clock) {
+                Ok(parent_worker_channel::StartProgress::WaitingForWatch) => {
+                    AdmissionProgress::WaitingForWatch
+                }
+                Ok(parent_worker_channel::StartProgress::Queued) => AdmissionProgress::StartQueued,
+                Err(fault) => AdmissionProgress::StartFailed(fault),
+            },
+            Stage::StartQueued => match self.collect_and_queue_native_grant(clock) {
+                Ok(()) => AdmissionProgress::NativeGrantQueued,
+                Err(fault) => AdmissionProgress::NativeGrantFailed(fault),
+            },
+            Stage::NativeGrantQueued => AdmissionProgress::NativeGrantQueued,
+            Stage::Failed => AdmissionProgress::Failed,
+        };
+        AdmissionTurn {
+            observed,
+            progress,
+            preflight: unused_preflight,
         }
     }
 

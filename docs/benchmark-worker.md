@@ -1311,6 +1311,14 @@ pilot inputs when the controller is missing; setup or cross-role binding
 failures return the retirement assets and all pilot inputs. This closes the
 source-level admission-to-finalizer ownership handoff, but it is not called by a
 fixed parent entrypoint and does not drive the preceding poll/admission loop.
+`advance_admission_once` now performs one poll round and at most one next
+ordered transition: wait for setup/preflight, verify reported preflight, attach
+the controller, queue watch-gated Start, or collect and queue NativeGrant.
+Preflight input, including consent decisions, is returned unchanged until the
+peer/setup gate is ready; every failed transition remains explicit in the
+returned progress value. The caller still owns launch, starting-session
+construction, run-loop scheduling, terminal stop/audit, finalizer polling and
+archive completion.
 This coordinator does not launch the three processes, poll the pre-manifest
 starting session, own the whole execution/retirement loop, or prove hardware or
 GPU qualification.
