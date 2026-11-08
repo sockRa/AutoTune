@@ -137,7 +137,14 @@ pub struct FinalizerFailure<E> {
 }
 
 #[allow(clippy::large_enum_variant)] // Keep all original Windows/process owners inline on failure.
-pub enum AdmissionFinalizerFailure<E> {
+pub enum AdmissionFinalizerFailure<'a, 's, 'w, E> {
+    TerminalIncomplete {
+        admission: ParentAdmission<'a, 's, 'w>,
+        sampler: Process,
+        worker: Process,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+    },
     MissingController {
         owners: Owners,
         sampler: Process,
@@ -544,7 +551,10 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
     }
 
     fn terminal_evidence_ready(&self) -> bool {
-        self.sampler.parent().fault().is_none()
+        self.stage == Stage::NativeGrantQueued
+            && self.worker.assessment_fault().is_none()
+            && !self.worker.overflowed()
+            && self.sampler.parent().fault().is_none()
             && self.sampler.parent().reported_finished()
             && self.worker.reports_complete()
             && self.worker.control_audit().is_some_and(|audit| {
@@ -729,9 +739,9 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         }
     }
 
-    /// Transfer the complete admission owner directly into the existing pilot
-    /// finalizer. Missing-watch and rejected-binding paths return all source
-    /// and process owners without dropping the clock or caller evidence.
+    /// Transfer a terminally audited admission owner into the pilot finalizer.
+    /// Before the exact parent/worker completion gate is met, every owner is
+    /// returned unchanged so polling and shutdown evidence collection can continue.
     #[allow(clippy::result_large_err)] // Preserve every session owner inline on failure.
     pub fn into_pilot_finalizer<E>(
         self,
@@ -742,8 +752,17 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         budget: &Budget,
     ) -> Result<
         super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
-        AdmissionFinalizerFailure<E>,
+        AdmissionFinalizerFailure<'a, 's, 'w, E>,
     > {
+        if !self.terminal_evidence_ready() {
+            return Err(AdmissionFinalizerFailure::TerminalIncomplete {
+                admission: self,
+                sampler,
+                worker,
+                clock,
+                inputs,
+            });
+        }
         let owners = self.into_parts();
         let retirement = match owners.into_retirement(sampler, worker, clock) {
             Ok(retirement) => retirement,

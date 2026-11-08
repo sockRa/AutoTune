@@ -1581,3 +1581,12 @@ composition are still required before a runnable benchmark can be claimed.
   all-feature checks plus warning-denied Clippy pass; no tests or runtime. Failed
   session cleanup, process-exit retirement and fixed parent entrypoint remain
   open.
+- 2026-11-08 terminal-gated finalizer transfer: `into_pilot_finalizer` now
+  requires the NativeGrantQueued stage, complete non-overflowed worker reports,
+  accepted sampler RoleFinished and a clean worker control audit before
+  consuming admission into retirement. An early
+  call returns the intact ParentAdmission, original process pair, clock and
+  caller evidence, so the loop can continue polling. Formatting and Windows
+  GNU/Linux all-target/all-feature checks plus warning-denied Clippy pass; no
+  tests or runtime. Fixed parent entrypoint and failed-session cleanup remain
+  open.

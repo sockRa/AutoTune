@@ -1306,9 +1306,14 @@ returns the untouched `Owners`, both process handles and clock for explicit
 failure handling; retirement assets are never built without their controller.
 `ParentAdmission::into_pilot_finalizer` now composes `into_parts`,
 `into_retirement` and `start_pilot_finalizer` in one consuming transition. Its
-typed failure returns the original process pair, clock, admission owners and
-pilot inputs when the controller is missing; setup or cross-role binding
-failures return the retirement assets and all pilot inputs. This closes the
+terminal gate requires NativeGrantQueued, complete non-overflowed worker
+reports, accepted sampler RoleFinished, and a clean worker StopAck/RoleFinished
+audit. Before that gate, its typed
+failure returns the original ParentAdmission, process pair, clock and pilot
+inputs unchanged, allowing more nonblocking polls; a missing controller,
+incomplete setup or cross-role binding failure likewise returns all owners.
+After the gate, setup or cross-role binding failures return retirement assets
+and all pilot inputs. This closes the
 source-level admission-to-finalizer ownership handoff, but it is not called by a
 fixed parent entrypoint and does not drive the preceding poll/admission loop.
 `advance_admission_once` now performs one poll round and at most one next
