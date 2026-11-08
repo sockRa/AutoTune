@@ -1547,3 +1547,21 @@ composition are still required before a runnable benchmark can be claimed.
   binding is inferred from construction. Static ownership review and formatting
   only; no tests or build. Native permission, runtime/process qualification and
   GPU acceptance remain unavailable.
+- 2026-11-08 typed owner binding for finalization: `start_pilot` now requires
+  scope/session/device/source/artifact equality across manifest and starting
+  scope; matches declaration, response/session digests, original process and
+  consent stamp; binds starting/environment report digests and worker setup
+  delivery to the retained parent context-reference record; and requires all
+  three parent peer origins to equal their original process owners. Invalid
+  parent finalization context now records only clock/cause facts and does not
+  issue original-process queries. Static review/formatting only, no test/build
+  or OS calls. Checks preserve reported-vs-physical proof limits; actual main,
+  native authority and qualification remain open.
+- 2026-11-08 finalizer preflight tightened: typed pilot start now requires the
+  parent to retain a successful queued Start, accepted RoleFinished and planned
+  stop matching the controller request, with no existing parent/controller
+  fault or prior retirement. Strict cross-artifact references bind the child
+  response's reported settings snapshot independently from the pre-manifest
+  starting artifact (these are distinct evidence roles). Invalid low-level
+  retirement context returns clock/cause evidence without invoking process
+  queries. Static read-through/format only; no tests, build or Windows calls.

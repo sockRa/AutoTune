@@ -2895,18 +2895,25 @@ successful collection/frame, acknowledged retirement, a successful controller
 report and successful joined operations. Request cancellation works through the
 independent controller reference before or after collection.
 
-This type does not yet assemble a concrete owner tuple for starting reception,
-starting-read receipt, output/artifact, consent and the two workload processes,
-or invoke a fixed parent main. The typed `PilotOwners<E>` bundle now names the
+The typed `PilotOwners<E>` bundle now names the
 pilot manifest, starting scope/process, closed starting handoff (including an
-unsent bootstrap frame and send fault), starting consent record, optional
-starting receipt/pre-manifest reports and worker setup delivery, plus caller
+unsent bootstrap frame and send fault), starting consent record, strict starting
+receipt, pre-manifest reports and worker setup delivery, plus caller
 workload output evidence. `Handoff::close` drops the process-borrowing sender
 before transferring its session and unsent evidence, so the starting process
 can be retained in the same owner bundle. `start_pilot` transfers this bundle
-with the sampler/worker/controller assets into the finalizer. This is an
-ownership API only: no main constructs it or proves that the included artifacts
-match. A never-returning final
+with the sampler/worker/controller assets into the finalizer. Before spawning
+the collector it checks fixed manifest/scope identity, starting declaration and
+response digest, original consent/process provenance, pre-manifest/environment
+artifact digests, worker setup binding/delivery, parent cross-artifact reference
+record (including the starting response's separately reported settings snapshot)
+and all three peer origins. It also requires a queued successful Start, accepted
+RoleFinished/parent stop and matching planned controller window, no prior parent
+or controller fault, and no existing retirement. These checks bind retained reports to one
+session; they do not prove source truth, and no fixed main constructs this bundle
+yet. A rejected binding returns all assets and evidence without issuing process
+queries. The lower-level collector also records a context failure without
+querying process handles. A never-returning final
 OS observation or controller operation can keep polling pending indefinitely;
 pending-query/phase/native-call deadlines and qualification of actual request
 timing remain open. Even `complete()` says only that the host retirement path
