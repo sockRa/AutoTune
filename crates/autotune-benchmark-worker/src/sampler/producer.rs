@@ -31,6 +31,20 @@ pub struct BoundText {
     pub(super) _allocation: Reservation,
     session_digest: Option<Digest>,
 }
+
+#[cfg(windows)]
+pub struct ParentTelemetryProjection {
+    pub telemetry: Vec<Telemetry>,
+    pub expected_slots: u64,
+    pub observed_slots: u64,
+    pub raw_records: u64,
+    pub late: u64,
+    pub rejected: u64,
+    pub duplicates: u64,
+    pub invalid_timing: bool,
+    _allocation: Reservation,
+}
+
 impl BoundText {
     pub fn copy(text: &str, budget: &Budget) -> Result<Self, WireError> {
         let allocation = budget
@@ -1044,6 +1058,172 @@ pub fn raw_events_with_parent_sampler(
     .to_canonical();
     output.push_line(&line)?;
     Ok(output.finish())
+}
+
+/// Derive typed telemetry only from actual receipts retained by the fixed
+/// workload ParentSampler. Raw packets remain the audit source for omitted or
+/// rejected rows; this projection never promotes a rejected reading.
+#[cfg(windows)]
+pub fn project_parent_telemetry(
+    parent: &crate::workload::parent_sampler::ParentSampler,
+    device: &str,
+    budget: &Budget,
+) -> Result<ParentTelemetryProjection, WireError> {
+    use crate::monitor::Unit;
+    use crate::workload::wire::Message;
+
+    let binding = parent.binding();
+    let monitor = binding.monitor();
+    let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+    let cutoff = parent
+        .report()
+        .stop()
+        .map_or_else(|| parent.report().now_ns(), |stop| stop.at_ns);
+    let expected_slots = (cutoff / p.cadence_ns + 1)
+        .checked_mul(u64::from(p.metric_count))
+        .ok_or(WireError::Capacity)?;
+    let estimate = parent
+        .records()
+        .len()
+        .checked_mul(1024)
+        .and_then(|n| n.checked_add(4096))
+        .ok_or(WireError::Capacity)?;
+    let allocation = budget.reserve(estimate).map_err(|_| WireError::Capacity)?;
+    let mut telemetry = Vec::new();
+    telemetry
+        .try_reserve_exact(parent.records().len())
+        .map_err(|_| WireError::Capacity)?;
+    let mut raw_records = 0u64;
+    let mut late = 0u64;
+    let mut rejected = 0u64;
+    let mut duplicates = 0u64;
+    let mut invalid_timing = false;
+
+    for receipt in parent.records() {
+        raw_records = raw_records.saturating_add(1);
+        let (ticket, before, after, raw) = match receipt.raw.message() {
+            Ok(Message::SamplerRecord {
+                ticket,
+                before,
+                after,
+                raw: Some(raw),
+                ..
+            }) => (*ticket, *before, *after, raw),
+            _ => {
+                rejected = rejected.saturating_add(1);
+                continue;
+            }
+        };
+        if ticket.binding != monitor {
+            rejected = rejected.saturating_add(1);
+            continue;
+        }
+        let name = metric_name(ticket.metric);
+        if telemetry
+            .iter()
+            .any(|row: &Telemetry| row.metric == name && row.slot == ticket.slot)
+        {
+            duplicates = duplicates.saturating_add(1);
+            continue;
+        }
+        let issue_anchor = parent.report().events().find_map(|event| {
+            matches!(event.action, Action::Begin(Some(actual)) if actual == ticket)
+                .then_some(event.anchor)
+        });
+        let mut clock = Clock::new(monitor, binding.epoch()).map_err(|_| WireError::Binding)?;
+        let issued_ns = issue_anchor.and_then(|anchor| clock.observe(anchor).ok());
+        let start_ns = issued_ns.and_then(|_| before.and_then(|a| clock.observe(a).ok()));
+        let end_ns = start_ns.and_then(|_| after.and_then(|a| clock.observe(a).ok()));
+        let receipt_anchor = receipt.raw.raw().receipt();
+        let receipt_ns = end_ns.and_then(|_| receipt_anchor.and_then(|a| clock.observe(a).ok()));
+        let ordered = matches!((issued_ns, start_ns, end_ns, receipt_ns), (Some(issue), Some(start), Some(end), Some(receipt_ns)) if ticket.start_ns == issue && ticket.start_ns <= start && start <= end && end <= receipt_ns)
+            && before.is_some_and(|start| {
+                after.is_some_and(|end| {
+                    start.qpc_after <= end.qpc_before
+                        && receipt_anchor.is_some_and(|anchor| end.qpc_after <= anchor.qpc_before)
+                })
+            });
+        invalid_timing |= !ordered;
+        if receipt_ns.is_none_or(|ns| ns > cutoff) {
+            late = late.saturating_add(1);
+        }
+
+        let assessed = receipt.record.as_ref().ok();
+        if assessed.is_none_or(|record| record.ticket != ticket) {
+            rejected = rejected.saturating_add(1);
+        }
+        let (value, vendor_code) = match &raw.reading {
+            autotune_probe::report::Reading::Available { .. } => {
+                let value = if ordered {
+                    assessed.map_or_else(
+                        || missing("assessment_rejected"),
+                        |record| {
+                            if record.status == crate::monitor::Status::Available {
+                                record.value.map_or_else(
+                                    || missing("invalid_value"),
+                                    |n| Obs::Known(TelemetryValue::Int(n)),
+                                )
+                            } else {
+                                missing("raw_unavailable")
+                            }
+                        },
+                    )
+                } else {
+                    missing("invalid_timing")
+                };
+                (value, missing("no_vendor_code"))
+            }
+            autotune_probe::report::Reading::Unavailable { failure } => (
+                missing("raw_unavailable"),
+                failure
+                    .vendor_status
+                    .map(|code| Obs::Known(code.to_string()))
+                    .unwrap_or_else(|| missing("no_vendor_code")),
+            ),
+        };
+        let unit = match ticket.metric.unit() {
+            Unit::DegC => "degC",
+            Unit::Milliwatt => "mW",
+            Unit::MHz => "MHz",
+            Unit::Percent => "%",
+        };
+        telemetry.push(Telemetry {
+            metric: name.into(),
+            unit: unit.into(),
+            device: device.into(),
+            value,
+            slot: ticket.slot,
+            query_start_ns: if ordered {
+                start_ns.map_or_else(|| missing("invalid_timing"), Obs::Known)
+            } else {
+                missing("invalid_timing")
+            },
+            query_end_ns: if ordered {
+                end_ns.map_or_else(|| missing("invalid_timing"), Obs::Known)
+            } else {
+                missing("invalid_timing")
+            },
+            receipt_ns: if ordered {
+                receipt_ns.map_or_else(|| missing("invalid_timing"), Obs::Known)
+            } else {
+                missing("invalid_timing")
+            },
+            internal_age: InternalAge::Unknown,
+            vendor_code,
+        });
+    }
+    let observed_slots = telemetry.len() as u64;
+    Ok(ParentTelemetryProjection {
+        telemetry,
+        expected_slots,
+        observed_slots,
+        raw_records,
+        late,
+        rejected,
+        duplicates,
+        invalid_timing,
+        _allocation: allocation,
+    })
 }
 
 fn raw_events_inner<F>(s: &Supervisor, append: F) -> Result<BoundText, WireError>
