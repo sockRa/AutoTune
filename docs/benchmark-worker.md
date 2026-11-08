@@ -3131,6 +3131,21 @@ was acknowledged and its retained controller operations joined. It does not
 establish GPU quiescence, physical release, workload correctness, profile
 acceptance, repeat permission or native authority.
 
+### Parent admission to pilot finalizer handoff — 2026-11-08
+
+`ParentAdmission::Owners::into_retirement` moves the exact sampler and worker
+process owners, parent sampler and controller into `retirement_collector::Assets`
+after channel borrows end. `RetirementOwners::start_pilot_finalizer` then joins
+those assets with `PilotOwnerInputs` (starting process, closed handoff, consent,
+receipt and reported artifacts) and the retained setup/report evidence before
+calling the existing three-role `SessionFinalizer::start_pilot` validation.
+Incomplete setup and rejected owner bindings return all owners to the caller,
+including a setup receiver and any simultaneously retained setup delivery.
+
+This is a typed source composition only. It has no fixed parent executable or
+launch loop call site, and does not qualify Windows process retirement, GPU
+quiescence, native calls, workload correctness or Gate B.
+
 ## Retained asynchronous retirement collector — 2026-11-08
 
 `workload::retirement_collector::Collector` moves one final host-retirement

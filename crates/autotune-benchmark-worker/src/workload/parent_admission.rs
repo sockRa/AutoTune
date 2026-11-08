@@ -72,6 +72,136 @@ pub struct RetirementOwners {
     pub setup: Option<ReadyDelivery>,
 }
 
+pub struct PilotOwnerInputs<E> {
+    pub manifest: super::manifest::PilotManifest,
+    pub scope: super::starting::Scope,
+    pub starting_process: Process<starting_bootstrap::Declaration>,
+    pub starting_handoff: super::starting_launch::ClosedHandoff,
+    pub starting_consent: super::consent::Record,
+    pub starting_read: super::starting_read::Receipt,
+    pub starting_evidence: super::starting::ReportedSnapshot,
+    pub host_environment: super::host_environment::Reported,
+    pub additional: E,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FinalizerFailureKind {
+    SetupIncomplete,
+    Pilot(super::session_finalizer::StartFault),
+}
+
+pub struct FinalizerFailure<E> {
+    pub kind: FinalizerFailureKind,
+    pub owners: RetirementOwners,
+    pub inputs: PilotOwnerInputs<E>,
+}
+
+impl RetirementOwners {
+    /// Reassemble the exact starting/pilot evidence and run the existing
+    /// three-role finalizer validation. Every failure returns both retirement
+    /// and starting owners for continued cleanup or explicit fault handling.
+    #[allow(clippy::result_large_err)] // Keep the complete session owner graph on failure.
+    pub fn start_pilot_finalizer<E>(
+        self,
+        inputs: PilotOwnerInputs<E>,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
+        FinalizerFailure<E>,
+    > {
+        let Self {
+            assets,
+            stage,
+            worker_report,
+            setup_receiver,
+            setup,
+        } = self;
+        let setup = match (setup_receiver, setup) {
+            (None, Some(setup)) => setup,
+            (setup_receiver, setup) => {
+                return Err(FinalizerFailure {
+                    kind: FinalizerFailureKind::SetupIncomplete,
+                    owners: Self {
+                        assets,
+                        stage,
+                        worker_report,
+                        setup_receiver,
+                        setup,
+                    },
+                    inputs,
+                });
+            }
+        };
+
+        let PilotOwnerInputs {
+            manifest,
+            scope,
+            starting_process,
+            starting_handoff,
+            starting_consent,
+            starting_read,
+            starting_evidence,
+            host_environment,
+            additional,
+        } = inputs;
+        let evidence = super::session_finalizer::PilotOwners {
+            manifest,
+            scope,
+            starting_process,
+            starting_handoff,
+            starting_consent,
+            starting_read,
+            starting_evidence,
+            host_environment,
+            worker_setup_delivery: setup,
+            worker_report_evidence: worker_report,
+            additional,
+        };
+        match super::session_finalizer::SessionFinalizer::<
+            super::session_finalizer::PilotOwners<E>,
+        >::start_pilot(assets, evidence, budget)
+        {
+            Ok(finalizer) => Ok(finalizer),
+            Err(failure) => {
+                let super::session_finalizer::PilotOwners {
+                    manifest,
+                    scope,
+                    starting_process,
+                    starting_handoff,
+                    starting_consent,
+                    starting_read,
+                    starting_evidence,
+                    host_environment,
+                    worker_setup_delivery,
+                    worker_report_evidence,
+                    additional,
+                } = failure.evidence;
+                Err(FinalizerFailure {
+                    kind: FinalizerFailureKind::Pilot(failure.fault),
+                    owners: Self {
+                        assets: failure.assets,
+                        stage,
+                        worker_report: worker_report_evidence,
+                        setup_receiver: None,
+                        setup: Some(worker_setup_delivery),
+                    },
+                    inputs: PilotOwnerInputs {
+                        manifest,
+                        scope,
+                        starting_process,
+                        starting_handoff,
+                        starting_consent,
+                        starting_read,
+                        starting_evidence,
+                        host_environment,
+                        additional,
+                    },
+                })
+            }
+        }
+    }
+}
+
 pub struct MissingController {
     pub owners: Owners,
     pub sampler: Process,
