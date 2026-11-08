@@ -1324,6 +1324,13 @@ peer/setup gate is ready; every failed transition remains explicit in the
 returned progress value. The caller still owns launch, starting-session
 construction, run-loop scheduling, terminal stop/audit, finalizer polling and
 archive completion.
+`advance_pilot_once` joins that admission path to the successful terminal
+path: before NativeGrant it delegates to the ordered admission driver; after
+NativeGrant it polls once and advances result completion, planned sampler stop
+and the worker control audit against the same original stop window. It returns
+any unused preflight evidence intact. This removes the caller's need to switch
+between two poll APIs, but does not add launch, failed-session recovery,
+retirement/finalizer polling, archive completion or a fixed executable.
 `advance_successful_shutdown_once` drives the success terminal path: it waits
 for complete worker result assessment, issues one planned sampler stop through
 the retained sampler sender, and starts the worker control audit using that

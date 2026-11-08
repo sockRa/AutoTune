@@ -95,6 +95,22 @@ pub struct TerminalTurn {
     pub progress: TerminalProgress,
 }
 
+#[allow(clippy::large_enum_variant)] // Keep unconsumed caller evidence inline; boxing would add an unbudgeted transfer.
+pub enum PilotProgress {
+    Admission(AdmissionProgress),
+    Shutdown(TerminalProgress),
+}
+
+/// One nonblocking round across the complete parent admission and successful
+/// terminal handshake. The caller still owns process launch, failure cleanup,
+/// retirement polling and archive completion.
+pub struct PilotTurn<'r, 'p> {
+    pub observed: Turn,
+    pub progress: PilotProgress,
+    /// A prepared preflight bundle remains caller-owned until admission uses it.
+    pub preflight: Option<PreflightInput<'r, 'p>>,
+}
+
 pub struct Owners {
     pub stage: Stage,
     pub parent: parent_sampler::ParentSampler,
@@ -502,6 +518,36 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         }
     }
 
+    /// Drive the fixed pilot's ordered parent loop one round at a time. Before
+    /// NativeGrant this delegates to the admission transition driver; once the
+    /// grant is queued it continues the worker-result/StopAck/RoleFinished
+    /// handshake. Exactly one poll round occurs per call. Any unused preflight
+    /// evidence is returned intact during shutdown.
+    pub fn advance_pilot_once<'r, 'p>(
+        &mut self,
+        run: &BoundRun<'_>,
+        clock: &WindowsClock,
+        budget: &Budget,
+        preflight: Option<PreflightInput<'r, 'p>>,
+    ) -> PilotTurn<'r, 'p> {
+        if self.stage == Stage::NativeGrantQueued {
+            let observed = self.poll_once(run, clock, budget);
+            let progress = self.advance_successful_shutdown_after_poll(clock, budget);
+            PilotTurn {
+                observed,
+                progress: PilotProgress::Shutdown(progress),
+                preflight,
+            }
+        } else {
+            let admission = self.advance_admission_once(run, clock, budget, preflight);
+            PilotTurn {
+                observed: admission.observed,
+                progress: PilotProgress::Admission(admission.progress),
+                preflight: admission.preflight,
+            }
+        }
+    }
+
     /// Poll once and drive the successful terminal handshake. Only complete
     /// worker result assessment can trigger the planned stop; the subsequent
     /// control audit is bound to that same original ParentSampler stop window.
@@ -512,6 +558,15 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         budget: &Budget,
     ) -> TerminalTurn {
         let observed = self.poll_once(run, clock, budget);
+        let progress = self.advance_successful_shutdown_after_poll(clock, budget);
+        TerminalTurn { observed, progress }
+    }
+
+    fn advance_successful_shutdown_after_poll(
+        &mut self,
+        clock: &WindowsClock,
+        budget: &Budget,
+    ) -> TerminalProgress {
         let progress = if self.stage == Stage::Failed {
             TerminalProgress::Failed
         } else if self.stage != Stage::NativeGrantQueued {
@@ -547,7 +602,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
                 },
             }
         };
-        TerminalTurn { observed, progress }
+        progress
     }
 
     fn terminal_evidence_ready(&self) -> bool {
