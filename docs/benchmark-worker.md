@@ -1864,7 +1864,10 @@ terminal packet.
 
 The worker-aware workload raw exporter already retains the complete control
 packet bytes, so this extends the packet artifact without adding another message
-or queue slot. A reported return still cannot establish GPU quiescence or OS
+or queue slot. The retained `worker_setup` owner artifact already contains the
+complete canonical CUDA setup ledger, so both setup and teardown call evidence are
+represented in the aggregate raw stream when the finalizer path is called. These
+are worker-reported facts: a return still cannot establish GPU quiescence or OS
 process exit. The fixed parent does not yet call the finalizer/archive composition;
 no Windows process, driver, GPU, or runtime execution was performed. Local checks
 are limited to formatting, library compile, and warning-denied library Clippy for
