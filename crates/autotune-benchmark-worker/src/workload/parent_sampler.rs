@@ -61,6 +61,35 @@ pub struct NativeGrantAttempt {
     pub queued: bool,
     pub result: Result<(), Fault>,
 }
+/// Exact encoded NativeGrant bytes retained independently of queue ownership.
+/// Queue success is not receipt, native execution, or durable evidence.
+#[cfg(windows)]
+pub struct NativeGrantWire {
+    bytes: Vec<u8>,
+    _allocation: Reservation,
+}
+#[cfg(windows)]
+impl NativeGrantWire {
+    fn copy(bytes: &[u8], budget: &Budget) -> Result<Self, Fault> {
+        let size = bytes
+            .len()
+            .checked_add(std::mem::size_of::<Self>())
+            .ok_or(Fault::Capacity)?;
+        let allocation = budget.reserve(size).map_err(|_| Fault::Capacity)?;
+        let mut retained = Vec::new();
+        retained
+            .try_reserve_exact(bytes.len())
+            .map_err(|_| Fault::Capacity)?;
+        retained.extend_from_slice(bytes);
+        Ok(Self {
+            bytes: retained,
+            _allocation: allocation,
+        })
+    }
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
 #[derive(Default)]
 pub struct Reentry {
     slot: Option<u64>,
@@ -196,6 +225,8 @@ pub struct ParentSampler {
     )>,
     #[cfg(windows)]
     native_grant_attempt: Option<NativeGrantAttempt>,
+    #[cfg(windows)]
+    native_grant_wire: Option<NativeGrantWire>,
     start_attempt: Option<super::parent_start::Attempt>,
     #[cfg(windows)]
     watch: Option<super::parent_watch_windows::Publisher>,
@@ -234,6 +265,10 @@ impl ParentSampler {
     #[cfg(windows)]
     pub fn native_grant_attempt(&self) -> Option<&NativeGrantAttempt> {
         self.native_grant_attempt.as_ref()
+    }
+    #[cfg(windows)]
+    pub fn native_grant_wire(&self) -> Option<&NativeGrantWire> {
+        self.native_grant_wire.as_ref()
     }
     #[cfg(windows)]
     pub fn unsent_native_grant(&self) -> Option<&EncodedFrame> {
@@ -467,6 +502,12 @@ impl ParentSampler {
                 }
             };
             self.unsent_native_grant = Some(frame);
+            let retained_wire = self
+                .unsent_native_grant
+                .as_ref()
+                .expect("retained grant before send")
+                .as_bytes();
+            self.native_grant_wire = Some(NativeGrantWire::copy(retained_wire, &self.budget)?);
             let before_send = self.observe_start(clock);
             attempt.observations[1] = Some(before_send);
             let before_check =
@@ -885,6 +926,8 @@ impl ParentSampler {
             native_grant_observations: None,
             #[cfg(windows)]
             native_grant_attempt: None,
+            #[cfg(windows)]
+            native_grant_wire: None,
             start_attempt: None,
             #[cfg(windows)]
             watch: None,

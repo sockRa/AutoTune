@@ -1581,7 +1581,184 @@ pub fn append_pilot_process_artifacts(
         .to_canonical();
         output.push_line(&line)?;
     }
+    let grant_wire = parent.native_grant_wire().map(|wire| wire.bytes());
+    output.push_line(&owner_bytes_line("native_grant_wire", grant_wire)?)?;
+    let grant_attempt = parent
+        .native_grant_attempt()
+        .map(native_grant_attempt_value)
+        .map(|value| value.to_canonical());
+    output.push_line(&owner_bytes_line(
+        "native_grant_attempt",
+        grant_attempt.as_deref().map(str::as_bytes),
+    )?)?;
     Ok(output.finish())
+}
+
+#[cfg(windows)]
+fn owner_bytes_line(owner: &str, bytes: Option<&[u8]>) -> Result<String, WireError> {
+    let line = object([
+        ("kind", Value::Text("retained_owner_artifact".into())),
+        ("owner", Value::Text(owner.into())),
+        ("available", Value::Bool(bytes.is_some())),
+        (
+            "digest",
+            bytes.map_or(Value::Null, |bytes| {
+                Value::Text(Digest::of(Domain::RawArtifact, bytes).to_hex())
+            }),
+        ),
+        (
+            "bytes_hex",
+            bytes.map_or(Value::Null, |bytes| {
+                Value::Text(super::wire_model::hex(bytes))
+            }),
+        ),
+    ])
+    .to_canonical();
+    Ok(line)
+}
+
+#[cfg(windows)]
+fn parent_start_observation_value(
+    observation: crate::workload::parent_start::Observation,
+) -> Value {
+    object([
+        (
+            "anchor",
+            observation.anchor.map_or(Value::Null, anchor_value),
+        ),
+        (
+            "capture_error",
+            observation
+                .capture_error
+                .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+        ),
+        (
+            "clock_identity",
+            object([
+                ("frequency", Value::U64(observation.clock_identity.0)),
+                (
+                    "token",
+                    Value::Text(super::wire_model::hex(&observation.clock_identity.1)),
+                ),
+            ]),
+        ),
+        (
+            "parent_fault",
+            observation
+                .parent_fault
+                .map_or(Value::Null, |fault| Value::Text(format!("{fault:?}"))),
+        ),
+        ("context", Value::Bool(observation.context)),
+        ("reported_screen", Value::Bool(observation.reported_screen)),
+        (
+            "safety",
+            Value::Array(
+                observation
+                    .safety
+                    .map(|record| record.map_or(Value::Null, parent_record_value))
+                    .into(),
+            ),
+        ),
+        (
+            "reentry",
+            observation.reentry.map_or(Value::Null, |records| {
+                Value::Array(records.map(parent_record_value).into())
+            }),
+        ),
+        ("consecutive", Value::U64(observation.consecutive.into())),
+        ("watch_ready", Value::Bool(observation.watch_ready)),
+    ])
+}
+
+#[cfg(windows)]
+fn parent_record_value(record: crate::monitor::Record) -> Value {
+    let binding = record.ticket.binding;
+    object([
+        (
+            "session",
+            Value::Text(super::wire_model::hex(&binding.session)),
+        ),
+        ("run", Value::Text(super::wire_model::hex(&binding.run))),
+        (
+            "device_uuid",
+            Value::Text(super::wire_model::hex(&binding.device.uuid)),
+        ),
+        ("device_domain", Value::U64(binding.device.domain.into())),
+        ("device_bus", Value::U64(binding.device.bus.into())),
+        ("device_number", Value::U64(binding.device.device.into())),
+        (
+            "clock_token",
+            Value::Text(super::wire_model::hex(&binding.clock_token)),
+        ),
+        ("frequency", Value::U64(binding.qpc_frequency)),
+        (
+            "metric",
+            Value::Text(metric_name(record.ticket.metric).into()),
+        ),
+        ("slot", Value::U64(record.ticket.slot)),
+        ("scheduled_ns", Value::U64(record.ticket.scheduled_ns)),
+        ("start_ns", Value::U64(record.ticket.start_ns)),
+        ("end_ns", Value::U64(record.end_ns)),
+        ("receipt_ns", Value::U64(record.receipt_ns)),
+        ("unit", Value::Text(format!("{:?}", record.unit))),
+        ("status", Value::Text(format!("{:?}", record.status))),
+        ("value", record.value.map_or(Value::Null, Value::I64)),
+    ])
+}
+
+#[cfg(windows)]
+fn native_grant_attempt_value(
+    attempt: &crate::workload::parent_sampler::NativeGrantAttempt,
+) -> Value {
+    object([
+        (
+            "observations",
+            Value::Array(
+                attempt
+                    .observations
+                    .map(|observation| {
+                        observation.map_or(Value::Null, parent_start_observation_value)
+                    })
+                    .into(),
+            ),
+        ),
+        (
+            "checks",
+            Value::Array(
+                attempt
+                    .checks
+                    .map(|check| {
+                        check.map_or(Value::Null, |check| {
+                            Value::Text(match check {
+                                Ok(()) => "ok".into(),
+                                Err(error) => format!("error:{error:?}"),
+                            })
+                        })
+                    })
+                    .into(),
+            ),
+        ),
+        (
+            "codec_error",
+            attempt
+                .codec_error
+                .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+        ),
+        (
+            "send_error",
+            attempt
+                .send_error
+                .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+        ),
+        ("queued", Value::Bool(attempt.queued)),
+        (
+            "result",
+            Value::Text(match attempt.result {
+                Ok(()) => "ok".into(),
+                Err(error) => format!("error:{error:?}"),
+            }),
+        ),
+    ])
 }
 
 /// Derive typed telemetry only from actual receipts retained by the fixed
