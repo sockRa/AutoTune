@@ -306,28 +306,48 @@ impl Process<Declaration> {
         self.declaration.binding()
     }
 
-    /// Parent outgoing frames bind this exact declaration; stop closes ordinary
-    /// queue admission even for a sender created before the cancellation race.
-    pub fn sender(
+    /// Reserve all fallible sender storage before the caller takes another
+    /// one-shot transport owner such as the split control lane.
+    pub(crate) fn reserve_sender(
         &self,
         budget: &Budget,
+    ) -> Result<crate::workload::transport::SenderReservation, SendFailure> {
+        if self.sender_taken.load(Ordering::Acquire) {
+            return Err(SendFailure::Closed);
+        }
+        Sender::<CancelQueue<ProcessQueue<'_>>>::reserve(budget)
+    }
+
+    pub(crate) fn sender_with_reservation(
+        &self,
+        reserved: crate::workload::transport::SenderReservation,
     ) -> Result<Sender<CancelQueue<ProcessQueue<'_>>>, SendFailure> {
         if self.sender_taken.load(Ordering::Acquire) {
             return Err(SendFailure::Closed);
         }
-        let sender = Sender::new(
+        let sender = Sender::new_reserved(
             CancelQueue::new(
                 ProcessQueue { process: self },
                 self.shared.cancelled.clone(),
             ),
             self.declaration.binding(),
             Direction::ToWorker,
-            budget,
-        )?;
+            reserved,
+        );
         self.sender_taken
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| SendFailure::Closed)?;
         Ok(sender)
+    }
+
+    /// Parent outgoing frames bind this exact declaration; stop closes ordinary
+    /// queue admission even for a sender created before the cancellation race.
+    pub fn sender(
+        &self,
+        budget: &Budget,
+    ) -> Result<Sender<CancelQueue<ProcessQueue<'_>>>, SendFailure> {
+        let reserved = self.reserve_sender(budget)?;
+        self.sender_with_reservation(reserved)
     }
 }
 impl Process<starting_bootstrap::Declaration> {

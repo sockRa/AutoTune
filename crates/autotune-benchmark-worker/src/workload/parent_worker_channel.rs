@@ -481,8 +481,9 @@ impl<'a> ParentWorkerChannel<'a> {
         let abort_storage = budget
             .reserve(std::mem::size_of::<Option<Result<(), Option<i32>>>>())
             .map_err(|_| crate::workload::transport::SendFailure::Capacity)?;
+        let sender_reservation = worker.reserve_sender(budget)?;
         let control = worker.split_control()?;
-        let sender = worker.sender(budget)?;
+        let sender = worker.sender_with_reservation(sender_reservation)?;
         Ok(Self {
             worker,
             control,

@@ -1024,3 +1024,5 @@ Checked-in/source-level entry points: [documentation index](docs/README.md), [pr
 - Architecture and detailed gates: `_bmad-output/planning-artifacts/architecture/architecture-AutoTune-2026-10-17/ARCHITECTURE-SPINE.md` and `ACCEPTANCE-GATES.md`.
 
 This is a product roadmap, **not** a generated BMAD sprint-status file or a claim that a formal PRD/story backlog has been completed. Use its stable IDs when creating later implementation stories; retain traceability to these exit criteria and detailed safety contracts. For an explicit BMAD status check, read this roadmap alongside the active spec rather than relying on sprint-file discovery alone.
+
+- 2026-11-08 continuation (parent worker channel reservation ordering): `ParentWorkerChannel::new` now reserves the process sender's codec and metadata before splitting the one-shot control lane. A capacity failure therefore leaves transport ownership intact. Rust formatting, Windows GNU/Linux all-target/all-feature package checks and warning-denied Clippy pass; no tests, process/native/GPU execution or qualification. The fixed parent executable and full launch-to-archive loop remain absent; E3 partial/Gate B unmet.

@@ -67,28 +67,52 @@ pub struct Sender<Q> {
     faults: [Option<SendFailure>; 2],
     _metadata: Reservation,
 }
+/// Prepaid bounded storage for a Sender. Keeping this separate from its queue
+/// lets process adapters reserve every fallible allocation before splitting
+/// one-shot transport ownership.
+pub(crate) struct SenderReservation {
+    codec: Reservation,
+    metadata: Reservation,
+}
 fn index(lane: Lane) -> usize {
     usize::from(lane == Lane::Control)
 }
 impl<Q: Queue> Sender<Q> {
+    pub(crate) fn reserve(budget: &Budget) -> Result<SenderReservation, SendFailure> {
+        let codec = budget
+            .reserve(64 * 1024 * 16)
+            .map_err(|_| SendFailure::Capacity)?;
+        let metadata = budget
+            .reserve(std::mem::size_of::<Self>())
+            .map_err(|_| SendFailure::Capacity)?;
+        Ok(SenderReservation { codec, metadata })
+    }
+
     pub fn new(
         queue: Q,
         binding: WorkerBinding,
         direction: Direction,
         budget: &Budget,
     ) -> Result<Self, SendFailure> {
-        let _codec = budget
-            .reserve(64 * 1024 * 16)
-            .map_err(|_| SendFailure::Capacity)?;
-        Ok(Self {
+        let reserved = Self::reserve(budget)?;
+        Ok(Self::new_reserved(queue, binding, direction, reserved))
+    }
+
+    pub(crate) fn new_reserved(
+        queue: Q,
+        binding: WorkerBinding,
+        direction: Direction,
+        reserved: SenderReservation,
+    ) -> Self {
+        let transport_binding = binding.transport_digest();
+        drop(reserved.codec);
+        Self {
             queue,
-            binding: binding.transport_digest(),
+            binding: transport_binding,
             direction,
             faults: [None; 2],
-            _metadata: budget
-                .reserve(std::mem::size_of::<Self>())
-                .map_err(|_| SendFailure::Capacity)?,
-        })
+            _metadata: reserved.metadata,
+        }
     }
     pub fn fault(&self, lane: Lane) -> Option<SendFailure> {
         self.faults[index(lane)]
