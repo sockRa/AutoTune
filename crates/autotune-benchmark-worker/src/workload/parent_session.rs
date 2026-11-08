@@ -10,8 +10,8 @@ use super::{
     host_environment::Reported as HostEnvironment,
     manifest::BoundRun,
     parent_admission::{
-        Owners, ParentAdmission, PilotTurn, PreflightInput, PreflightInputFailure,
-        ProcessAdmissionFailure, Stage,
+        OwnerPairCompletionStartFailure, Owners, ParentAdmission, PilotOwnerInputs, PilotTurn,
+        PreflightInput, PreflightInputFailure, ProcessAdmissionFailure, Stage,
     },
     pilot_launch::AdmissionPair,
     starting::Scope,
@@ -44,6 +44,32 @@ pub enum PilotWriterStartFailure {
     ManifestBinding,
     AlreadyStarted,
     Start(io::Error),
+}
+
+#[allow(clippy::large_enum_variant)] // Keep the session, process pair and archive context recoverable.
+pub enum PilotCompletionStartFailure<'session, 'pair, 'run, 'manifest, 'archive, E> {
+    SessionNotTerminal {
+        session: FixedParentSession<'session, 'pair, 'run, 'manifest>,
+        pair: AdmissionPair,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        writer: &'archive mut crate::sampler::writer::Writer,
+        provenance: crate::evidence::Provenance,
+    },
+    Finalizer(OwnerPairCompletionStartFailure<'archive, E>),
+}
+
+#[allow(clippy::large_enum_variant)] // Keep the session, process pair and archive context recoverable.
+pub enum PilotFailureCompletionStartFailure<'session, 'pair, 'run, 'manifest, 'archive, E> {
+    SessionNotFaulted {
+        session: FixedParentSession<'session, 'pair, 'run, 'manifest>,
+        pair: AdmissionPair,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        writer: &'archive mut crate::sampler::writer::Writer,
+        provenance: crate::evidence::Provenance,
+    },
+    Finalizer(OwnerPairCompletionStartFailure<'archive, E>),
 }
 
 impl<'a, 'p, 'r, 'm> FixedParentSession<'a, 'p, 'r, 'm> {
@@ -200,5 +226,73 @@ impl<'a, 'p, 'r, 'm> FixedParentSession<'a, 'p, 'r, 'm> {
                 writer_started,
             }),
         }
+    }
+
+    /// Transfer a clean terminal session directly to retirement, finalization
+    /// and archive polling while retaining all caller inputs on a rejected gate.
+    #[allow(clippy::result_large_err)] // Return the entire live owner graph on either rejection path.
+    #[allow(clippy::too_many_arguments)] // Keep every process, clock and evidence binding explicit.
+    pub fn start_completion<'archive, E>(
+        self,
+        pair: AdmissionPair,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        writer: &'archive mut crate::sampler::writer::Writer,
+        provenance: crate::evidence::Provenance,
+        budget: &Budget,
+    ) -> Result<
+        crate::workload::session_finalizer::PilotCompletionDriver<'archive, E>,
+        PilotCompletionStartFailure<'a, 'p, 'r, 'm, 'archive, E>,
+    > {
+        let owners = match self.into_terminal_owners() {
+            Ok(owners) => owners,
+            Err(session) => {
+                return Err(PilotCompletionStartFailure::SessionNotTerminal {
+                    session,
+                    pair,
+                    clock,
+                    inputs,
+                    writer,
+                    provenance,
+                });
+            }
+        };
+        owners
+            .start_pilot_completion(pair, clock, inputs, writer, provenance, budget)
+            .map_err(PilotCompletionStartFailure::Finalizer)
+    }
+
+    /// Transfer a retained parent fault directly to failure finalization and
+    /// archive polling while retaining all caller inputs on a rejected gate.
+    #[allow(clippy::result_large_err)] // Return the entire live owner graph on either rejection path.
+    #[allow(clippy::too_many_arguments)] // Keep every process, clock and evidence binding explicit.
+    pub fn start_failure_completion<'archive, E>(
+        self,
+        pair: AdmissionPair,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        writer: &'archive mut crate::sampler::writer::Writer,
+        provenance: crate::evidence::Provenance,
+        budget: &Budget,
+    ) -> Result<
+        crate::workload::session_finalizer::PilotCompletionDriver<'archive, E>,
+        PilotFailureCompletionStartFailure<'a, 'p, 'r, 'm, 'archive, E>,
+    > {
+        let owners = match self.into_faulted_owners() {
+            Ok(owners) => owners,
+            Err(session) => {
+                return Err(PilotFailureCompletionStartFailure::SessionNotFaulted {
+                    session,
+                    pair,
+                    clock,
+                    inputs,
+                    writer,
+                    provenance,
+                });
+            }
+        };
+        owners
+            .start_pilot_failure_completion(pair, clock, inputs, writer, provenance, budget)
+            .map_err(PilotFailureCompletionStartFailure::Finalizer)
     }
 }

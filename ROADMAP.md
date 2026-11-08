@@ -1131,3 +1131,11 @@ This is a product roadmap, **not** a generated BMAD sprint-status file or a clai
   pass. No tests or process/runtime/native/GPU execution. The fixed parent still
   must prepare the manifest, drive preflight/admission/terminal/completion
   polls and coordinate cleanup; E3 remains partial and Gate B unmet.
+- 2026-11-08 continuation (fixed parent completion handoff): separate
+  success/fault methods now gate owner release and transfer the exact process
+  pair, clock, finalizer inputs, writer and provenance into the existing
+  completion driver, returning them intact when terminal gates reject the
+  transfer. Windows GNU formatting, package all-target/all-feature check and
+  warning-denied Clippy pass. No tests or process/runtime/native/GPU execution.
+  Top-level evidence construction, poll/cancellation loop, executable entry and
+  qualification remain outstanding; E3 remains partial and Gate B unmet.

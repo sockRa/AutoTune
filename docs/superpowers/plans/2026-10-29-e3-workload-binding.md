@@ -1721,3 +1721,11 @@ composition are still required before a runnable benchmark can be claimed.
   formatting, package all-target/all-feature check and warning-denied Clippy
   pass. No tests or process/runtime/native/GPU execution; manifest preparation,
   top-level polling and writer completion handling remain outside this seam.
+- 2026-11-08 fixed parent completion handoff: `FixedParentSession` now has
+  distinct success and retained-fault methods that gate owner release and pass
+  the exact process pair, clock, finalizer inputs, writer and provenance to the
+  existing archive completion driver. Rejected terminal gates return all of
+  those owners. Windows GNU formatting, package all-target/all-feature check
+  and warning-denied Clippy pass. No tests or process/runtime/native/GPU
+  execution; the fixed parent still must construct evidence inputs and poll
+  through archive completion.

@@ -3385,3 +3385,11 @@ drive the session and completion driver, and handle startup faults. Windows
 GNU `fmt --check`, package all-target/all-feature `check` and warning-denied
 `clippy` pass. No tests, process/runtime/native/GPU execution or qualification
 were performed.
+
+The session also exposes separate success and retained-fault transfers to
+`PilotCompletionDriver`. Each first checks its corresponding terminal gate;
+if that gate is not met, it returns the live session together with the exact
+process pair, clock, finalizer inputs, writer and provenance. Finalizer startup
+rejections preserve the archive context through the existing typed failure.
+This removes one caller-side transfer step but does not supply the finalizer
+inputs or poll the driver.
