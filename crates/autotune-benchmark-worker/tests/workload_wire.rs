@@ -248,6 +248,7 @@ fn all_worker_observations_roundtrip_signed_status_and_do_not_drop_ownership_cha
                     pending: true,
                     cleanup_attempted: true,
                     cleanup_status: Some(i32::MIN),
+                    teardown: Default::default(),
                 },
             ),
             (
@@ -257,6 +258,7 @@ fn all_worker_observations_roundtrip_signed_status_and_do_not_drop_ownership_cha
                     pending: false,
                     cleanup_attempted: false,
                     cleanup_status: None,
+                    teardown: Default::default(),
                 },
             ),
         ] {

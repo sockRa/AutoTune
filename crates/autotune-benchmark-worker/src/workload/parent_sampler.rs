@@ -1190,6 +1190,7 @@ impl ParentSampler {
                         pending: false,
                         cleanup_attempted: true,
                         cleanup_status: Some(0),
+                        ..
                     }) if !self.reported_finished && self.control_time_valid(anchor, receipt) => {
                         self.reported_finished = true
                     }

@@ -462,12 +462,14 @@ fn run(out: &mut Outcome) {
     if let Some(prepared) = out.prepared.as_mut() {
         prepared.cleanup_unprepared(shared.clone());
     }
+    let mut teardown_evidence = super::teardown::Evidence::default();
     let cleanup = match out.prepared.as_mut() {
         Some(prepared) if matches!(prepared.result, Preparation::PrepareFailed(_)) => {
             let raw = prepared
                 .prestart
                 .requested()
                 .then_some(prepared.prestart.cleanup);
+            teardown_evidence = prepared.prestart.ledger.evidence();
             if let Some(f) = &mut out.finish {
                 f.record_cleanup(raw, prepared.prestart.ledger.fault());
             }
@@ -480,6 +482,7 @@ fn run(out: &mut Outcome) {
             session.cleanup();
             let raw = session.cleanup_observation();
             let fault = session.teardown_fault();
+            teardown_evidence = session.teardown_evidence();
             if let Some(f) = &mut out.finish {
                 f.record_cleanup(raw, fault);
             }
@@ -496,7 +499,11 @@ fn run(out: &mut Outcome) {
         Ok(()) => 0,
         Err(e) => e.raw_status,
     });
-    let completion = control.complete(cleanup.is_some_and(|c| c.attempted), status);
+    let completion = control.complete_with_teardown(
+        cleanup.is_some_and(|c| c.attempted),
+        status,
+        teardown_evidence,
+    );
     out.completion_result = Some(completion);
     if let Some(f) = &mut out.finish {
         f.completion_queued(completion);

@@ -55,6 +55,63 @@ pub struct Ledger {
     overflow: Option<(Operation, Option<Anchor>)>,
     rejected_return: Option<(Operation, Return, Option<Anchor>)>,
 }
+/// Fixed-size snapshot suitable for a single bounded RoleFinished frame.
+/// This records child-reported calls only; the parent still treats it as
+/// untrusted cleanup evidence, not proof of native quiescence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Evidence {
+    pub entries: [Option<Entry>; 8],
+    pub len: u8,
+    pub pending: bool,
+    pub fault: Option<Fault>,
+    pub overflow: Option<(Operation, Option<Anchor>)>,
+    pub rejected_return: Option<(Operation, Return, Option<Anchor>)>,
+}
+impl Evidence {
+    pub fn reports_success(self) -> bool {
+        if self.pending
+            || self.fault.is_some()
+            || self.overflow.is_some()
+            || self.rejected_return.is_some()
+            || !(7..=8).contains(&self.len)
+        {
+            return false;
+        }
+        self.entries[..usize::from(self.len)]
+            .iter()
+            .enumerate()
+            .all(|(index, entry)| {
+                let Some(entry) = entry else { return false };
+                let expected = match index {
+                    0 => Operation::Stream,
+                    1..=4 => Operation::Buffer((index - 1) as u8),
+                    5 => Operation::Module,
+                    6 => Operation::Context,
+                    7 => Operation::Library,
+                    _ => return false,
+                };
+                if entry.operation != expected
+                    || !entry.attempted
+                    || entry.before.is_none()
+                    || entry.after.is_none()
+                {
+                    return false;
+                }
+                match (entry.operation, entry.raw) {
+                    (
+                        Operation::Library,
+                        Some(Return::Library {
+                            released: true,
+                            error_code: None,
+                        }),
+                    ) => true,
+                    (Operation::Library, _) => false,
+                    (_, Some(Return::Cuda(0))) => true,
+                    _ => false,
+                }
+            })
+    }
+}
 impl Ledger {
     pub fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.entries[..self.len].iter().flatten()
@@ -70,6 +127,18 @@ impl Ledger {
     }
     pub fn rejected_return(&self) -> Option<(Operation, Return, Option<Anchor>)> {
         self.rejected_return
+    }
+    pub fn evidence(&self) -> Evidence {
+        let mut entries = [None; 8];
+        entries[..self.len].copy_from_slice(&self.entries[..self.len]);
+        Evidence {
+            entries,
+            len: self.len as u8,
+            pending: self.pending.is_some(),
+            fault: self.fault,
+            overflow: self.overflow,
+            rejected_return: self.rejected_return,
+        }
     }
     pub fn observer<F: FnMut() -> Check>(&mut self, check: F) -> Checked<'_, F> {
         Checked {

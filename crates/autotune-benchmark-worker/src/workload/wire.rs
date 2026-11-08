@@ -138,6 +138,262 @@ impl WorkerBinding {
         ])
     }
 }
+fn teardown_operation_value(operation: super::teardown::Operation) -> Value {
+    match operation {
+        super::teardown::Operation::Stream => Value::Text("stream".into()),
+        super::teardown::Operation::Buffer(index) => object([
+            ("kind", Value::Text("buffer".into())),
+            ("index", Value::U64(index.into())),
+        ]),
+        super::teardown::Operation::Module => Value::Text("module".into()),
+        super::teardown::Operation::Context => Value::Text("context".into()),
+        super::teardown::Operation::Library => Value::Text("library".into()),
+    }
+}
+fn parse_teardown_operation(value: &Value) -> Result<super::teardown::Operation, WireError> {
+    use super::teardown::Operation;
+    match value {
+        Value::Text(value) => match value.as_str() {
+            "stream" => Ok(Operation::Stream),
+            "module" => Ok(Operation::Module),
+            "context" => Ok(Operation::Context),
+            "library" => Ok(Operation::Library),
+            _ => Err(WireError::Body),
+        },
+        value => {
+            let o = exact(value, &["kind", "index"])?;
+            if string(get(o, "kind"))? != "buffer" {
+                return Err(WireError::Body);
+            }
+            let index = u8::try_from(uint(get(o, "index"))?).map_err(|_| WireError::Body)?;
+            (index <= 3)
+                .then_some(Operation::Buffer(index))
+                .ok_or(WireError::Body)
+        }
+    }
+}
+fn teardown_return_value(raw: super::teardown::Return) -> Value {
+    match raw {
+        super::teardown::Return::Cuda(status) => object([
+            ("kind", Value::Text("cuda".into())),
+            ("status", Value::I64(status.into())),
+        ]),
+        super::teardown::Return::Library {
+            released,
+            error_code,
+        } => object([
+            ("kind", Value::Text("library".into())),
+            ("released", Value::Bool(released)),
+            (
+                "error_code",
+                error_code.map_or(Value::Null, |status| Value::I64(status.into())),
+            ),
+        ]),
+    }
+}
+fn parse_teardown_return(
+    value: &Value,
+    i32_value: &impl Fn(&Value) -> Result<i32, WireError>,
+) -> Result<super::teardown::Return, WireError> {
+    let object = value.as_object().ok_or(WireError::Body)?;
+    let kind = string(object.get("kind").ok_or(WireError::Body)?)?;
+    match kind {
+        "cuda" => {
+            let o = exact(value, &["kind", "status"])?;
+            Ok(super::teardown::Return::Cuda(i32_value(get(o, "status"))?))
+        }
+        "library" => {
+            let o = exact(value, &["kind", "released", "error_code"])?;
+            Ok(super::teardown::Return::Library {
+                released: match get(o, "released") {
+                    Value::Bool(v) => *v,
+                    _ => return Err(WireError::Body),
+                },
+                error_code: match get(o, "error_code") {
+                    Value::Null => None,
+                    v => Some(i32_value(v)?),
+                },
+            })
+        }
+        _ => Err(WireError::Body),
+    }
+}
+fn teardown_fault_value(fault: super::teardown::Fault) -> Value {
+    match fault {
+        super::teardown::Fault::Clock => Value::Text("clock".into()),
+        super::teardown::Fault::Deadline => Value::Text("deadline".into()),
+        super::teardown::Fault::Protocol => Value::Text("protocol".into()),
+        super::teardown::Fault::Native(status) => object([
+            ("kind", Value::Text("native".into())),
+            ("status", Value::I64(status.into())),
+        ]),
+        super::teardown::Fault::Library(status) => object([
+            ("kind", Value::Text("library".into())),
+            (
+                "status",
+                status.map_or(Value::Null, |v| Value::I64(v.into())),
+            ),
+        ]),
+    }
+}
+fn teardown_value(evidence: super::teardown::Evidence) -> Value {
+    let entries = evidence.entries[..usize::from(evidence.len)]
+        .iter()
+        .flatten()
+        .map(|entry| {
+            object([
+                ("operation", teardown_operation_value(entry.operation)),
+                ("before", entry.before.map_or(Value::Null, anchor_value)),
+                ("after", entry.after.map_or(Value::Null, anchor_value)),
+                ("attempted", Value::Bool(entry.attempted)),
+                ("raw", entry.raw.map_or(Value::Null, teardown_return_value)),
+            ])
+        })
+        .collect();
+    let overflow = evidence
+        .overflow
+        .map_or(Value::Null, |(operation, anchor)| {
+            object([
+                ("operation", teardown_operation_value(operation)),
+                ("anchor", anchor.map_or(Value::Null, anchor_value)),
+            ])
+        });
+    let rejected = evidence
+        .rejected_return
+        .map_or(Value::Null, |(operation, raw, anchor)| {
+            object([
+                ("operation", teardown_operation_value(operation)),
+                ("raw", teardown_return_value(raw)),
+                ("anchor", anchor.map_or(Value::Null, anchor_value)),
+            ])
+        });
+    object([
+        ("entries", Value::Array(entries)),
+        ("pending", Value::Bool(evidence.pending)),
+        (
+            "fault",
+            evidence.fault.map_or(Value::Null, teardown_fault_value),
+        ),
+        ("overflow", overflow),
+        ("rejected_return", rejected),
+    ])
+}
+fn parse_teardown(
+    value: &Value,
+    binding: WorkerBinding,
+    i32_value: &impl Fn(&Value) -> Result<i32, WireError>,
+) -> Result<super::teardown::Evidence, WireError> {
+    use super::teardown::{Entry, Evidence, Fault};
+    let o = exact(
+        value,
+        &["entries", "pending", "fault", "overflow", "rejected_return"],
+    )?;
+    let Value::Array(raw_entries) = get(o, "entries") else {
+        return Err(WireError::Body);
+    };
+    if raw_entries.len() > 8 {
+        return Err(WireError::Capacity);
+    }
+    let mut evidence = Evidence {
+        len: raw_entries.len() as u8,
+        pending: match get(o, "pending") {
+            Value::Bool(value) => *value,
+            _ => return Err(WireError::Body),
+        },
+        ..Evidence::default()
+    };
+    for (slot, value) in evidence.entries.iter_mut().zip(raw_entries) {
+        let entry = exact(value, &["operation", "before", "after", "attempted", "raw"])?;
+        let opt_anchor = |field: &str| match get(entry, field) {
+            Value::Null => Ok(None),
+            value => parse_anchor(value, binding).map(Some),
+        };
+        let attempted = match get(entry, "attempted") {
+            Value::Bool(value) => *value,
+            _ => return Err(WireError::Body),
+        };
+        let raw = match get(entry, "raw") {
+            Value::Null => None,
+            value => Some(parse_teardown_return(value, i32_value)?),
+        };
+        *slot = Some(Entry {
+            operation: parse_teardown_operation(get(entry, "operation"))?,
+            before: opt_anchor("before")?,
+            after: opt_anchor("after")?,
+            attempted,
+            raw,
+        });
+    }
+    evidence.fault = match get(o, "fault") {
+        Value::Null => None,
+        Value::Text(value) => Some(match value.as_str() {
+            "clock" => Fault::Clock,
+            "deadline" => Fault::Deadline,
+            "protocol" => Fault::Protocol,
+            _ => return Err(WireError::Body),
+        }),
+        value => {
+            let object = value.as_object().ok_or(WireError::Body)?;
+            let kind = string(object.get("kind").ok_or(WireError::Body)?)?;
+            Some(match kind {
+                "native" => {
+                    let fields = exact(value, &["kind", "status"])?;
+                    Fault::Native(i32_value(get(fields, "status"))?)
+                }
+                "library" => {
+                    let fields = exact(value, &["kind", "status"])?;
+                    Fault::Library(match get(fields, "status") {
+                        Value::Null => None,
+                        status => Some(i32_value(status)?),
+                    })
+                }
+                _ => return Err(WireError::Body),
+            })
+        }
+    };
+    if let Value::Object(value) = get(o, "overflow") {
+        value
+            .require_exact(&["operation", "anchor"])
+            .map_err(|_| WireError::Body)?;
+        let fields = value;
+        let anchor = match get(fields, "anchor") {
+            Value::Null => None,
+            value => Some(parse_anchor(value, binding)?),
+        };
+        evidence.overflow = Some((parse_teardown_operation(get(fields, "operation"))?, anchor));
+    } else if !matches!(get(o, "overflow"), Value::Null) {
+        return Err(WireError::Body);
+    }
+    if let Value::Object(value) = get(o, "rejected_return") {
+        value
+            .require_exact(&["operation", "raw", "anchor"])
+            .map_err(|_| WireError::Body)?;
+        let fields = value;
+        let anchor = match get(fields, "anchor") {
+            Value::Null => None,
+            value => Some(parse_anchor(value, binding)?),
+        };
+        evidence.rejected_return = Some((
+            parse_teardown_operation(get(fields, "operation"))?,
+            parse_teardown_return(get(fields, "raw"), i32_value)?,
+            anchor,
+        ));
+    } else if !matches!(get(o, "rejected_return"), Value::Null) {
+        return Err(WireError::Body);
+    }
+    if evidence.pending
+        != evidence.entries[..usize::from(evidence.len)]
+            .iter()
+            .flatten()
+            .last()
+            .is_some_and(|entry| entry.attempted && entry.raw.is_none())
+    {
+        return Err(WireError::Body);
+    }
+    Ok(evidence)
+}
+
+#[allow(clippy::large_enum_variant)] // Inline teardown evidence is prepaid with the worker control mailbox.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
     SamplerQuery {
@@ -216,6 +472,7 @@ pub enum Message {
         pending: bool,
         cleanup_attempted: bool,
         cleanup_status: Option<i32>,
+        teardown: super::teardown::Evidence,
     },
 }
 impl Message {
@@ -374,12 +631,78 @@ impl Message {
                 anchor,
                 cleanup_attempted,
                 cleanup_status,
+                teardown,
                 ..
             } => {
-                b.elapsed(*anchor)?;
-                if !cleanup_attempted && cleanup_status.is_some() {
+                if !cleanup_attempted && cleanup_status.is_some()
+                    || teardown.len > 8
+                    || teardown.entries[..usize::from(teardown.len)]
+                        .iter()
+                        .any(Option::is_none)
+                    || teardown.entries[usize::from(teardown.len)..]
+                        .iter()
+                        .any(Option::is_some)
+                    || teardown.pending
+                        != teardown.entries[..usize::from(teardown.len)]
+                            .iter()
+                            .flatten()
+                            .last()
+                            .is_some_and(|entry| entry.attempted && entry.raw.is_none())
+                {
                     return Err(WireError::Body);
                 }
+                let mut clock = Clock::new(b.monitor, b.epoch).map_err(|_| WireError::Binding)?;
+                for entry in teardown.entries[..usize::from(teardown.len)]
+                    .iter()
+                    .flatten()
+                {
+                    if let super::teardown::Operation::Buffer(index) = entry.operation {
+                        if index > 3 {
+                            return Err(WireError::Body);
+                        }
+                    }
+                    if entry.raw.is_some() && !entry.attempted {
+                        return Err(WireError::Body);
+                    }
+                    if let Some(raw) = entry.raw {
+                        let matches = matches!(
+                            (entry.operation, raw),
+                            (
+                                super::teardown::Operation::Library,
+                                super::teardown::Return::Library { .. }
+                            ) | (
+                                super::teardown::Operation::Stream
+                                    | super::teardown::Operation::Buffer(_)
+                                    | super::teardown::Operation::Module
+                                    | super::teardown::Operation::Context,
+                                super::teardown::Return::Cuda(_)
+                            )
+                        );
+                        if !matches {
+                            return Err(WireError::Body);
+                        }
+                    }
+                    for value in [entry.before, entry.after].into_iter().flatten() {
+                        clock.observe(value).map_err(|_| WireError::Body)?;
+                    }
+                }
+                if let Some((operation, at)) = teardown.overflow {
+                    if matches!(operation, super::teardown::Operation::Buffer(index) if index > 3) {
+                        return Err(WireError::Body);
+                    }
+                    if let Some(value) = at {
+                        clock.observe(value).map_err(|_| WireError::Body)?;
+                    }
+                }
+                if let Some((operation, _, at)) = teardown.rejected_return {
+                    if matches!(operation, super::teardown::Operation::Buffer(index) if index > 3) {
+                        return Err(WireError::Body);
+                    }
+                    if let Some(value) = at {
+                        clock.observe(value).map_err(|_| WireError::Body)?;
+                    }
+                }
+                clock.observe(*anchor).map_err(|_| WireError::Body)?;
             }
         }
         Ok(())
@@ -525,6 +848,7 @@ impl Message {
                 pending,
                 cleanup_attempted,
                 cleanup_status,
+                teardown,
             } => object([
                 ("anchor", anchor_value(*anchor)),
                 ("pending", Value::Bool(*pending)),
@@ -533,6 +857,7 @@ impl Message {
                     "cleanup_status",
                     cleanup_status.map_or(Value::Null, |n| Value::I64(n.into())),
                 ),
+                ("teardown", teardown_value(*teardown)),
             ]),
         }
     }
@@ -719,7 +1044,13 @@ impl Message {
             "role_finished" => {
                 let o = exact(
                     v,
-                    &["anchor", "pending", "cleanup_attempted", "cleanup_status"],
+                    &[
+                        "anchor",
+                        "pending",
+                        "cleanup_attempted",
+                        "cleanup_status",
+                        "teardown",
+                    ],
                 )?;
                 Self::RoleFinished {
                     anchor: parse_anchor(get(o, "anchor"), b)?,
@@ -729,6 +1060,7 @@ impl Message {
                         Value::Null => None,
                         v => Some(i32_value(v)?),
                     },
+                    teardown: parse_teardown(get(o, "teardown"), b, &i32_value)?,
                 }
             }
             _ => return Err(WireError::Body),

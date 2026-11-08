@@ -93,6 +93,32 @@ impl WorkerControlAudit {
         })
     }
 
+    fn observe_teardown(
+        &mut self,
+        evidence: &crate::workload::teardown::Evidence,
+        receipt: crate::monitor::Anchor,
+    ) -> bool {
+        if !evidence.reports_success() {
+            return false;
+        }
+        for entry in evidence.entries[..usize::from(evidence.len)]
+            .iter()
+            .flatten()
+        {
+            for anchor in [entry.before, entry.after].into_iter().flatten() {
+                if anchor.qpc_before < self.last_source.qpc_after
+                    || anchor.qpc_after > receipt.qpc_before
+                    || self.source_clock.observe(anchor).is_err()
+                {
+                    self.fault = Some(ControlFault::Clock);
+                    return false;
+                }
+                self.last_source = anchor;
+            }
+        }
+        true
+    }
+
     pub fn observe(&mut self, received: &crate::workload::transport::WorkerReceived) {
         if self.fault.is_some() {
             return;
@@ -160,6 +186,7 @@ impl WorkerControlAudit {
                 pending,
                 cleanup_attempted,
                 cleanup_status,
+                teardown,
             } => {
                 if !self.stop_ack
                     || self.role_finished
@@ -168,6 +195,10 @@ impl WorkerControlAudit {
                     || *cleanup_status != Some(0)
                 {
                     self.fault = Some(ControlFault::Protocol);
+                    return;
+                }
+                if !self.observe_teardown(teardown, receipt) {
+                    self.fault.get_or_insert(ControlFault::Protocol);
                     return;
                 }
                 (*anchor, 2, None)

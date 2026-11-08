@@ -516,6 +516,13 @@ impl<
             self.producer.teardown_ledger().fault()
         }
     }
+    pub fn teardown_evidence(&self) -> super::teardown::Evidence {
+        if self.prestart.requested() {
+            self.prestart.ledger.evidence()
+        } else {
+            self.producer.teardown_ledger().evidence()
+        }
+    }
     pub fn export_failure_step(
         &mut self,
         sink: &mut impl FrameSink,

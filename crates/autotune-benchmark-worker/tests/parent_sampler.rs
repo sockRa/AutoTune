@@ -441,6 +441,7 @@ fn planned_shutdown_keeps_ack_cleanup_and_completion_separate_from_process_exit(
                 pending: false,
                 cleanup_attempted: true,
                 cleanup_status: Some(0),
+                teardown: Default::default(),
             },
             9000,
         ),
@@ -479,6 +480,7 @@ fn late_cleanup_report_cannot_clear_an_original_shutdown_timeout() {
             pending: false,
             cleanup_attempted: true,
             cleanup_status: Some(0),
+            teardown: Default::default(),
         })
         .unwrap();
     let run = h.m.bind_run(0, 0).unwrap();

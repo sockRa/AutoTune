@@ -467,6 +467,20 @@ impl State {
         cleanup_attempted: bool,
         cleanup_status: Option<i32>,
     ) -> Option<Message> {
+        self.complete_with_teardown(
+            anchor,
+            cleanup_attempted,
+            cleanup_status,
+            super::teardown::Evidence::default(),
+        )
+    }
+    pub fn complete_with_teardown(
+        &mut self,
+        anchor: Option<Anchor>,
+        cleanup_attempted: bool,
+        cleanup_status: Option<i32>,
+        teardown: super::teardown::Evidence,
+    ) -> Option<Message> {
         self.shared.close();
         let n = self.now(anchor).ok()?;
         if self.fault.is_some() {
@@ -486,6 +500,7 @@ impl State {
             pending: self.shared.admission.pending(),
             cleanup_attempted,
             cleanup_status,
+            teardown,
         })
     }
 }

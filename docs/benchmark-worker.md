@@ -1850,6 +1850,26 @@ fakes only. Current source-bound verification is in ROADMAP.md. Worker executabl
 composition, complete parent facts/consent, native admission, aggregate raw export
 and real process/native qualification remain open; no live run was performed.
 
+### Worker teardown transfer in RoleFinished — 2026-11-08
+
+The worker now snapshots the producer's fixed eight-slot teardown ledger into the
+existing bounded `RoleFinished` control frame. The canonical `teardown` body
+retains ordered operations, raw CUDA/library returns, optional before/after
+anchors, pending state, the first ledger fault, and overflow/rejected-return
+details. The frame reader bounds the entry count, checks operation indices and
+anchor chronology, and requires a reported successful worker cleanup to contain
+the seven ordered CUDA releases plus the optional library release, with successful
+raw statuses. The parent control audit applies that check to the retained worker
+terminal packet.
+
+The worker-aware workload raw exporter already retains the complete control
+packet bytes, so this extends the packet artifact without adding another message
+or queue slot. A reported return still cannot establish GPU quiescence or OS
+process exit. The fixed parent does not yet call the finalizer/archive composition;
+no Windows process, driver, GPU, or runtime execution was performed. Local checks
+are limited to formatting, library compile, and warning-denied library Clippy for
+Windows GNU and Linux; no tests were run.
+
 ### Worker preparation, Ready and encoded Start — 2026-11-04
 
 `worker_runtime::Session` composes the original bootstrap Gate and exact frozen

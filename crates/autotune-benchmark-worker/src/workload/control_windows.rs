@@ -50,6 +50,7 @@ pub enum Command {
     Finished {
         cleanup_attempted: bool,
         cleanup_status: Option<i32>,
+        teardown: super::teardown::Evidence,
     },
 }
 pub struct Handle {
@@ -267,13 +268,15 @@ impl Handle {
                             Ok(Command::Finished {
                                 cleanup_attempted,
                                 cleanup_status,
+                                teardown,
                             }) => {
                                 let anchor = capture(&clock, &mut report);
-                                if let Some(message) =
-                                    report
-                                        .state
-                                        .complete(anchor, cleanup_attempted, cleanup_status)
-                                {
+                                if let Some(message) = report.state.complete_with_teardown(
+                                    anchor,
+                                    cleanup_attempted,
+                                    cleanup_status,
+                                    teardown,
+                                ) {
                                     let _ = send(&mut report, &mut tx, &mut sender, &message);
                                 }
                                 break;
@@ -348,6 +351,18 @@ impl Handle {
         cleanup_attempted: bool,
         cleanup_status: Option<i32>,
     ) -> Result<(), Fault> {
+        self.complete_with_teardown(
+            cleanup_attempted,
+            cleanup_status,
+            super::teardown::Evidence::default(),
+        )
+    }
+    pub fn complete_with_teardown(
+        &self,
+        cleanup_attempted: bool,
+        cleanup_status: Option<i32>,
+        teardown: super::teardown::Evidence,
+    ) -> Result<(), Fault> {
         self.shared.close();
         if self.thread_finished() {
             return Err(Fault::Transport);
@@ -356,6 +371,7 @@ impl Handle {
             .try_send(Command::Finished {
                 cleanup_attempted,
                 cleanup_status,
+                teardown,
             })
             .map_err(|_| Fault::Transport)
     }
