@@ -37,6 +37,7 @@ pub enum Stage {
 pub struct InitFailure {
     pub fault: InitFault,
     pub setup: Option<SetupReceiver>,
+    pub starting_launch: super::starting_launch::LaunchFacts,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +45,7 @@ pub enum InitFault {
     SamplerAlreadyFaulted,
     WorkerAlreadyFaulted,
     MissingSetupReceiver,
+    StartingLaunchIneligible,
 }
 
 /// One bounded, nonblocking parent loop round. Each process lane is polled at
@@ -155,6 +157,13 @@ pub struct FinalizerFailure<E> {
 
 #[allow(clippy::large_enum_variant)] // Keep all original Windows/process owners inline on failure.
 pub enum AdmissionFinalizerFailure<'a, 's, 'w, E> {
+    StartingLaunchBinding {
+        admission: ParentAdmission<'a, 's, 'w>,
+        sampler: Process,
+        worker: Process,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+    },
     TerminalIncomplete {
         admission: ParentAdmission<'a, 's, 'w>,
         sampler: Process,
@@ -354,6 +363,7 @@ pub struct ParentAdmission<'a, 's, 'w> {
     sampler: ParentSamplerChannel<'s>,
     worker: ParentWorkerChannel<'w>,
     starting: &'a Process<starting_bootstrap::Declaration>,
+    starting_launch: super::starting_launch::LaunchFacts,
     setup_receiver: Option<SetupReceiver>,
     setup: Option<ReadyDelivery>,
     controller: Option<ControllerHandle>,
@@ -366,6 +376,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         sampler: ParentSamplerChannel<'s>,
         worker: ParentWorkerChannel<'w>,
         starting: &'a Process<starting_bootstrap::Declaration>,
+        starting_launch: super::starting_launch::LaunchFacts,
         setup_receiver: Option<SetupReceiver>,
     ) -> Result<Self, InitFailure> {
         let fault = if sampler.parent().fault().is_some() {
@@ -374,6 +385,8 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             Some(InitFault::WorkerAlreadyFaulted)
         } else if setup_receiver.is_none() {
             Some(InitFault::MissingSetupReceiver)
+        } else if !starting_launch.admission_eligible() {
+            Some(InitFault::StartingLaunchIneligible)
         } else {
             None
         };
@@ -381,12 +394,14 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             return Err(InitFailure {
                 fault,
                 setup: setup_receiver,
+                starting_launch,
             });
         }
         Ok(Self {
             sampler,
             worker,
             starting,
+            starting_launch,
             setup_receiver,
             setup: None,
             controller: None,
@@ -788,6 +803,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             controller,
             stage,
             starting: _,
+            starting_launch: _,
         } = self;
         Owners {
             stage,
@@ -814,6 +830,15 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
         AdmissionFinalizerFailure<'a, 's, 'w, E>,
     > {
+        if self.starting_launch != inputs.starting_launch {
+            return Err(AdmissionFinalizerFailure::StartingLaunchBinding {
+                admission: self,
+                sampler,
+                worker,
+                clock,
+                inputs,
+            });
+        }
         if !self.terminal_evidence_ready() {
             return Err(AdmissionFinalizerFailure::TerminalIncomplete {
                 admission: self,

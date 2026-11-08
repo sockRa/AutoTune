@@ -61,6 +61,21 @@ pub struct LaunchFacts {
     pub termination_request: Option<RequestAttempt>,
 }
 
+impl LaunchFacts {
+    /// Whether the original-epoch starting launch may enter pilot admission.
+    /// A launch that needed a stop/termination request or lost clock certainty
+    /// remains a cleanup case even if its process later appears.
+    pub fn admission_eligible(self) -> bool {
+        self.polls > 0
+            && self.elapsed_ns.is_some()
+            && !self.deadline_exceeded
+            && self.clock_capture_error.is_none()
+            && !self.clock_domain_fault
+            && self.stop_request.is_none()
+            && self.termination_request.is_none()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaunchPoll {
     Pending,

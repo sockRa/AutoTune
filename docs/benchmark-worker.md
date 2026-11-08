@@ -3203,6 +3203,13 @@ calling the existing three-role `SessionFinalizer::start_pilot` validation.
 Incomplete setup and rejected owner bindings return all owners to the caller,
 including a setup receiver and any simultaneously retained setup delivery.
 
+`ParentAdmission::new` now also requires eligible original-epoch
+`LaunchFacts`. It retains that exact value through admission; finalizer transfer
+compares it to `PilotOwnerInputs` and returns every owner on mismatch. This
+prevents replacing a failed or late launch record between parent admission and
+finalization. It still relies on the caller to supply the facts obtained from
+the corresponding `LaunchGuard`; no fixed parent caller currently exists.
+
 This is a typed source composition only. It has no fixed parent executable or
 launch loop call site, and does not qualify Windows process retirement, GPU
 quiescence, native calls, workload correctness or Gate B.
