@@ -17,6 +17,27 @@ pub struct IndexBinding {
     pub protocol: [u8; 32],
     pub session_digest: [u8; 32],
 }
+impl IndexBinding {
+    /// Derive all index bindings from the frozen workload manifest rather than
+    /// accepting independently supplied artifact identities at finalization.
+    pub fn from_pilot(
+        manifest: &crate::workload::manifest::PilotManifest,
+        session_digest: EvidenceDigest,
+    ) -> Self {
+        let draft = manifest.manifest_draft();
+        let artifacts = draft.artifacts;
+        Self {
+            manifest: *manifest.digest().as_bytes(),
+            profile: *manifest.profile_digest().as_bytes(),
+            source_tree: *artifacts.source_tree.as_bytes(),
+            controller: *artifacts.controller.as_bytes(),
+            worker: *artifacts.worker.as_bytes(),
+            sampler: *artifacts.sampler.as_bytes(),
+            protocol: *artifacts.protocol.as_bytes(),
+            session_digest: *session_digest.as_bytes(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Receipt {

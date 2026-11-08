@@ -151,6 +151,22 @@ impl Writer {
     pub fn start_workload<S: Sink + Send + 'static>(sink: S, budget: Budget) -> io::Result<Self> {
         Self::start_factory_mode(move || Ok(sink), budget, ArchiveMode::Workload)
     }
+    /// Start a pilot-bound workload writer and enqueue the exact frozen
+    /// manifest/profile bytes as its first two mandatory leaves.
+    pub fn start_pilot_workload<S: Sink + Send + 'static>(
+        sink: S,
+        budget: Budget,
+        manifest: &crate::workload::manifest::PilotManifest,
+    ) -> io::Result<Self> {
+        let mut writer = Self::start_workload(sink, budget.clone())?;
+        let frozen_manifest = BoundText::copy(manifest.canonical(), &budget)
+            .map_err(|_| io::Error::other("workload manifest evidence capacity"))?;
+        writer.enqueue(Artifact::Manifest, frozen_manifest)?;
+        let frozen_profile = BoundText::copy(manifest.profile_canonical(), &budget)
+            .map_err(|_| io::Error::other("workload profile evidence capacity"))?;
+        writer.enqueue(Artifact::Profile, frozen_profile)?;
+        Ok(writer)
+    }
     pub fn start_factory<
         S: Sink + Send + 'static,
         F: FnOnce() -> io::Result<S> + Send + 'static,
@@ -282,6 +298,35 @@ impl Writer {
     pub fn finish_workload(&mut self, binding: WorkloadIndexBinding) -> io::Result<()> {
         self.finish_with_binding(FinishBinding::Workload(binding))
     }
+    /// Bind workload index identities to the frozen pilot manifest and the
+    /// digest produced by `BoundEnvelope::encode`; arbitrary caller hashes are
+    /// not accepted on this finalization path.
+    pub fn finish_pilot_workload(
+        &mut self,
+        manifest: &crate::workload::manifest::PilotManifest,
+        session: &BoundText,
+    ) -> io::Result<()> {
+        let session_digest = match pilot_session_digest(manifest, session) {
+            Ok(digest) => digest,
+            Err(error) => {
+                self.close();
+                return Err(error);
+            }
+        };
+        self.finish_workload(WorkloadIndexBinding::from_pilot(manifest, session_digest))
+    }
+    /// Validate and enqueue the pilot-bound session as the final primary leaf.
+    pub fn enqueue_pilot_session(
+        &mut self,
+        manifest: &crate::workload::manifest::PilotManifest,
+        session: BoundText,
+    ) -> io::Result<()> {
+        if let Err(error) = pilot_session_digest(manifest, &session) {
+            self.close();
+            return Err(error);
+        }
+        self.enqueue(Artifact::Session, session)
+    }
     fn finish_with_binding(&mut self, binding: FinishBinding) -> io::Result<()> {
         let scope_matches = matches!(
             (self.mode, &binding),
@@ -345,6 +390,37 @@ impl Writer {
             Err(unsafe { windows_sys::Win32::Foundation::GetLastError() })
         }
     }
+}
+
+fn pilot_session_digest(
+    manifest: &crate::workload::manifest::PilotManifest,
+    session: &BoundText,
+) -> io::Result<crate::evidence::Digest> {
+    let session_digest = session
+        .session_digest()
+        .ok_or_else(|| io::Error::other("workload session is not digest-bound"))?;
+    let envelope = crate::evidence::decode_envelope(
+        session.as_bytes(),
+        session.len(),
+        crate::evidence::AcceptPolicy::AllowSimulated,
+    )
+    .map_err(|_| io::Error::other("workload session envelope is invalid"))?;
+    let draft = manifest.manifest_draft();
+    let artifacts = draft.artifacts;
+    if envelope.manifest.manifest_digest != crate::evidence::Obs::Known(manifest.digest())
+        || envelope.manifest.profile_digest
+            != crate::evidence::Obs::Known(manifest.profile_digest())
+        || envelope.artifacts.source_commit != draft.source_commit
+        || envelope.artifacts.worker_sha256 != crate::evidence::Obs::Known(artifacts.worker)
+        || envelope.artifacts.lockfile_sha256 != crate::evidence::Obs::Known(artifacts.lockfile)
+        || envelope.artifacts.sampler_sha256 != crate::evidence::Obs::Known(artifacts.sampler)
+        || envelope.artifacts.ptx_sha256 != crate::evidence::Obs::Known(artifacts.ptx)
+    {
+        return Err(io::Error::other(
+            "workload session does not match pilot manifest",
+        ));
+    }
+    Ok(session_digest)
 }
 
 /// Fixed run-owned leaves, create_new only. Existing output is never overwritten.
