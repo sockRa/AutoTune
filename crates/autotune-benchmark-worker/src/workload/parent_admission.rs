@@ -488,6 +488,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         }
         if self.stage == Stage::Failed {
             self.sampler.abort_for_parent_fault(sampler.anchor);
+            self.worker.abort_for_parent_fault();
         }
 
         Turn {
@@ -540,6 +541,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         };
         if self.stage == Stage::Failed {
             self.sampler.abort_for_parent_fault(observed.sampler.anchor);
+            self.worker.abort_for_parent_fault();
         }
         AdmissionTurn {
             observed,

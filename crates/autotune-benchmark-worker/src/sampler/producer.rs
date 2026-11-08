@@ -1455,7 +1455,7 @@ pub fn append_pilot_owner_artifacts<E>(
     // RawBuilder charges the growing output buffer separately.
     let scratch_bytes = source_bytes
         .checked_mul(4)
-        .and_then(|n| n.checked_add(6 * 4096))
+        .and_then(|n| n.checked_add(7 * 4096))
         .and_then(|n| n.checked_add(64 * 1024))
         .and_then(|n| n.checked_add(crate::workload::consent::CAP * 16))
         .ok_or(WireError::Capacity)?;
@@ -1599,6 +1599,38 @@ pub fn append_pilot_owner_artifacts<E>(
     ])
     .to_canonical();
     output.push_line(&teardown_line)?;
+    let worker_abort_bytes = owners.worker_report_evidence.abort_stop().map(|result| {
+        object([
+            ("succeeded", Value::Bool(result.is_ok())),
+            (
+                "os_code",
+                result
+                    .err()
+                    .flatten()
+                    .map_or(Value::Null, |code| Value::I64(code.into())),
+            ),
+        ])
+        .to_canonical()
+    });
+    let worker_abort_line = object([
+        ("kind", Value::Text("retained_owner_artifact".into())),
+        ("owner", Value::Text("worker_abort_stop".into())),
+        ("available", Value::Bool(worker_abort_bytes.is_some())),
+        (
+            "digest",
+            worker_abort_bytes.as_ref().map_or(Value::Null, |bytes| {
+                Value::Text(Digest::of(Domain::RawArtifact, bytes.as_bytes()).to_hex())
+            }),
+        ),
+        (
+            "bytes_hex",
+            worker_abort_bytes.as_ref().map_or(Value::Null, |bytes| {
+                Value::Text(super::wire_model::hex(bytes.as_bytes()))
+            }),
+        ),
+    ])
+    .to_canonical();
+    output.push_line(&worker_abort_line)?;
     Ok(output.finish())
 }
 

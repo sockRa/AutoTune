@@ -3221,12 +3221,16 @@ constructor rejection does not silently drop sender/protocol audit ownership.
 
 Once constructed, a terminal setup/sampler/worker/control fault now causes the
 admission poll path to request the sampler's original stop event and queue one
-Stop frame on its retained control sender. The event OS result and Stop send
-failure remain in ParentSampler. It uses the current original-clock poll anchor
-or records clock uncertainty; it never rebases a deadline. This is a stop
-request only, not process termination, exit proof, GPU quiescence or successful
-worker cleanup. If the stop request is pending/failed, the caller must retain
-the process owners and continue the independent cleanup path.
+Stop frame on its retained control sender, and request the worker's original
+stop event directly as a separate fallback. Both process-event results are
+retained; worker event evidence transfers into `WorkerReportEvidence` and is
+exported as a digest-bound `worker_abort_stop` artifact. The sampler event OS
+result and Stop send failure remain in ParentSampler. It uses the current
+original-clock poll anchor or records clock uncertainty; it never rebases a
+deadline. These are stop requests only, not process termination, exit proof,
+GPU quiescence or successful worker cleanup. If a stop request is pending or
+failed, the caller must retain the process owners and continue the independent
+cleanup path.
 
 This is a typed source composition only. It has no fixed parent executable or
 launch loop call site, and does not qualify Windows process retirement, GPU

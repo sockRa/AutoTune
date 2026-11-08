@@ -278,6 +278,8 @@ pub struct ParentWorkerChannel<'a> {
     audit_storage: Option<crate::sampler::budget::Reservation>,
     budget: Budget,
     overflowed: bool,
+    abort_stop: Option<Result<(), Option<i32>>>,
+    _abort_storage: crate::sampler::budget::Reservation,
     sender: crate::workload::transport::Sender<CancelQueue<windows_process::ProcessQueue<'a>>>,
 }
 
@@ -332,6 +334,8 @@ pub struct WorkerReportEvidence {
     failure_vector: Option<FailureVector>,
     control_audit: Option<WorkerControlAudit>,
     overflowed: bool,
+    abort_stop: Option<Result<(), Option<i32>>>,
+    _abort_storage: crate::sampler::budget::Reservation,
     _result_storage: Option<crate::sampler::budget::Reservation>,
     _audit_storage: Option<crate::sampler::budget::Reservation>,
     _control_storage: crate::sampler::budget::Reservation,
@@ -387,6 +391,9 @@ impl WorkerReportEvidence {
     }
     pub fn overflowed(&self) -> bool {
         self.overflowed
+    }
+    pub fn abort_stop(&self) -> Option<Result<(), Option<i32>>> {
+        self.abort_stop
     }
 }
 
@@ -471,6 +478,9 @@ impl<'a> ParentWorkerChannel<'a> {
         let event_limit = event_capacity - 1;
         let (events, event_storage) = reserve_events(budget, event_limit)?;
         let (control_packets, control_storage) = reserve_packets(budget, 3)?;
+        let abort_storage = budget
+            .reserve(std::mem::size_of::<Option<Result<(), Option<i32>>>>())
+            .map_err(|_| crate::workload::transport::SendFailure::Capacity)?;
         let control = worker.split_control()?;
         let sender = worker.sender(budget)?;
         Ok(Self {
@@ -493,6 +503,8 @@ impl<'a> ParentWorkerChannel<'a> {
             audit_storage: None,
             budget: budget.clone(),
             overflowed: false,
+            abort_stop: None,
+            _abort_storage: abort_storage,
             sender,
         })
     }
@@ -676,6 +688,18 @@ impl<'a> ParentWorkerChannel<'a> {
         self.control_audit.as_ref()
     }
 
+    /// Request the worker's original stop event once after a parent-side lane
+    /// fails. This is retained independently of Stop-frame delivery.
+    pub fn abort_for_parent_fault(&mut self) {
+        if self.abort_stop.is_none() {
+            self.abort_stop = Some(
+                self.worker
+                    .request_stop()
+                    .map_err(|error| error.raw_os_error()),
+            );
+        }
+    }
+
     /// Ends transport ownership and transfers bounded raw reports plus their
     /// assessments for inclusion in the session finalizer's evidence owner.
     pub fn into_evidence(self) -> WorkerReportEvidence {
@@ -690,6 +714,8 @@ impl<'a> ParentWorkerChannel<'a> {
             failure_vector: self.failure_vector,
             control_audit: self.control_audit,
             overflowed: self.overflowed,
+            abort_stop: self.abort_stop,
+            _abort_storage: self._abort_storage,
             _result_storage: self.result_storage,
             _audit_storage: self.audit_storage,
             _control_storage: self.control_storage,
