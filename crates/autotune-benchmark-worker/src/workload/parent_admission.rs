@@ -55,6 +55,78 @@ pub struct Turn {
     pub worker_result: Option<parent_worker_channel::ResultPoll>,
 }
 
+pub struct Owners {
+    pub stage: Stage,
+    pub parent: parent_sampler::ParentSampler,
+    pub worker_report: parent_worker_channel::WorkerReportEvidence,
+    pub setup_receiver: Option<SetupReceiver>,
+    pub setup: Option<ReadyDelivery>,
+    pub controller: Option<ControllerHandle>,
+}
+
+pub struct RetirementOwners {
+    pub assets: super::retirement_collector::Assets,
+    pub stage: Stage,
+    pub worker_report: parent_worker_channel::WorkerReportEvidence,
+    pub setup_receiver: Option<SetupReceiver>,
+    pub setup: Option<ReadyDelivery>,
+}
+
+pub struct MissingController {
+    pub owners: Owners,
+    pub sampler: Process,
+    pub worker: Process,
+    pub clock: WindowsClock,
+}
+
+impl Owners {
+    /// Move the exact sampler/worker processes into retirement Assets after
+    /// their channel borrows have been consumed. If the controller was never
+    /// created, return every original process and evidence owner unchanged.
+    #[allow(clippy::result_large_err)] // Preserve the full owner graph without allocating.
+    pub fn into_retirement(
+        self,
+        sampler: Process,
+        worker: Process,
+        clock: WindowsClock,
+    ) -> Result<RetirementOwners, MissingController> {
+        let (stage, parent, worker_report, setup_receiver, setup, controller) = match self {
+            Self {
+                stage,
+                parent,
+                worker_report,
+                setup_receiver,
+                setup,
+                controller: Some(controller),
+            } => (
+                stage,
+                parent,
+                worker_report,
+                setup_receiver,
+                setup,
+                controller,
+            ),
+            owners => {
+                return Err(MissingController {
+                    owners,
+                    sampler,
+                    worker,
+                    clock,
+                })
+            }
+        };
+        Ok(RetirementOwners {
+            assets: super::retirement_collector::Assets::new(
+                parent, controller, sampler, worker, clock,
+            ),
+            stage,
+            worker_report,
+            setup_receiver,
+            setup,
+        })
+    }
+}
+
 pub struct PreflightInput<'a, 'r> {
     pub run: &'a BoundRun<'r>,
     pub scope: &'a Scope,
@@ -69,8 +141,8 @@ pub struct PreflightInput<'a, 'r> {
 
 #[must_use = "retain the admission owner and controller through session shutdown"]
 pub struct ParentAdmission<'a, 's, 'w> {
-    sampler: &'a mut ParentSamplerChannel<'s>,
-    worker: &'a mut ParentWorkerChannel<'w>,
+    sampler: ParentSamplerChannel<'s>,
+    worker: ParentWorkerChannel<'w>,
     starting: &'a Process<starting_bootstrap::Declaration>,
     setup_receiver: Option<SetupReceiver>,
     setup: Option<ReadyDelivery>,
@@ -81,8 +153,8 @@ pub struct ParentAdmission<'a, 's, 'w> {
 impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
     #[allow(clippy::result_large_err)] // Return the unconsumed setup reader without allocating.
     pub fn new(
-        sampler: &'a mut ParentSamplerChannel<'s>,
-        worker: &'a mut ParentWorkerChannel<'w>,
+        sampler: ParentSamplerChannel<'s>,
+        worker: ParentWorkerChannel<'w>,
         starting: &'a Process<starting_bootstrap::Declaration>,
         setup_receiver: Option<SetupReceiver>,
     ) -> Result<Self, InitFailure> {
@@ -283,7 +355,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             .as_mut()
             .ok_or(super::parent_start::Fault::Context)?;
         match self.sampler.queue_worker_start_when_watch_ready(
-            self.worker,
+            &mut self.worker,
             self.starting,
             setup,
             clock,
@@ -311,10 +383,12 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             return Err(parent_sampler::Fault::Context);
         }
         let setup = self.setup.as_mut().ok_or(parent_sampler::Fault::Context)?;
-        match self
-            .sampler
-            .collect_and_queue_native_grant(self.worker, self.starting, setup, clock)
-        {
+        match self.sampler.collect_and_queue_native_grant(
+            &mut self.worker,
+            self.starting,
+            setup,
+            clock,
+        ) {
             Ok(()) => {
                 self.stage = Stage::NativeGrantQueued;
                 Ok(())
@@ -343,15 +417,26 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             .begin_control_audit(self.sampler.parent(), budget)
     }
 
-    /// Return channel borrows plus any still-unconsumed setup owners before
-    /// moving process handles into retirement/finalizer assets.
-    pub fn into_parts(
-        self,
-    ) -> (
-        Option<SetupReceiver>,
-        Option<ReadyDelivery>,
-        Option<ControllerHandle>,
-    ) {
-        (self.setup_receiver, self.setup, self.controller)
+    /// Consume both channels, transfer their retained protocol/evidence owners
+    /// and release the process borrows so the same handles can move into
+    /// retirement/finalizer assets.
+    pub fn into_parts(self) -> Owners {
+        let Self {
+            sampler,
+            worker,
+            setup_receiver,
+            setup,
+            controller,
+            stage,
+            starting: _,
+        } = self;
+        Owners {
+            stage,
+            parent: sampler.into_parent(),
+            worker_report: worker.into_evidence(),
+            setup_receiver,
+            setup,
+            controller,
+        }
     }
 }

@@ -1295,6 +1295,15 @@ NativeGrant process observation off the controller deadline path, and transfer
 the returned owners into retirement/finalization after channel borrows end.
 After recording the planned sampler finish, `begin_worker_control_audit` binds
 the worker's StopAck/RoleFinished reports to that same original StopWindow.
+`into_parts` consumes both channels and returns an `Owners` bundle containing
+the ParentSampler, WorkerReportEvidence, setup receiver/delivery, controller
+and terminal stage. This releases both process borrows so the caller can move
+those same process handles into `retirement_collector::Assets` without losing
+the reports needed by `PilotOwners`.
+`Owners::into_retirement` performs that move into `Assets` and returns the
+worker report/setup owners beside it. If no controller exists, its error
+returns the untouched `Owners`, both process handles and clock for explicit
+failure handling; retirement assets are never built without their controller.
 This coordinator does not launch the three processes, poll the pre-manifest
 starting session, own the whole execution/retirement loop, or prove hardware or
 GPU qualification.
