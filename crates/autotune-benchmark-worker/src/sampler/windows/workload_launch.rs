@@ -312,10 +312,10 @@ impl Process<Declaration> {
         &self,
         budget: &Budget,
     ) -> Result<Sender<CancelQueue<ProcessQueue<'_>>>, SendFailure> {
-        if self.sender_taken.swap(true, Ordering::AcqRel) {
+        if self.sender_taken.load(Ordering::Acquire) {
             return Err(SendFailure::Closed);
         }
-        Sender::new(
+        let sender = Sender::new(
             CancelQueue::new(
                 ProcessQueue { process: self },
                 self.shared.cancelled.clone(),
@@ -323,7 +323,11 @@ impl Process<Declaration> {
             self.declaration.binding(),
             Direction::ToWorker,
             budget,
-        )
+        )?;
+        self.sender_taken
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| SendFailure::Closed)?;
+        Ok(sender)
     }
 }
 impl Process<starting_bootstrap::Declaration> {
@@ -334,10 +338,10 @@ impl Process<starting_bootstrap::Declaration> {
         starting_bootstrap::Sender<CancelQueue<ProcessQueue<'_, starting_bootstrap::Declaration>>>,
         SendFailure,
     > {
-        if self.sender_taken.swap(true, Ordering::AcqRel) {
+        if self.sender_taken.load(Ordering::Acquire) {
             return Err(SendFailure::Closed);
         }
-        starting_bootstrap::Sender::new(
+        let sender = starting_bootstrap::Sender::new(
             CancelQueue::new(
                 ProcessQueue { process: self },
                 self.shared.cancelled.clone(),
@@ -345,7 +349,11 @@ impl Process<starting_bootstrap::Declaration> {
             &self.declaration,
             budget,
         )
-        .map_err(|_| SendFailure::Capacity)
+        .map_err(|_| SendFailure::Capacity)?;
+        self.sender_taken
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| SendFailure::Closed)?;
+        Ok(sender)
     }
 }
 impl<D: FixedDeclaration> Process<D> {
