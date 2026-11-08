@@ -522,8 +522,14 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         budget: &Budget,
     ) -> Result<Self, AdmissionStartFailure<'a, 's, 'w>> {
         let mut admission = Self::new_unwatched(sampler, worker, starting, setup_receiver)
-            .map_err(AdmissionStartFailure::Initialization)?;
+            .map_err(|mut failure| {
+                failure.sampler.abort_for_parent_fault(None);
+                failure.worker.abort_for_parent_fault();
+                AdmissionStartFailure::Initialization(failure)
+            })?;
         if let Err(fault) = admission.start_safety_watch_early(clock, budget) {
+            admission.sampler.abort_for_parent_fault(None);
+            admission.worker.abort_for_parent_fault();
             return Err(AdmissionStartFailure::SafetyWatch { fault, admission });
         }
         Ok(admission)
