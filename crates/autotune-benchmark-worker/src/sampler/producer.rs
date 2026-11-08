@@ -407,6 +407,210 @@ pub fn build_envelope(
 /// Build a workload-session v1 projection from one frozen pilot run plus its
 /// sampler and worker owners. Any fact that cannot be represented faithfully
 /// remains in raw NDJSON and makes this summary explicitly incomplete.
+#[derive(Clone, Copy)]
+#[cfg(windows)]
+enum PilotSamplerInput<'a> {
+    Supervisor(&'a Supervisor),
+    Parent(&'a crate::workload::parent_sampler::ParentSampler),
+}
+
+#[cfg(windows)]
+struct PilotSamplerProjection {
+    nvml_uuid: Option<String>,
+    nvml_pci: Option<String>,
+    identity_conflict: bool,
+    sample_count: usize,
+    event_count: usize,
+    audit_failed: bool,
+    retention_overflow: bool,
+    current_clock_valid: bool,
+    origin: Anchor,
+    sampler_exit: Obs<i64>,
+    expected_slots: u64,
+    observed_slots: u64,
+    late: u64,
+    rejected: u64,
+    telemetry_incomplete: bool,
+    telemetry: Vec<Telemetry>,
+    _telemetry_allocation: Option<Reservation>,
+}
+
+#[cfg(windows)]
+fn project_pilot_sampler(
+    source: PilotSamplerInput<'_>,
+    manifest: &crate::workload::manifest::PilotManifest,
+    budget: &Budget,
+    limits: autotune_fma_reference::profile::Limits,
+) -> Result<PilotSamplerProjection, WireError> {
+    use crate::workload::wire::Message;
+
+    match source {
+        PilotSamplerInput::Supervisor(s) => {
+            let mut identity = None;
+            let mut identity_conflict = false;
+            for trace in s.traces() {
+                if let Input::Message(super::wire::Message::Ready {
+                    raw_uuid, raw_pci, ..
+                }) = &trace.input
+                {
+                    let observed = (raw_uuid.clone(), raw_pci.clone());
+                    if identity.as_ref().is_some_and(|prior| prior != &observed) {
+                        identity_conflict = true;
+                    } else {
+                        identity.get_or_insert(observed);
+                    }
+                }
+            }
+            let terminal = s.terminal();
+            let cutoff_ns = terminal.map_or_else(|| s.report().now_ns(), |t| t.at_ns);
+            let expected_slots = (cutoff_ns / limits.cadence_ns + 1)
+                .checked_mul(u64::from(limits.metric_count))
+                .ok_or(WireError::Capacity)?;
+            let event_count = s
+                .traces()
+                .len()
+                .checked_add(s.report().events().count())
+                .ok_or(WireError::Capacity)?;
+            let late = s
+                .samples()
+                .filter(|sample| time(s, sample.receipt).is_none_or(|receipt| receipt > cutoff_ns))
+                .count() as u64;
+            let rejected = s
+                .traces()
+                .iter()
+                .filter(|trace| matches!(trace.input, Input::Rejected { .. }))
+                .count() as u64;
+            let sampler_exit = s
+                .exit_observation()
+                .and_then(|(_, observation)| observation.exit_code)
+                .map_or_else(
+                    || missing("sampler_exit_unobserved"),
+                    |code| Obs::Known(i64::from(code)),
+                );
+            Ok(PilotSamplerProjection {
+                nvml_uuid: identity
+                    .as_ref()
+                    .and_then(|pair| (!identity_conflict).then(|| pair.0.clone())),
+                nvml_pci: identity
+                    .as_ref()
+                    .and_then(|pair| (!identity_conflict).then(|| pair.1.clone())),
+                identity_conflict,
+                sample_count: s.samples().count(),
+                event_count,
+                audit_failed: terminal
+                    .is_some_and(|t| !matches!(t.reason, Fault::Requested | Fault::Preflight)),
+                retention_overflow: s.retention_overflow(),
+                current_clock_valid: s.report().current_clock_valid(),
+                origin: s.origin(),
+                sampler_exit,
+                expected_slots,
+                observed_slots: 0,
+                late,
+                rejected,
+                telemetry_incomplete: expected_slots > 0,
+                telemetry: Vec::new(),
+                _telemetry_allocation: None,
+            })
+        }
+        PilotSamplerInput::Parent(parent) => {
+            let binding = parent.binding();
+            let ready_identity = parent.ready().and_then(|ready| match ready.message() {
+                Ok(Message::SamplerReady {
+                    raw_uuid, raw_pci, ..
+                }) => Some((raw_uuid.clone(), raw_pci.clone())),
+                _ => None,
+            });
+            let identity_conflict = parent.rejected().is_some_and(|rejected| {
+                matches!(rejected.message(), Ok(Message::SamplerReady { .. }))
+                    && rejected
+                        .message()
+                        .ok()
+                        .is_some_and(|message| match message {
+                            Message::SamplerReady {
+                                raw_uuid, raw_pci, ..
+                            } => ready_identity.as_ref().is_some_and(|identity| {
+                                identity != &(raw_uuid.clone(), raw_pci.clone())
+                            }),
+                            _ => false,
+                        })
+            });
+            let report = parent.report();
+            let stop = report.stop();
+            let event_count = parent
+                .records()
+                .len()
+                .checked_add(parent.controls().len())
+                .and_then(|n| n.checked_add(usize::from(parent.current().is_some())))
+                .and_then(|n| n.checked_add(usize::from(parent.ready().is_some())))
+                .and_then(|n| n.checked_add(usize::from(parent.rejected().is_some())))
+                .and_then(|n| n.checked_add(parent.history().raw().len()))
+                .and_then(|n| n.checked_add(report.events().count()))
+                .and_then(|n| n.checked_add(1))
+                .ok_or(WireError::Capacity)?;
+            let projected =
+                project_parent_telemetry(parent, &manifest.manifest_draft().raw_uuid, budget)?;
+            let ParentTelemetryProjection {
+                telemetry,
+                expected_slots,
+                observed_slots,
+                raw_records: _,
+                late,
+                rejected,
+                duplicates,
+                invalid_timing,
+                _allocation,
+            } = projected;
+            let telemetry_allocation = _allocation;
+            let history_incomplete = parent.history().overflow().is_some()
+                || parent.history().missing()
+                || parent.history().clock_error().is_some();
+            let current_ok = parent
+                .current()
+                .is_some_and(|current| current.result().is_ok());
+            let sampler_exit = missing("sampler_exit_unobserved");
+            Ok(PilotSamplerProjection {
+                nvml_uuid: if identity_conflict {
+                    None
+                } else {
+                    ready_identity.as_ref().map(|identity| identity.0.clone())
+                },
+                nvml_pci: if identity_conflict {
+                    None
+                } else {
+                    ready_identity.as_ref().map(|identity| identity.1.clone())
+                },
+                identity_conflict,
+                sample_count: parent.records().len(),
+                event_count,
+                audit_failed: parent.fault().is_some()
+                    || stop
+                        .is_some_and(|stop| stop.reason != crate::monitor::StopReason::Requested)
+                    || !parent.reported_finished()
+                    || !current_ok
+                    || parent.ready().is_none()
+                    || history_incomplete
+                    || duplicates > 0
+                    || invalid_timing
+                    || rejected > 0,
+                retention_overflow: parent.history().overflow().is_some(),
+                current_clock_valid: report.current_clock_valid(),
+                origin: binding.epoch(),
+                sampler_exit,
+                expected_slots,
+                observed_slots,
+                late,
+                rejected,
+                telemetry_incomplete: observed_slots != expected_slots
+                    || duplicates > 0
+                    || invalid_timing
+                    || rejected > 0,
+                telemetry,
+                _telemetry_allocation: Some(telemetry_allocation),
+            })
+        }
+    }
+}
+
 #[cfg(windows)]
 pub fn build_pilot_envelope(
     manifest: &crate::workload::manifest::PilotManifest,
@@ -415,16 +619,64 @@ pub fn build_pilot_envelope(
     worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
     provenance: Provenance,
 ) -> Result<BoundEnvelope, WireError> {
+    let budget = s.failure_budget();
+    build_pilot_envelope_from_source(
+        manifest,
+        PilotSamplerInput::Supervisor(s),
+        setup,
+        worker,
+        provenance,
+        budget,
+    )
+}
+
+#[cfg(windows)]
+pub fn build_pilot_envelope_from_parent(
+    manifest: &crate::workload::manifest::PilotManifest,
+    parent: &crate::workload::parent_sampler::ParentSampler,
+    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
+    provenance: Provenance,
+    budget: &Budget,
+) -> Result<BoundEnvelope, WireError> {
+    build_pilot_envelope_from_source(
+        manifest,
+        PilotSamplerInput::Parent(parent),
+        setup,
+        worker,
+        provenance,
+        budget.clone(),
+    )
+}
+
+#[cfg(windows)]
+fn build_pilot_envelope_from_source(
+    manifest: &crate::workload::manifest::PilotManifest,
+    source: PilotSamplerInput<'_>,
+    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
+    provenance: Provenance,
+    budget: Budget,
+) -> Result<BoundEnvelope, WireError> {
     let binding = worker.binding();
     let monitor = binding.monitor();
+    let source_binding = match source {
+        PilotSamplerInput::Supervisor(s) => {
+            s.binding().monitor == monitor
+                && s.binding().manifest_digest == *manifest.digest().as_bytes()
+        }
+        PilotSamplerInput::Parent(parent) => {
+            parent.binding().monitor() == monitor
+                && parent.binding().manifest_digest() == manifest.digest()
+        }
+    };
     if binding.manifest_digest() != manifest.digest()
         || binding.profile_digest() != manifest.profile_digest()
         || binding.worker_digest() != manifest.manifest_draft().artifacts.worker
         || binding.sampler_digest() != manifest.manifest_draft().artifacts.sampler
         || setup.receipt().binding() != binding
         || setup.origin().ok() != Some(worker.origin())
-        || s.binding().monitor != monitor
-        || s.binding().manifest_digest != *manifest.digest().as_bytes()
+        || !source_binding
     {
         return Err(WireError::Binding);
     }
@@ -451,26 +703,27 @@ pub fn build_pilot_envelope(
     }
 
     let p = autotune_fma_reference::profile::Profile::approved_design().limits;
-    let mut sampler_identity = None;
-    let mut sampler_identity_conflict = false;
-    for trace in s.traces() {
-        if let Input::Message(super::wire::Message::Ready {
-            raw_uuid, raw_pci, ..
-        }) = &trace.input
-        {
-            let observed = (raw_uuid.as_str(), raw_pci.as_str());
-            if sampler_identity.is_some_and(|prior| prior != observed) {
-                sampler_identity_conflict = true;
-            } else {
-                sampler_identity.get_or_insert(observed);
-            }
-        }
-    }
-    let (nvml_uuid, nvml_pci) = if sampler_identity_conflict {
-        (None, None)
-    } else {
-        sampler_identity.map_or((None, None), |(uuid, pci)| (Some(uuid), Some(pci)))
-    };
+    let sampler = project_pilot_sampler(source, manifest, &budget, p)?;
+    let PilotSamplerProjection {
+        nvml_uuid,
+        nvml_pci,
+        identity_conflict: sampler_identity_conflict,
+        sample_count,
+        event_count,
+        audit_failed: sampler_audit_failed,
+        retention_overflow: sampler_retention_overflow,
+        current_clock_valid,
+        origin,
+        sampler_exit,
+        expected_slots,
+        observed_slots,
+        late,
+        rejected: sampler_rejected,
+        telemetry_incomplete,
+        telemetry,
+        _telemetry_allocation: telemetry_allocation,
+    } = sampler;
+    let _telemetry_allocation = telemetry_allocation;
     let ready = match setup.ready().message().map_err(|_| WireError::Body)? {
         crate::workload::wire::Message::Ready {
             identity, context, ..
@@ -486,7 +739,7 @@ pub fn build_pilot_envelope(
     .map_err(|_| WireError::Binding)?
     .identity;
     let uuid_match = match nvml_uuid {
-        Some(raw) => {
+        Some(ref raw) => {
             match crate::worker::DiscoveryBinding::parse(raw, &manifest.manifest_draft().raw_pci) {
                 Ok(nvml) if nvml.identity.uuid == cuda_identity.uuid => MatchState::Match,
                 Ok(_) => MatchState::Mismatch,
@@ -508,12 +761,11 @@ pub fn build_pilot_envelope(
         .checked_add(plan.measured_dispatches)
         .ok_or(WireError::Capacity)? as usize;
     let estimate = expected_dispatches
-        .checked_add(s.samples().count())
+        .checked_add(sample_count)
         .and_then(|n| n.checked_add(worker.result_packets().len()))
         .and_then(|n| n.checked_mul(4096))
         .and_then(|n| n.checked_add(32768))
         .ok_or(WireError::Capacity)?;
-    let budget = s.failure_budget();
     let allocation = budget.reserve(estimate).map_err(|_| WireError::Capacity)?;
     let mut dispatches = Vec::new();
     dispatches
@@ -617,41 +869,24 @@ pub fn build_pilot_envelope(
             retention,
         });
     }
-    let total_events = s
-        .traces()
-        .len()
-        .checked_add(s.report().events().count())
-        .and_then(|n| n.checked_add(worker.receive_events().len()))
+    let total_events = event_count
+        .checked_add(worker.receive_events().len())
         .and_then(|n| n.checked_add(1))
         .ok_or(WireError::Capacity)?;
     if total_events as u64 > p.event_capacity {
         return Err(WireError::Capacity);
     }
-    let terminal = s.terminal();
-    let cutoff = terminal.map_or_else(|| s.report().now_ns(), |t| t.at_ns);
-    let expected_slots = (cutoff / p.cadence_ns + 1)
-        .checked_mul(u64::from(p.metric_count))
-        .ok_or(WireError::Capacity)?;
     let audit_failed = worker.assessment_fault().is_some()
         || worker.control_audit().is_none_or(|audit| {
             audit.fault().is_some() || audit.native_failure() || !audit.role_finished()
         })
         || worker.overflowed()
-        || s.retention_overflow()
-        || terminal.is_some_and(|t| !matches!(t.reason, Fault::Requested | Fault::Preflight));
+        || sampler_retention_overflow
+        || sampler_audit_failed;
     let reports_complete = worker.reports_complete()
         && dispatches.len() == expected_dispatches
         && omitted_dispatches == 0;
-    let late = s
-        .samples()
-        .filter(|sample| time(s, sample.receipt).is_none_or(|receipt| receipt > cutoff))
-        .count() as u64;
-    let rejected = omitted_dispatches.saturating_add(
-        s.traces()
-            .iter()
-            .filter(|trace| matches!(trace.input, Input::Rejected { .. }))
-            .count() as u64,
-    );
+    let rejected = omitted_dispatches.saturating_add(sampler_rejected);
     let mut limitations = vec![
         Reason::new("worker_exit_unobserved").expect("fixed reason"),
         Reason::new("native_completion_unknown").expect("fixed reason"),
@@ -668,7 +903,7 @@ pub fn build_pilot_envelope(
     if sampler_identity_conflict {
         limitations.push(Reason::new("sampler_identity_conflict").expect("fixed reason"));
     }
-    if expected_slots > 0 {
+    if telemetry_incomplete {
         limitations.push(Reason::new("telemetry_summary_incomplete").expect("fixed reason"));
     }
     if uuid_match != MatchState::Match
@@ -677,14 +912,6 @@ pub fn build_pilot_envelope(
     {
         limitations.push(Reason::new("device_identity_not_fully_matched").expect("fixed reason"));
     }
-    let origin = s.origin();
-    let sampler_exit = s
-        .exit_observation()
-        .and_then(|(_, observation)| observation.exit_code)
-        .map_or_else(
-            || missing("sampler_exit_unobserved"),
-            |code| Obs::Known(i64::from(code)),
-        );
     let envelope = Envelope {
         provenance,
         identity: Identity {
@@ -739,7 +966,7 @@ pub fn build_pilot_envelope(
                 .map_err(|_| WireError::Body)?
                 .max(100),
             utc_context: missing("utc_context_unobserved"),
-            discontinuities: u64::from(!s.report().current_clock_valid()),
+            discontinuities: u64::from(!current_clock_valid),
         },
         lifecycle: Lifecycle {
             requested_ns: missing("parent_request_time_unavailable"),
@@ -754,16 +981,16 @@ pub fn build_pilot_envelope(
             empty_job: EmptyJobLifecycle::Unknown,
         },
         dispatches,
-        telemetry: Vec::new(),
+        telemetry,
         integrity: Integrity {
             capacity_bytes: p.serialized_bytes,
             observed_bytes: 0,
             failed: u64::from(audit_failed),
             late,
             rejected,
-            overflow: u64::from(worker.overflowed() || s.retention_overflow()),
+            overflow: u64::from(worker.overflowed() || sampler_retention_overflow),
             expected_slots,
-            observed_slots: 0,
+            observed_slots,
             raw_records: total_events as u64,
             writer_status: WriterStatus::Bounded,
         },
@@ -1121,6 +1348,62 @@ pub fn raw_events_with_parent_sampler(
     ])
     .to_canonical();
     output.push_line(&line)?;
+    Ok(output.finish())
+}
+
+/// Combine the fixed parent's retained sampler records with the worker's
+/// setup/result/control poll ledger in one bounded workload raw stream.
+#[cfg(windows)]
+pub fn raw_events_with_parent_sampler_and_worker(
+    parent: &crate::workload::parent_sampler::ParentSampler,
+    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
+    budget: &Budget,
+) -> Result<BoundText, WireError> {
+    let binding = worker.binding();
+    if parent.binding() != binding
+        || setup.receipt().binding() != binding
+        || setup.origin().ok() != Some(worker.origin())
+    {
+        return Err(WireError::Binding);
+    }
+    if worker.overflowed() {
+        return Err(WireError::Capacity);
+    }
+    let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+    let parent_events = parent
+        .records()
+        .len()
+        .checked_add(parent.controls().len())
+        .and_then(|n| n.checked_add(usize::from(parent.current().is_some())))
+        .and_then(|n| n.checked_add(usize::from(parent.ready().is_some())))
+        .and_then(|n| n.checked_add(usize::from(parent.rejected().is_some())))
+        .and_then(|n| n.checked_add(parent.history().raw().len()))
+        .and_then(|n| n.checked_add(parent.report().events().count()))
+        .and_then(|n| n.checked_add(1))
+        .ok_or(WireError::Capacity)?;
+    let total_events = parent_events
+        .checked_add(worker.receive_events().len())
+        .and_then(|n| n.checked_add(1))
+        .ok_or(WireError::Capacity)?;
+    if total_events as u64 > p.event_capacity {
+        return Err(WireError::Capacity);
+    }
+    let raw = raw_events_with_parent_sampler(parent, budget)?;
+    let _temporary = budget
+        .reserve(p.frame_bytes as usize * 16)
+        .map_err(|_| WireError::Capacity)?;
+    let BoundText {
+        text,
+        _allocation: storage,
+        ..
+    } = raw;
+    let mut output = RawBuilder {
+        text,
+        storage,
+        budget: budget.clone(),
+    };
+    append_worker_events(&mut output, setup, worker)?;
     Ok(output.finish())
 }
 
@@ -1583,20 +1866,30 @@ fn append_worker_events(
     let mut ordinary_packet_index = 0usize;
     for event in worker.receive_events() {
         let packet = if event.kind != crate::workload::parent_worker_channel::ReceiveKind::Packet {
+            if event.packet_digest.is_some() {
+                return Err(WireError::Body);
+            }
             None
         } else {
-            match event.lane {
+            let packet = match event.lane {
                 crate::sampler::wire::Lane::Ordinary => {
                     let packet = if ordinary_packet_index < setup_packet_count {
                         setup_packets.next()
                     } else {
                         result_packets.next()
-                    };
+                    }
+                    .ok_or(WireError::Capacity)?;
                     ordinary_packet_index += 1;
                     packet
                 }
-                crate::sampler::wire::Lane::Control => control_packets.next(),
+                crate::sampler::wire::Lane::Control => {
+                    control_packets.next().ok_or(WireError::Capacity)?
+                }
+            };
+            if event.packet_digest.is_none() {
+                return Err(WireError::Body);
             }
+            Some(packet)
         };
         let packet_matches = packet.zip(event.packet_digest).map(|(packet, digest)| {
             crate::evidence::Digest::of(
@@ -1635,6 +1928,12 @@ fn append_worker_events(
         ])
         .to_canonical();
         output.push_line(&line)?;
+    }
+    if setup_packets.next().is_some()
+        || result_packets.next().is_some()
+        || control_packets.next().is_some()
+    {
+        return Err(WireError::Capacity);
     }
     let progress = worker.progress();
     let vector = worker.failure_vector();
