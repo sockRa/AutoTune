@@ -1486,6 +1486,7 @@ impl<Q: Queue> super::parent_start::Source for StartSource<'_, '_, Q> {
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreflightFault {
+    Clock,
     Environment(Fault),
     Starting(Fault),
     Context(super::parent_context::Rejection),

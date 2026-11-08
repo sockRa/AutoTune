@@ -750,9 +750,21 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             Stage::SetupReady if !self.preflight_ready() => AdmissionProgress::SetupPending,
             Stage::SetupReady => match unused_preflight.take() {
                 None => AdmissionProgress::AwaitingPreflight,
-                Some(input) => match self.verify_reported_preflight(input) {
-                    Ok(()) => AdmissionProgress::PreflightAccepted,
-                    Err(failure) => AdmissionProgress::PreflightRejected(failure),
+                Some(mut input) => match clock.capture() {
+                    Ok(now) => {
+                        input.now = now;
+                        match self.verify_reported_preflight(input) {
+                            Ok(()) => AdmissionProgress::PreflightAccepted,
+                            Err(failure) => AdmissionProgress::PreflightRejected(failure),
+                        }
+                    }
+                    Err(_) => {
+                        self.stage = Stage::Failed;
+                        AdmissionProgress::PreflightRejected(PreflightFailure {
+                            fault: parent_sampler::PreflightFault::Clock,
+                            decisions: Some(input.decisions),
+                        })
+                    }
                 },
             },
             Stage::PreflightAccepted => match self.start_and_attach_watch(clock, budget) {
