@@ -800,6 +800,58 @@ pub struct PreflightInput<'a, 'r> {
     pub starting_session: &'a StartingSession,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreflightInputFault {
+    ScopeBinding,
+    MissingSnapshot,
+    SessionBinding,
+}
+
+impl<'a, 'r> PreflightInput<'a, 'r> {
+    /// Build preflight references from the strict starting receipt and the
+    /// session that delivered it. This prevents callers from accidentally
+    /// pairing a snapshot or session from a different starting response.
+    #[allow(clippy::too_many_arguments)] // Keep the exact run, consent, receipt and session bindings explicit.
+    pub fn from_starting_response(
+        run: &'a BoundRun<'r>,
+        scope: &'a Scope,
+        environment: &'a HostEnvironment,
+        starting_response: &'a StartingReceipt,
+        starting_decision: &'a ConsentRecord,
+        decisions: consent::Decisions,
+        now: Anchor,
+        starting_session: &'a StartingSession,
+    ) -> Result<Self, PreflightInputFault> {
+        if starting_response.scope_digest() != scope.digest() {
+            return Err(PreflightInputFault::ScopeBinding);
+        }
+        let Some(starting) = starting_response.snapshot() else {
+            return Err(PreflightInputFault::MissingSnapshot);
+        };
+        if starting.snapshot().scope().digest() != scope.digest() {
+            return Err(PreflightInputFault::ScopeBinding);
+        }
+        if !matches!(
+            starting_session.outcome(),
+            Some(super::starting_session::Outcome::Complete { digest, .. })
+                if digest == starting_response.digest()
+        ) {
+            return Err(PreflightInputFault::SessionBinding);
+        }
+        Ok(Self {
+            run,
+            scope,
+            environment,
+            starting,
+            starting_response,
+            starting_decision,
+            decisions,
+            now,
+            starting_session,
+        })
+    }
+}
+
 #[must_use = "retain the admission owner and controller through session shutdown"]
 pub struct ParentAdmission<'a, 's, 'w> {
     sampler: ParentSamplerChannel<'s>,

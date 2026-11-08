@@ -1339,6 +1339,12 @@ Preflight input, including consent decisions, is returned unchanged until the
 peer/setup gate is ready; every failed transition remains explicit in the
 returned progress value. The caller still owns launch, starting-session
 construction, run-loop scheduling and provision of the pilot-bound writer.
+`PreflightInput::from_starting_response` now derives the starting snapshot from
+the strict receipt, verifies the receipt's scope and requires the retained
+starting session to have completed with that same response digest. This
+prevents mismatched starting references from entering the admission poll API;
+the broader peer/environment/consent checks remain in
+`verify_reported_preflight`.
 `advance_pilot_once` joins that admission path to the successful terminal
 path: before NativeGrant it delegates to the ordered admission driver; after
 NativeGrant it polls once and advances result completion, planned sampler stop

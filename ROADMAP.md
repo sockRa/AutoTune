@@ -1105,3 +1105,10 @@ This is a product roadmap, **not** a generated BMAD sprint-status file or a clai
   all-target/all-feature checks, warning-denied Clippy, formatting and diff
   check pass. No tests or execution/qualification. Parent preflight construction
   and the actual polling loop remain missing; E3/Gate B remain open.
+- 2026-11-08 continuation (preflight binding from strict starting receipt):
+  `PreflightInput::from_starting_response` now derives the snapshot from the
+  verified receipt and rejects scope mismatch, missing snapshot or a session
+  whose completed digest differs. Full peer/environment/consent checks remain
+  in parent admission. Windows GNU/Linux all-target/all-feature checks,
+  warning-denied Clippy, formatting and diff check pass. No tests or
+  execution/qualification; fixed parent loop and Gate B remain open.

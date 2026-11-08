@@ -1666,3 +1666,11 @@ composition are still required before a runnable benchmark can be claimed.
   GNU/Linux all-target/all-feature checks, warning-denied Clippy, formatting and
   diff check pass. No tests or execution/qualification. The fixed parent still
   must construct preflight/owner inputs and poll admission/completion.
+- 2026-11-08 preflight from verified starting response: added
+  `PreflightInput::from_starting_response`, which derives the starting snapshot
+  from the strict receipt, checks its scope binding and requires the retained
+  response session to be Complete with the exact receipt digest. Existing
+  parent verification still owns peer/environment/consent checks. Windows
+  GNU/Linux all-target/all-feature checks, warning-denied Clippy, formatting and
+  diff check pass. No tests or execution/qualification; the fixed parent still
+  needs to build remaining inputs and drive admission/completion polls.
