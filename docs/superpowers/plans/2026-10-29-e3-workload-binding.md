@@ -1537,3 +1537,13 @@ composition are still required before a runnable benchmark can be claimed.
   compile or runtime checks were run. Concrete starting-read/artifact/consent
   ownership, fixed main, blocked-query deadlines, native issuance and
   qualification remain open. E3 partial; Gate B unmet.
+- 2026-11-08 typed three-role session owners: added `ClosedHandoff` to drop
+  the borrowed process sender while retaining the starting receiver, unsent
+  bootstrap frame and first send fault. `PilotOwners<E>` now has explicit slots
+  for manifest/scope, original starting process, start consent, optional strict
+  receipt/pre-manifest evidence and worker setup delivery; `start_pilot` transfers
+  these with sampler/worker/controller assets into the generic nonblocking
+  finalizer. No production session driver calls this yet and no cross-artifact
+  binding is inferred from construction. Static ownership review and formatting
+  only; no tests or build. Native permission, runtime/process qualification and
+  GPU acceptance remain unavailable.

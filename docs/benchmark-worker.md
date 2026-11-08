@@ -2897,8 +2897,16 @@ independent controller reference before or after collection.
 
 This type does not yet assemble a concrete owner tuple for starting reception,
 starting-read receipt, output/artifact, consent and the two workload processes,
-or invoke a fixed parent main. The caller must pass those owners as `E` and
-preserve the original process/authorization semantics. A never-returning final
+or invoke a fixed parent main. The typed `PilotOwners<E>` bundle now names the
+pilot manifest, starting scope/process, closed starting handoff (including an
+unsent bootstrap frame and send fault), starting consent record, optional
+starting receipt/pre-manifest reports and worker setup delivery, plus caller
+workload output evidence. `Handoff::close` drops the process-borrowing sender
+before transferring its session and unsent evidence, so the starting process
+can be retained in the same owner bundle. `start_pilot` transfers this bundle
+with the sampler/worker/controller assets into the finalizer. This is an
+ownership API only: no main constructs it or proves that the included artifacts
+match. A never-returning final
 OS observation or controller operation can keep polling pending indefinitely;
 pending-query/phase/native-call deadlines and qualification of actual request
 timing remain open. Even `complete()` says only that the host retirement path
