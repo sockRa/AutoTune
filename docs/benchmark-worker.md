@@ -1154,13 +1154,16 @@ initialization, grant human-consent authority or issue native admission.
 
 The `autotune-pilot-worker` binary target is now declared behind the explicit
 `native-cuda` feature and routes only the fixed Worker role to
-`worker_entry::entry`. Its admission callback always rejects with
-`parent_grant_unavailable`: this wires the worker process boundary while the
-parent-to-worker grant protocol is absent, so it cannot dispatch the workload.
-Cargo metadata confirms the target is gated by `native-cuda`; formatting and
-`git diff --check` pass. The binary and native path have not been built or
-executed in this checkpoint. Do not use this entry for a pilot until the parent
-grant is bound to current facts and ongoing supervision.
+`worker_entry::entry`. After the accepted Start, the worker now requires one
+separate ordinary-channel `NativeGrant`, bound to its exact setup artifact and
+received within the original setup deadline; its issue anchor must follow Start
+receipt. It retains that grant packet separately, and `start_native` refuses to
+run without it. The binary's callback still rejects with
+`parent_grant_unavailable`, because no parent grant issuer/sender exists yet.
+The grant's context/peer/consent/process/safety digests are references, not
+proof that the parent checked them correctly. Cargo metadata confirms the
+target is gated by `native-cuda`; formatting and `git diff --check` pass. The
+binary and native path have not been built or executed in this checkpoint.
 
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing

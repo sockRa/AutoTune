@@ -1,5 +1,6 @@
-//! Actual fixed-role entry composition, compile-only until exact native consent
-//! and a complete parent-qualified admission issuer exist. No binary calls it.
+//! Actual fixed-role entry composition. The feature-gated fixed worker binary
+//! calls it with a reject-only admission callback until a parent grant issuer
+//! exists.
 use super::{
     bootstrap::EntryClock,
     child_windows::{Context, Failure as StartupFailure},
@@ -132,10 +133,12 @@ pub struct Failure {
 /// # Safety
 /// Call once at the actual fixed worker entry, before any other adoption of its
 /// inherited endpoints. Exact native setup/manifest/device/artifact consent and
-/// independent supervision are prerequisites. admit must validate the complete
-/// parent facts/consent/safety chain; bootstrap/Ready/Start cannot issue a token.
-/// NativeAdmission deliberately still has no issuer. This function is not run
-/// by a main and does not substitute an admission-denied read-only product.
+/// independent supervision are prerequisites. A distinct post-Start
+/// NativeGrant must match the setup artifact and original deadline before
+/// `admit` is called. The callback must validate the complete parent
+/// facts/consent/safety chain; bootstrap/Ready/Start cannot issue a token.
+/// NativeAdmission deliberately still has no issuer; the fixed main rejects
+/// until one is implemented.
 pub unsafe fn entry<
     A: FnOnce(&NativeSession, &super::worker_setup::Artifact) -> Result<NativeAdmission, Reason>,
 >(
@@ -362,6 +365,21 @@ fn run<
                 return Err(Fault::Protocol);
             }
             if session.start_packet().is_none() {
+                thread::sleep(Duration::from_nanos(p.controller_tick_ns));
+            }
+        }
+        while session.native_grant_packet().is_none() {
+            if control.thread_finished() {
+                return Err(Fault::Control);
+            }
+            if let Err(raw) = session.poll_native(port) {
+                out.surplus = Some(raw);
+                return Err(Fault::Protocol);
+            }
+            if session.fault().is_some() {
+                return Err(Fault::Protocol);
+            }
+            if session.native_grant_packet().is_none() {
                 thread::sleep(Duration::from_nanos(p.controller_tick_ns));
             }
         }

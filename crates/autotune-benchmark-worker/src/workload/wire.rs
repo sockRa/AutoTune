@@ -159,6 +159,17 @@ pub enum Message {
     Start {
         issued: Anchor,
     },
+    /// A distinct parent authorization after Start. The opaque evidence digests
+    /// bind the parent decision inputs; they do not prove those inputs' truth.
+    NativeGrant {
+        issued: Anchor,
+        setup: Digest,
+        context: Digest,
+        peers: Digest,
+        consent: Digest,
+        process: Digest,
+        safety: Digest,
+    },
     Stop {
         reason: Reason,
         trigger_ns: u64,
@@ -190,6 +201,7 @@ impl Message {
             Self::Bootstrap { .. } => (Lane::Ordinary, Direction::ToWorker, "bootstrap"),
             Self::Ready { .. } => (Lane::Ordinary, Direction::FromWorker, "ready"),
             Self::Start { .. } => (Lane::Ordinary, Direction::ToWorker, "start"),
+            Self::NativeGrant { .. } => (Lane::Ordinary, Direction::ToWorker, "native_grant"),
             Self::Stop { .. } => (Lane::Control, Direction::ToWorker, "stop"),
             Self::StopAck { .. } => (Lane::Control, Direction::FromWorker, "stop_ack"),
             Self::RoleFinished { .. } => (Lane::Control, Direction::FromWorker, "role_finished"),
@@ -294,6 +306,12 @@ impl Message {
                 }
             }
             Self::Start { issued } => {
+                let ns = b.elapsed(*issued)?;
+                if ns < b.origin_ns || ns >= b.setup_boundary() {
+                    return Err(WireError::Body);
+                }
+            }
+            Self::NativeGrant { issued, .. } => {
                 let ns = b.elapsed(*issued)?;
                 if ns < b.origin_ns || ns >= b.setup_boundary() {
                     return Err(WireError::Body);
@@ -439,6 +457,23 @@ impl Message {
                 ("prepared_lanes", Value::U64((*prepared_lanes).into())),
             ]),
             Self::Start { issued } => object([("issued", anchor_value(*issued))]),
+            Self::NativeGrant {
+                issued,
+                setup,
+                context,
+                peers,
+                consent,
+                process,
+                safety,
+            } => object([
+                ("issued", anchor_value(*issued)),
+                ("setup", Value::Text(setup.to_hex())),
+                ("context", Value::Text(context.to_hex())),
+                ("peers", Value::Text(peers.to_hex())),
+                ("consent", Value::Text(consent.to_hex())),
+                ("process", Value::Text(process.to_hex())),
+                ("safety", Value::Text(safety.to_hex())),
+            ]),
             Self::Stop {
                 reason,
                 trigger_ns,
@@ -611,6 +646,27 @@ impl Message {
                 let o = exact(v, &["issued"])?;
                 Self::Start {
                     issued: parse_anchor(get(o, "issued"), b)?,
+                }
+            }
+            "native_grant" => {
+                let o = exact(
+                    v,
+                    &[
+                        "issued", "setup", "context", "peers", "consent", "process", "safety",
+                    ],
+                )?;
+                Self::NativeGrant {
+                    issued: parse_anchor(get(o, "issued"), b)?,
+                    setup: Digest::parse(string(get(o, "setup"))?).map_err(|_| WireError::Body)?,
+                    context: Digest::parse(string(get(o, "context"))?)
+                        .map_err(|_| WireError::Body)?,
+                    peers: Digest::parse(string(get(o, "peers"))?).map_err(|_| WireError::Body)?,
+                    consent: Digest::parse(string(get(o, "consent"))?)
+                        .map_err(|_| WireError::Body)?,
+                    process: Digest::parse(string(get(o, "process"))?)
+                        .map_err(|_| WireError::Body)?,
+                    safety: Digest::parse(string(get(o, "safety"))?)
+                        .map_err(|_| WireError::Body)?,
                 }
             }
             "stop" => {

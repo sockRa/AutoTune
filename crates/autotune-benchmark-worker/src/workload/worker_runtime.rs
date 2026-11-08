@@ -1,5 +1,5 @@
-//! Bound preparation/Ready/encoded-Start/producer composition. No executable,
-//! native loader or workload admission issuer. Reported Ready is not consent.
+//! Bound preparation/Ready/Start/native-grant reception/producer composition.
+//! The grant issuer is still absent. Reported Ready is not consent.
 use super::{
     bootstrap::Bound,
     control::Shared,
@@ -52,6 +52,7 @@ pub struct Session<B, C, S> {
     setup_delivery: Option<SetupDelivery>,
     ready_receipt: Option<Anchor>,
     start_packet: Option<WorkerReceived>,
+    native_grant_packet: Option<WorkerReceived>,
     rejected: Option<WorkerReceived>,
     fault: Option<Fault>,
     started: bool,
@@ -160,6 +161,7 @@ impl<
             setup_delivery: None,
             ready_receipt: None,
             start_packet: None,
+            native_grant_packet: None,
             rejected: None,
             fault,
             started: false,
@@ -227,6 +229,11 @@ impl<
     }
     pub fn start_packet(&self) -> Option<&WorkerReceived> {
         self.start_packet.as_ref()
+    }
+    /// Parent authorization is retained separately from Start. Its digest
+    /// references remain claims until the parent-side issuer is implemented.
+    pub fn native_grant_packet(&self) -> Option<&WorkerReceived> {
+        self.native_grant_packet.as_ref()
     }
     pub fn rejected(&self) -> Option<&WorkerReceived> {
         self.rejected.as_ref()
@@ -308,38 +315,92 @@ impl<
         }
     }
     /// Retain the decoded owner (including malformed bytes) before examining it.
-    /// Only one ordinary Start packet is accepted; a rejected owner is not lost.
+    /// Accept Start, then one distinct setup-bound native grant on the same
+    /// ordinary sequence. A rejected owner is not lost.
     #[allow(clippy::result_large_err)]
     pub fn packet(&mut self, raw: WorkerReceived) -> Result<(), WorkerReceived> {
         if self.rejected.is_some() {
             return Err(raw);
         }
-        let valid = self.fault.is_none()
+        let valid_start = self.fault.is_none()
             && self.ready_receipt.is_some()
             && self.start_packet.is_none()
+            && self.native_grant_packet.is_none()
             && raw.raw().lane() == Lane::Ordinary
             && raw.binding().ok() == Some(self.binding)
             && matches!(raw.message(), Ok(Message::Start { .. }));
+        let valid_grant = self.fault.is_none()
+            && self.start_packet.is_some()
+            && self.native_grant_packet.is_none()
+            && raw.raw().lane() == Lane::Ordinary
+            && raw.binding().ok() == Some(self.binding)
+            && matches!(raw.message(), Ok(Message::NativeGrant { .. }))
+            && self.grant_matches_start_and_setup(&raw);
+        let valid = valid_start || valid_grant;
         if !valid {
             self.rejected = Some(raw);
             self.fail(Fault::Protocol);
             return Ok(());
         }
-        self.start_packet = Some(raw);
-        let raw = self.start_packet.as_ref().expect("Start owner");
-        match self.gate.accept(
-            raw.message().expect("validated message"),
-            raw.raw().receipt(),
-        ) {
-            Ok(Action::Start { .. }) => (),
-            Ok(_) => {
-                self.fail(Fault::Protocol);
+        if valid_start {
+            self.start_packet = Some(raw);
+            let raw = self.start_packet.as_ref().expect("Start owner");
+            match self.gate.accept(
+                raw.message().expect("validated message"),
+                raw.raw().receipt(),
+            ) {
+                Ok(Action::Start { .. }) => (),
+                Ok(_) => {
+                    self.fail(Fault::Protocol);
+                }
+                Err(e) => {
+                    self.fail(Fault::Gate(e));
+                }
             }
-            Err(e) => {
-                self.fail(Fault::Gate(e));
-            }
+        } else {
+            self.native_grant_packet = Some(raw);
         }
         Ok(())
+    }
+    fn grant_matches_start_and_setup(&self, raw: &WorkerReceived) -> bool {
+        let Some(start) = self.start_packet.as_ref() else {
+            return false;
+        };
+        let (
+            Ok(Message::Start {
+                issued: start_issued,
+            }),
+            Ok(Message::NativeGrant { issued, setup, .. }),
+        ) = (start.message(), raw.message())
+        else {
+            return false;
+        };
+        let Some(expected_setup) = self.setup_delivery.map(|delivery| delivery.digest) else {
+            return false;
+        };
+        let Some(start_receipt) = start.raw().receipt() else {
+            return false;
+        };
+        let Some(receipt) = raw.raw().receipt() else {
+            return false;
+        };
+        let Ok(start_received_ns) = self.binding.elapsed(start_receipt) else {
+            return false;
+        };
+        let Ok(start_ns) = self.binding.elapsed(*start_issued) else {
+            return false;
+        };
+        let Ok(issue_ns) = self.binding.elapsed(*issued) else {
+            return false;
+        };
+        let Ok(receipt_ns) = self.binding.elapsed(receipt) else {
+            return false;
+        };
+        *setup == expected_setup
+            && start_ns <= start_received_ns
+            && issue_ns >= start_received_ns
+            && issue_ns <= receipt_ns
+            && receipt_ns < self.deadline
     }
     fn take_start(&mut self) -> Result<super::gate::StartObservation, Fault> {
         if self.fault.is_some() || self.started || self.shared.admission().stopped() {
@@ -360,6 +421,9 @@ impl<
         }
     }
     pub fn start_native(&mut self, admission: NativeAdmission) -> Result<(), Fault> {
+        if self.native_grant_packet.is_none() {
+            return Err(self.fail(Fault::Protocol));
+        }
         let start = self.take_start()?;
         match self.producer.start_native(start, admission) {
             Ok(()) => {
