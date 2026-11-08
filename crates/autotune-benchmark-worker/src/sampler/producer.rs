@@ -869,6 +869,7 @@ pub fn raw_events_with_parent_sampler(
         .records()
         .len()
         .checked_add(parent.controls().len())
+        .and_then(|n| n.checked_add(usize::from(parent.current().is_some())))
         .and_then(|n| n.checked_add(usize::from(parent.ready().is_some())))
         .and_then(|n| n.checked_add(usize::from(parent.rejected().is_some())))
         .and_then(|n| n.checked_add(parent.history().raw().len()))
@@ -973,6 +974,69 @@ pub fn raw_events_with_parent_sampler(
             .to_canonical();
             output.push_line(&line)?;
         }
+    }
+    if let Some(current) = parent.current() {
+        let raw = current.raw();
+        let bytes = raw.packet().bytes();
+        let assessment = current.result().map_or_else(
+            |fault| object([("fault", Value::Text(format!("{fault:?}")))]),
+            |receipt| {
+                object([
+                    ("issued", Value::Text(format!("{:?}", receipt.issued()))),
+                    ("received", Value::Text(format!("{:?}", receipt.received()))),
+                    (
+                        "capture",
+                        Value::Text(receipt.capture().canonical().to_owned()),
+                    ),
+                ])
+            },
+        );
+        let line = object([
+            ("stream", Value::Text("parent_settings".into())),
+            ("sequence", Value::U64(0)),
+            ("receipt", raw.receipt().map_or(Value::Null, anchor_value)),
+            ("kind", Value::Text("current_settings".into())),
+            (
+                "body",
+                object([
+                    ("lane", Value::Text(format!("{:?}", raw.lane()))),
+                    (
+                        "origin",
+                        raw.origin().map_or(Value::Null, |origin| {
+                            object([
+                                ("kind", Value::Text(format!("{:?}", origin.kind()))),
+                                ("binding", Value::Text(origin.binding().to_hex())),
+                                ("declaration", Value::Text(origin.declaration().to_hex())),
+                                ("image", Value::Text(origin.image().to_hex())),
+                                ("pid", Value::U64(origin.pid().into())),
+                                ("creation", Value::U64(origin.creation())),
+                            ])
+                        }),
+                    ),
+                    ("received_length", Value::U64(bytes.len() as u64)),
+                    (
+                        "packet_digest",
+                        Value::Text(
+                            crate::evidence::Digest::of(
+                                crate::evidence::Domain::RawArtifact,
+                                bytes,
+                            )
+                            .to_hex(),
+                        ),
+                    ),
+                    ("bytes_hex", Value::Text(super::wire_model::hex(bytes))),
+                    (
+                        "rejection",
+                        raw.packet()
+                            .rejection()
+                            .map_or(Value::Null, |value| Value::Text(format!("{value:?}"))),
+                    ),
+                    ("assessment", assessment),
+                ]),
+            ),
+        ])
+        .to_canonical();
+        output.push_line(&line)?;
     }
     for (sequence, anchor) in parent.history().raw().iter().enumerate() {
         let line = object([
