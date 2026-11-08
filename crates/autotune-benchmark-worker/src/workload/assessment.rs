@@ -56,12 +56,20 @@ impl Audit {
     /// The Start must already have been admitted by the parent safety/consent
     /// path. Constructing this report auditor supplies no such permission.
     pub fn new(binding: WorkerBinding, issued: Anchor, budget: &Budget) -> Result<Self, Fault> {
-        Message::Start { issued }
-            .validate(binding)
-            .map_err(|_| Fault::Binding)?;
         let allocation = budget
             .reserve(std::mem::size_of::<Self>())
             .map_err(|_| Fault::Capacity)?;
+        Self::new_reserved(binding, issued, allocation)
+    }
+
+    pub(crate) fn new_reserved(
+        binding: WorkerBinding,
+        issued: Anchor,
+        allocation: Reservation,
+    ) -> Result<Self, Fault> {
+        Message::Start { issued }
+            .validate(binding)
+            .map_err(|_| Fault::Binding)?;
         let mut source = Clock::new(binding.monitor, binding.epoch).map_err(|_| Fault::Clock)?;
         let start_ns = source.observe(issued).map_err(|_| Fault::Clock)?;
         let mut receipts = Clock::new(binding.monitor, binding.epoch).map_err(|_| Fault::Clock)?;

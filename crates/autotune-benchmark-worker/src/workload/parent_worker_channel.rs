@@ -275,6 +275,7 @@ pub struct ParentWorkerChannel<'a> {
     result_packets: Vec<crate::workload::transport::WorkerReceived>,
     result_packet_limit: usize,
     result_storage: Option<crate::sampler::budget::Reservation>,
+    audit_storage: Option<crate::sampler::budget::Reservation>,
     budget: Budget,
     overflowed: bool,
     sender: crate::workload::transport::Sender<CancelQueue<windows_process::ProcessQueue<'a>>>,
@@ -326,6 +327,7 @@ pub struct WorkerReportEvidence {
     control_audit: Option<WorkerControlAudit>,
     overflowed: bool,
     _result_storage: Option<crate::sampler::budget::Reservation>,
+    _audit_storage: Option<crate::sampler::budget::Reservation>,
     _control_storage: crate::sampler::budget::Reservation,
     _event_storage: crate::sampler::budget::Reservation,
 }
@@ -460,6 +462,7 @@ impl<'a> ParentWorkerChannel<'a> {
             result_packets: Vec::new(),
             result_packet_limit: 0,
             result_storage: None,
+            audit_storage: None,
             budget: budget.clone(),
             overflowed: false,
             sender,
@@ -660,6 +663,7 @@ impl<'a> ParentWorkerChannel<'a> {
             control_audit: self.control_audit,
             overflowed: self.overflowed,
             _result_storage: self.result_storage,
+            _audit_storage: self.audit_storage,
             _control_storage: self.control_storage,
             _event_storage: self.event_storage,
         }
@@ -676,18 +680,36 @@ impl<'a> ParentWorkerChannel<'a> {
         if self.audit.is_some() {
             return Err(assessment::Fault::Closed);
         }
+        if self.audit_storage.is_none() || self.result_storage.is_none() {
+            self.prepare_result_audit(budget)?;
+        }
+        let allocation = self
+            .audit_storage
+            .take()
+            .ok_or(assessment::Fault::Capacity)?;
+        let audit = Audit::new_reserved(self.worker.binding(), issued, allocation)?;
+        self.audit = Some(audit);
+        Ok(())
+    }
+
+    fn prepare_result_audit(&mut self, budget: &Budget) -> Result<(), assessment::Fault> {
+        if self.audit.is_some() || self.audit_storage.is_some() || self.result_storage.is_some() {
+            return Err(assessment::Fault::Closed);
+        }
         let count = self
             .worker
             .binding()
             .max_result_messages()
             .ok_or(assessment::Fault::Capacity)?;
-        let audit = Audit::new(self.worker.binding(), issued, budget)?;
+        let audit_storage = budget
+            .reserve(std::mem::size_of::<Audit>())
+            .map_err(|_| assessment::Fault::Capacity)?;
         let (result_packets, reservation) =
             reserve_packets(budget, count).map_err(|_| assessment::Fault::Capacity)?;
         self.result_packets = result_packets;
         self.result_packet_limit = count;
         self.result_storage = Some(reservation);
-        self.audit = Some(audit);
+        self.audit_storage = Some(audit_storage);
         Ok(())
     }
 
@@ -827,6 +849,17 @@ impl<'a> ParentWorkerChannel<'a> {
         setup: &mut ReadyDelivery,
         clock: &WindowsClock,
     ) -> Result<(), parent_start::Fault> {
+        let budget = self.budget.clone();
+        if parent.start_attempt().is_none()
+            && self.audit.is_none()
+            && self.audit_storage.is_none()
+            && self.result_storage.is_none()
+        {
+            if let Err(fault) = self.prepare_result_audit(&budget) {
+                self.assessment_fault.get_or_insert(fault);
+                return Err(parent_start::Fault::Context);
+            }
+        }
         parent.queue_start(
             Processes {
                 starting,
@@ -842,7 +875,6 @@ impl<'a> ParentWorkerChannel<'a> {
             .and_then(|attempt| attempt.observations[1])
             .and_then(|observation| observation.anchor)
             .ok_or(parent_start::Fault::Context)?;
-        let budget = self.budget.clone();
         if let Err(fault) = self.begin_result_audit(issued, &budget) {
             self.assessment_fault.get_or_insert(fault);
             return Err(parent_start::Fault::Context);

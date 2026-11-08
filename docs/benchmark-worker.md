@@ -1219,13 +1219,15 @@ observations with another worker owner through this adapter. Its nonblocking
 the setup receiver's original deadline on idle polls, and transfers the
 `ReadyDelivery` only after the strict response and Ready are both present; the
 caller retains the receiver and its raw failure evidence on every rejection.
-After `queue_start` succeeds, the adapter starts the worker result audit from
-the exact issued anchor retained in the Start attempt. `collect_and_queue_native_grant`
-refuses to issue NativeGrant if that audit is absent, faulted or overflowed, so
-the worker cannot enter native execution through this adapter without a ready
-result-report owner. An audit reservation failure after Start still leaves the
-queued Start retained; the caller must stop the worker and preserve that unresolved
-session rather than attempt NativeGrant.
+Before its first `queue_start`, the adapter reserves bounded storage for both
+the result packets and the audit. If reservation fails, Start is not sent.
+After Start succeeds, it constructs the audit from the exact issued anchor
+retained in the Start attempt using the already reserved storage.
+`collect_and_queue_native_grant` refuses NativeGrant if that audit is absent,
+faulted or overflowed, so the worker cannot enter native execution through this
+adapter without a ready result-report owner. A construction or anchor failure
+after Start still leaves the queued Start retained; the caller must stop the
+worker and preserve that unresolved session rather than attempt NativeGrant.
 It still does not launch the starting/sampler/worker processes, gather the
 required artifacts or consents, create the controller, handle worker/sampler
 and parent sampler receipts, export an aggregate live session, or construct a
