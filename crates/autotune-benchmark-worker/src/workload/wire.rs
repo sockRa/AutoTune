@@ -55,6 +55,19 @@ impl WorkerBinding {
     pub fn monitor(self) -> Binding {
         self.monitor
     }
+    pub fn manifest_digest(self) -> Digest {
+        self.manifest
+    }
+    /// Maximum ordinary worker result packets for one frozen plan: one phase
+    /// transition, one record per dispatch, and one first-failure vector.
+    pub fn max_result_messages(self) -> Option<usize> {
+        let dispatches = self
+            .plan
+            .warmup_dispatches
+            .checked_add(self.plan.measured_dispatches)? as usize;
+        let chunks = (self.plan.shape.lanes() as usize).div_ceil(super::dispatch::CHUNK_LANES);
+        dispatches.checked_add(1)?.checked_add(chunks)
+    }
     #[cfg(windows)]
     pub(super) fn images(self) -> [Digest; 2] {
         [self.sampler, self.worker]

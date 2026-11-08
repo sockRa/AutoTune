@@ -32,6 +32,7 @@ pub struct PilotOwners<E> {
     pub starting_evidence: super::starting::ReportedSnapshot,
     pub host_environment: super::host_environment::Reported,
     pub worker_setup_delivery: super::worker_setup_delivery::ReadyDelivery,
+    pub worker_report_evidence: super::parent_worker_channel::WorkerReportEvidence,
     pub additional: E,
 }
 impl<E> PilotOwners<E> {
@@ -71,6 +72,10 @@ impl<E> PilotOwners<E> {
                     && refs.worker_setup == self.worker_setup_delivery.receipt().digest()
             })
         });
+        let worker_control_finished = self
+            .worker_report_evidence
+            .control_audit()
+            .is_some_and(|audit| audit.role_finished() && audit.fault().is_none());
         if scope.session != manifest.session
             || scope.clock_token != manifest.clock_token
             || scope.raw_uuid != manifest.raw_uuid
@@ -95,6 +100,9 @@ impl<E> PilotOwners<E> {
             || !start_response_matches
             || self.worker_setup_delivery.receipt().binding() != assets.parent.context_binding()
             || !matches!(self.worker_setup_delivery.assessment(), Some(Ok(_)))
+            || self.worker_report_evidence.binding() != assets.parent.context_binding()
+            || self.worker_report_evidence.origin() != assets.worker.origin()
+            || !worker_control_finished
             || !parent_refs_match
             || parent.fault().is_some()
             || !parent.is_finishing()
@@ -160,6 +168,28 @@ impl<E> Finalized<E> {
                     && report.pending.is_empty()
             })
             && self.operations.iter().flatten().all(Result::is_ok)
+    }
+}
+impl<E> Finalized<PilotOwners<E>> {
+    /// Full host and worker-reported completion. This remains only reported
+    /// host/child lifecycle evidence, not OS process-exit or GPU-quiescence
+    /// proof, and does not imply candidate correctness or acceptance.
+    pub fn complete_pilot(&self) -> bool {
+        self.complete()
+            && self
+                .evidence
+                .worker_report_evidence
+                .control_audit()
+                .is_some_and(|audit| {
+                    audit.role_finished() && !audit.native_failure() && audit.fault().is_none()
+                })
+            && self.evidence.worker_report_evidence.reports_complete()
+            && self
+                .evidence
+                .worker_report_evidence
+                .assessment_fault()
+                .is_none()
+            && !self.evidence.worker_report_evidence.overflowed()
     }
 }
 

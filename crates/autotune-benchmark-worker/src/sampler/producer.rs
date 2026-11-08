@@ -393,6 +393,53 @@ pub fn build_envelope(
 /// Bounded offline collection of the raw trace. The fixed controller uses this
 /// only after admission has closed; storage runs on its separate writer lane.
 pub fn raw_events(s: &Supervisor) -> Result<BoundText, WireError> {
+    raw_events_inner(s, |_| Ok(()))
+}
+
+/// Compose a candidate live-workload NDJSON stream from sampler/controller and
+/// owned worker packets. This requires a workload-capable envelope/archive;
+/// the readonly-sampler index must not be used for this stream. Cross-stream
+/// order is recorded per owner, without inventing a total order.
+#[cfg(windows)]
+pub fn raw_events_with_worker(
+    s: &Supervisor,
+    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
+) -> Result<BoundText, WireError> {
+    raw_events_inner(s, |output| {
+        if worker.overflowed() {
+            return Err(WireError::Capacity);
+        }
+        let binding = worker.binding();
+        if binding.monitor() != s.binding().monitor
+            || binding.manifest_digest().as_bytes() != &s.binding().manifest_digest
+        {
+            return Err(WireError::Binding);
+        }
+        // Only the sampler/controller and worker poll streams are available
+        // here; the eventual workload manifest must add other role event owners.
+        let total_events = s
+            .traces()
+            .len()
+            .checked_add(s.report().events().count())
+            .and_then(|n| n.checked_add(worker.receive_events().len()))
+            .and_then(|n| n.checked_add(1))
+            .ok_or(WireError::Capacity)?;
+        if total_events as u64
+            > autotune_fma_reference::profile::Profile::approved_design()
+                .limits
+                .event_capacity
+        {
+            return Err(WireError::Capacity);
+        }
+        append_worker_events(output, setup, worker)
+    })
+}
+
+fn raw_events_inner<F>(s: &Supervisor, append: F) -> Result<BoundText, WireError>
+where
+    F: FnOnce(&mut RawBuilder) -> Result<(), WireError>,
+{
     let p = autotune_fma_reference::profile::Profile::approved_design().limits;
     let _temporary = s
         .failure_budget()
@@ -661,7 +708,172 @@ pub fn raw_events(s: &Supervisor) -> Result<BoundText, WireError> {
         .to_canonical();
         output.push_line(&line)?;
     }
+    append(&mut output)?;
     Ok(output.finish())
+}
+
+#[cfg(windows)]
+fn append_worker_events(
+    output: &mut RawBuilder,
+    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
+) -> Result<(), WireError> {
+    let binding = worker.binding();
+    if setup.receipt().binding() != binding || setup.origin().ok() != Some(worker.origin()) {
+        return Err(WireError::Binding);
+    }
+    let setup_packet_count = setup.packets().count();
+    let mut setup_packets = setup.packets();
+    let mut result_packets = worker.result_packets().iter();
+    let mut control_packets = worker.control_packets().iter();
+    let mut ordinary_packet_index = 0usize;
+    for event in worker.receive_events() {
+        let packet = if event.kind != crate::workload::parent_worker_channel::ReceiveKind::Packet {
+            None
+        } else {
+            match event.lane {
+                crate::sampler::wire::Lane::Ordinary => {
+                    let packet = if ordinary_packet_index < setup_packet_count {
+                        setup_packets.next()
+                    } else {
+                        result_packets.next()
+                    };
+                    ordinary_packet_index += 1;
+                    packet
+                }
+                crate::sampler::wire::Lane::Control => control_packets.next(),
+            }
+        };
+        let packet_matches = packet.zip(event.packet_digest).map(|(packet, digest)| {
+            crate::evidence::Digest::of(
+                crate::evidence::Domain::RawArtifact,
+                packet.raw().packet().bytes(),
+            ) == digest
+        });
+        let line = object([
+            ("stream", Value::Text("worker_poll".into())),
+            ("sequence", Value::U64(event.ordinal.into())),
+            ("receipt", event.anchor.map_or(Value::Null, anchor_value)),
+            ("kind", Value::Text(format!("{:?}", event.kind))),
+            (
+                "body",
+                object([
+                    ("lane", Value::Text(format!("{:?}", event.lane))),
+                    ("packet", packet.map_or(Value::Null, worker_packet_value)),
+                    (
+                        "packet_matches_digest",
+                        packet_matches.map_or(Value::Null, Value::Bool),
+                    ),
+                    (
+                        "packet_digest",
+                        event
+                            .packet_digest
+                            .map_or(Value::Null, |digest| Value::Text(digest.to_hex())),
+                    ),
+                    (
+                        "os_code",
+                        event
+                            .code
+                            .map_or(Value::Null, |code| Value::I64(code.into())),
+                    ),
+                ]),
+            ),
+        ])
+        .to_canonical();
+        output.push_line(&line)?;
+    }
+    let progress = worker.progress();
+    let vector = worker.failure_vector();
+    let control = worker.control_audit();
+    let line = object([
+        ("stream", Value::Text("worker_assessment".into())),
+        ("sequence", Value::U64(0)),
+        ("receipt", Value::Null),
+        ("kind", Value::Text("summary".into())),
+        (
+            "body",
+            object([
+                (
+                    "progress_warmup",
+                    progress.map_or(Value::Null, |p| Value::U64(p.warmup.into())),
+                ),
+                (
+                    "progress_measured",
+                    progress.map_or(Value::Null, |p| Value::U64(p.measured.into())),
+                ),
+                ("reports_complete", Value::Bool(worker.reports_complete())),
+                (
+                    "assessment_fault",
+                    worker
+                        .assessment_fault()
+                        .map_or(Value::Null, |f| Value::Text(format!("{f:?}"))),
+                ),
+                ("receive_overflow", Value::Bool(worker.overflowed())),
+                (
+                    "control_role_finished",
+                    control.map_or(Value::Null, |audit| Value::Bool(audit.role_finished())),
+                ),
+                (
+                    "control_native_failure",
+                    control.map_or(Value::Null, |audit| Value::Bool(audit.native_failure())),
+                ),
+                (
+                    "control_fault",
+                    control
+                        .and_then(|audit| audit.fault())
+                        .map_or(Value::Null, |fault| Value::Text(format!("{fault:?}"))),
+                ),
+                (
+                    "failure_vector_complete",
+                    vector.map_or(Value::Null, |v| Value::Bool(v.complete())),
+                ),
+                (
+                    "failure_vector_failed",
+                    vector.map_or(Value::Null, |v| Value::Bool(v.failed())),
+                ),
+                (
+                    "failure_vector_lanes",
+                    vector.map_or(Value::Null, |v| Value::U64(v.bits().len() as u64)),
+                ),
+            ]),
+        ),
+    ])
+    .to_canonical();
+    output.push_line(&line)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn worker_packet_value(packet: &crate::workload::transport::WorkerReceived) -> Value {
+    let raw = packet.raw();
+    let bytes = raw.packet().bytes();
+    let packet_digest = crate::evidence::Digest::of(crate::evidence::Domain::RawArtifact, bytes);
+    object([
+        ("lane", Value::Text(format!("{:?}", raw.lane()))),
+        (
+            "origin",
+            raw.origin().map_or(Value::Null, |origin| {
+                object([
+                    ("kind", Value::Text(format!("{:?}", origin.kind()))),
+                    ("binding", Value::Text(origin.binding().to_hex())),
+                    ("declaration", Value::Text(origin.declaration().to_hex())),
+                    ("image", Value::Text(origin.image().to_hex())),
+                    ("pid", Value::U64(origin.pid().into())),
+                    ("creation", Value::U64(origin.creation())),
+                ])
+            }),
+        ),
+        ("received_length", Value::U64(bytes.len() as u64)),
+        ("packet_digest", Value::Text(packet_digest.to_hex())),
+        ("bytes_hex", Value::Text(super::wire_model::hex(bytes))),
+        (
+            "rejection",
+            raw.packet().rejection().map_or(Value::Null, |rejection| {
+                Value::Text(format!("{rejection:?}"))
+            }),
+        ),
+        ("decode_ok", Value::Bool(packet.message().is_ok())),
+    ])
 }
 struct RawBuilder {
     text: String,

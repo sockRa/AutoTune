@@ -31,6 +31,7 @@ pub mod windows;
 pub(crate) mod windows_io;
 pub mod wire;
 pub(crate) mod wire_model;
+pub mod workload_archive;
 pub mod writer;
 
 /// Select exactly one existing getter kind without invoking it.

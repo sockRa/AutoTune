@@ -160,12 +160,14 @@ pub struct Receiver {
     count: u32,
     received: u32,
     receipt: Option<Receipt>,
+    chunks: Vec<WorkerReceived>,
     ready: Option<WorkerReceived>,
     rejected: Option<WorkerReceived>,
     arrivals: Vec<Arrival>,
     fault: Option<Fault>,
     transport: Option<(Option<i32>, Option<Anchor>)>,
     budget: Budget,
+    _packet_storage: Reservation,
     _allocation: Reservation,
 }
 impl Receiver {
@@ -193,6 +195,13 @@ impl Receiver {
                     + std::mem::size_of::<ReadyDelivery>(),
             )
             .map_err(|_| Fault::Capacity)?;
+        let packet_storage = budget
+            .reserve(
+                (MAX_CHUNKS as usize + 1)
+                    .checked_mul(std::mem::size_of::<WorkerReceived>())
+                    .ok_or(Fault::Capacity)?,
+            )
+            .map_err(|_| Fault::Capacity)?;
         let history = EntryClock::new(binding.monitor.qpc_frequency, binding.epoch, first, &budget)
             .map_err(|e| {
                 if e == super::bootstrap::Error::Capacity {
@@ -216,6 +225,10 @@ impl Receiver {
         arrivals
             .try_reserve_exact(MAX_CHUNKS as usize + 1)
             .map_err(|_| Fault::Capacity)?;
+        let mut chunks = Vec::new();
+        chunks
+            .try_reserve_exact(MAX_CHUNKS as usize)
+            .map_err(|_| Fault::Capacity)?;
         Ok(Self {
             binding,
             deadline_raw,
@@ -227,12 +240,14 @@ impl Receiver {
             count: 0,
             received: 0,
             receipt: None,
+            chunks,
             ready: None,
             rejected: None,
             arrivals,
             fault: None,
             transport: None,
             budget,
+            _packet_storage: packet_storage,
             _allocation: allocation,
         })
     }
@@ -307,6 +322,8 @@ impl Receiver {
         }
         if matches!(packet.message(), Ok(Message::Ready { .. })) {
             self.ready = Some(packet)
+        } else {
+            self.chunks.push(packet)
         }
         Ok(())
     }
@@ -450,6 +467,13 @@ impl ReadyDelivery {
     }
     pub fn ready(&self) -> &WorkerReceived {
         self.receiver.ready.as_ref().expect("Ready owner")
+    }
+    /// Exact raw setup packet owners in wire sequence, followed by Ready.
+    pub fn packets(&self) -> impl Iterator<Item = &WorkerReceived> {
+        self.receiver
+            .chunks
+            .iter()
+            .chain(self.receiver.ready.iter())
     }
     pub fn decoder(&mut self) -> &mut Channel {
         &mut self.receiver.decoder

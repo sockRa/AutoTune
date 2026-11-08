@@ -4,6 +4,7 @@ use super::{
     archive::{Archive, Artifact, IndexBinding, Receipt, Sink},
     budget::{Budget, Reservation},
     producer::BoundText,
+    workload_archive::{IndexBinding as WorkloadIndexBinding, WorkloadArchive},
 };
 use std::{
     fs::{self, File, OpenOptions},
@@ -18,7 +19,47 @@ use std::{
 };
 enum Command {
     Artifact(Artifact, BoundText),
-    Finish(IndexBinding),
+    Finish(FinishBinding),
+}
+enum FinishBinding {
+    ReadOnly(IndexBinding),
+    Workload(WorkloadIndexBinding),
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArchiveMode {
+    ReadOnly,
+    Workload,
+}
+enum ActiveArchive<S: Sink> {
+    ReadOnly(Archive<S>),
+    Workload(WorkloadArchive<S>),
+}
+impl<S: Sink> ActiveArchive<S> {
+    fn new(sink: S, mode: ArchiveMode) -> Self {
+        match mode {
+            ArchiveMode::ReadOnly => Self::ReadOnly(Archive::new(sink)),
+            ArchiveMode::Workload => Self::Workload(WorkloadArchive::new(sink)),
+        }
+    }
+    fn write(&mut self, artifact: Artifact, bytes: &[u8]) -> io::Result<()> {
+        match self {
+            Self::ReadOnly(archive) => archive.write(artifact, bytes),
+            Self::Workload(archive) => archive.write(artifact, bytes),
+        }
+    }
+    fn finish(&mut self, binding: FinishBinding) -> io::Result<Receipt> {
+        match (self, binding) {
+            (Self::ReadOnly(archive), FinishBinding::ReadOnly(binding)) => archive.finish(binding),
+            (Self::Workload(archive), FinishBinding::Workload(binding)) => {
+                archive.finish(binding).map(|receipt| Receipt {
+                    primary_bytes: receipt.primary_bytes,
+                    total_bytes: receipt.total_bytes,
+                    index_sha256: receipt.index_sha256,
+                })
+            }
+            _ => Err(io::Error::other("writer/archive scope mismatch")),
+        }
+    }
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Failure {
@@ -96,13 +137,19 @@ pub struct Writer {
     budget: Budget,
     next: usize,
     finished: bool,
+    mode: ArchiveMode,
     _metadata: Arc<Reservation>,
     ready: Arc<AtomicBool>,
     written: Arc<AtomicUsize>,
 }
 impl Writer {
     pub fn start<S: Sink + Send + 'static>(sink: S, budget: Budget) -> io::Result<Self> {
-        Self::start_factory(move || Ok(sink), budget)
+        Self::start_factory_mode(move || Ok(sink), budget, ArchiveMode::ReadOnly)
+    }
+    /// Start a separate workload-scoped writer. It writes the same four fixed
+    /// leaves but finalizes with a `workload_session` index and worker binding.
+    pub fn start_workload<S: Sink + Send + 'static>(sink: S, budget: Budget) -> io::Result<Self> {
+        Self::start_factory_mode(move || Ok(sink), budget, ArchiveMode::Workload)
     }
     pub fn start_factory<
         S: Sink + Send + 'static,
@@ -110,6 +157,25 @@ impl Writer {
     >(
         factory: F,
         budget: Budget,
+    ) -> io::Result<Self> {
+        Self::start_factory_mode(factory, budget, ArchiveMode::ReadOnly)
+    }
+    pub fn start_workload_factory<
+        S: Sink + Send + 'static,
+        F: FnOnce() -> io::Result<S> + Send + 'static,
+    >(
+        factory: F,
+        budget: Budget,
+    ) -> io::Result<Self> {
+        Self::start_factory_mode(factory, budget, ArchiveMode::Workload)
+    }
+    fn start_factory_mode<
+        S: Sink + Send + 'static,
+        F: FnOnce() -> io::Result<S> + Send + 'static,
+    >(
+        factory: F,
+        budget: Budget,
+        mode: ArchiveMode,
     ) -> io::Result<Self> {
         // Four fixed primary artifacts and one final index request. Queue slot
         // storage remains charged until the last worker/queue owner drops.
@@ -136,7 +202,7 @@ impl Writer {
                         return;
                     }
                 };
-                let mut archive = Archive::new(sink);
+                let mut archive = ActiveArchive::new(sink, mode);
                 background_ready.store(true, Ordering::Release);
                 while let Ok(command) = receiver.recv() {
                     let result = match command {
@@ -176,6 +242,7 @@ impl Writer {
             budget,
             next: 0,
             finished: false,
+            mode,
             _metadata: metadata,
             ready,
             written,
@@ -210,6 +277,21 @@ impl Writer {
         result
     }
     pub fn finish(&mut self, binding: IndexBinding) -> io::Result<()> {
+        self.finish_with_binding(FinishBinding::ReadOnly(binding))
+    }
+    pub fn finish_workload(&mut self, binding: WorkloadIndexBinding) -> io::Result<()> {
+        self.finish_with_binding(FinishBinding::Workload(binding))
+    }
+    fn finish_with_binding(&mut self, binding: FinishBinding) -> io::Result<()> {
+        let scope_matches = matches!(
+            (self.mode, &binding),
+            (ArchiveMode::ReadOnly, FinishBinding::ReadOnly(_))
+                | (ArchiveMode::Workload, FinishBinding::Workload(_))
+        );
+        if !scope_matches {
+            self.close();
+            return Err(io::Error::other("writer/archive scope mismatch"));
+        }
         if self.finished || self.next != 4 {
             self.close();
             return Err(io::Error::other("incomplete writer"));

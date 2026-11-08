@@ -302,6 +302,10 @@ impl<D: FixedDeclaration> Process<D> {
     }
 }
 impl Process<Declaration> {
+    pub fn binding(&self) -> crate::workload::wire::WorkerBinding {
+        self.declaration.binding()
+    }
+
     /// Parent outgoing frames bind this exact declaration; stop closes ordinary
     /// queue admission even for a sender created before the cancellation race.
     pub fn sender(
@@ -345,6 +349,14 @@ impl Process<starting_bootstrap::Declaration> {
     }
 }
 impl<D: FixedDeclaration> Process<D> {
+    /// Partition the unique control reader before a sender or ordinary reader
+    /// is created. Ordinary polling then cannot consume control protocol data.
+    pub fn split_control(
+        &mut self,
+    ) -> Result<crate::workload::windows_transport::ControlTransport, SendFailure> {
+        self.transport.split_control()
+    }
+
     pub fn receive(&self, clock: impl FnMut() -> Option<crate::monitor::Anchor>) -> Receive {
         match self.transport.receive(clock) {
             Receive::Packet(raw) => Receive::Packet(raw.stamp_process(self.origin)),
