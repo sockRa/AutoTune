@@ -1165,6 +1165,15 @@ proof that the parent checked them correctly. Cargo metadata confirms the
 target is gated by `native-cuda`; formatting and `git diff --check` pass. The
 binary and native path have not been built or executed in this checkpoint.
 
+`ParentSampler::observe_native_grant_processes` now performs a separate fresh
+observation of the retained starting, sampler and worker process owners after a
+successful queued Start. It brackets those potentially blocking OS reads with
+the original Windows clock, requires the bound context/peer/consent chain,
+reported safety/re-entry and controller-watch readiness before and after, and
+retains a distinct frame. A prior `process_frame` remains historical and cannot
+substitute. This method runs on its caller, outside the independent controller
+deadline path. It does not yet derive the grant references or send a grant.
+
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing
 strict settings or sampler parser; it cannot authorize it. Telemetry may support

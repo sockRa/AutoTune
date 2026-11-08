@@ -167,6 +167,7 @@ pub struct ParentSampler {
     peer_check: Option<super::parent_peers::Record>,
     consent: Option<super::consent::Delivery>,
     process_frame: Option<super::process_state::Frame>,
+    native_grant_process_frame: Option<super::process_state::Frame>,
     start_attempt: Option<super::parent_start::Attempt>,
     #[cfg(windows)]
     watch: Option<super::parent_watch_windows::Publisher>,
@@ -189,6 +190,12 @@ impl ParentSampler {
     }
     pub fn process_frame(&self) -> Option<&super::process_state::Frame> {
         self.process_frame.as_ref()
+    }
+    /// Fresh three-origin process observation reserved for a future one-shot
+    /// native grant. It is separate from the historical Start decision frame.
+    #[cfg(windows)]
+    pub fn native_grant_process_frame(&self) -> Option<&super::process_state::Frame> {
+        self.native_grant_process_frame.as_ref()
     }
     pub fn consent(&self) -> Option<&super::consent::Delivery> {
         self.consent.as_ref()
@@ -529,6 +536,7 @@ impl ParentSampler {
             peer_check: None,
             consent: None,
             process_frame: None,
+            native_grant_process_frame: None,
             start_attempt: None,
             #[cfg(windows)]
             watch: None,
@@ -1298,6 +1306,137 @@ impl ParentSampler {
         if result.is_err() {
             input.setup.close_reference_path();
             self.fail(Fault::Context, self.now_ns);
+        }
+        result
+    }
+    /// Collect the three original process owners again for a future native
+    /// grant. The Start frame is historical and is never reused. OS queries
+    /// run on this caller, outside the independent deadline controller.
+    #[cfg(windows)]
+    pub fn observe_native_grant_processes(
+        &mut self,
+        input: super::process_state::Processes<'_>,
+        clock: &crate::monitor::windows_clock::WindowsClock,
+    ) -> Result<(), super::process_state::Fault> {
+        use super::process_state::{self, Fault as StateFault, Frame, Window};
+        let start_ok = self
+            .start_attempt
+            .as_ref()
+            .is_some_and(|attempt| attempt.queued && attempt.result.is_ok());
+        if self.native_grant_process_frame.is_some() {
+            input.setup.close_reference_path();
+            self.fail(Fault::Protocol, self.now_ns);
+            return Err(StateFault::Duplicate);
+        }
+        if !start_ok {
+            input.setup.close_reference_path();
+            self.fail(Fault::Context, self.now_ns);
+            return Err(StateFault::Context);
+        }
+
+        let first = self.observe_start(clock);
+        let first_ok = first.capture_error.is_none()
+            && first.clock_identity
+                == (
+                    self.binding.monitor.qpc_frequency,
+                    self.binding.epoch.clock_token,
+                )
+            && first.anchor.is_some_and(|a| {
+                self.binding
+                    .elapsed(a)
+                    .is_ok_and(|n| n < self.setup_deadline)
+            })
+            && first.parent_fault.is_none()
+            && first.context
+            && first.reported_screen
+            && first.watch_ready;
+        let expected = [
+            input.starting.origin(),
+            input.sampler.origin(),
+            input.worker.origin(),
+        ];
+        let context = first_ok
+            && self.context_open()
+            && self
+                .consent
+                .as_ref()
+                .is_some_and(|d| d.assessment.result.is_ok())
+            && self
+                .peer_check
+                .as_ref()
+                .is_some_and(|p| p.result.is_ok() && p.peers.map(|p| p.expected) == expected)
+            && self.context_check.as_ref().is_some_and(|c| {
+                c.result.is_ok() && c.references.worker_setup == input.setup.receipt().digest()
+            })
+            && input.setup.origin().ok() == Some(expected[2]);
+        let window = Window {
+            binding: self.binding.monitor(),
+            epoch: self.binding.epoch,
+            deadline_ns: self.setup_deadline,
+        };
+        let observed_clock = (clock.qpc_frequency(), clock.clock_token());
+        let eligible =
+            context && observed_clock == (window.binding.qpc_frequency, window.epoch.clock_token);
+        let snapshots = if eligible {
+            [
+                Some(input.starting.observe_state(window, clock)),
+                Some(input.sampler.observe_state(window, clock)),
+                Some(input.worker.observe_state(window, clock)),
+            ]
+        } else {
+            [None; 3]
+        };
+        let last = if eligible {
+            Some(self.observe_start(clock))
+        } else {
+            None
+        };
+        let last_ok = last.is_some_and(|observation| {
+            observation.capture_error.is_none()
+                && observation.clock_identity
+                    == (
+                        self.binding.monitor.qpc_frequency,
+                        self.binding.epoch.clock_token,
+                    )
+                && observation.anchor.is_some_and(|a| {
+                    self.binding
+                        .elapsed(a)
+                        .is_ok_and(|n| n < self.setup_deadline)
+                })
+                && observation.parent_fault.is_none()
+                && observation.context
+                && observation.reported_screen
+                && observation.watch_ready
+        });
+        let mut frame = Frame {
+            window,
+            observed_clock,
+            before: first.anchor,
+            after: last.and_then(|observation| observation.anchor),
+            before_error: first.capture_error,
+            after_error: last.and_then(|observation| observation.capture_error),
+            snapshots,
+            checks: [Err(StateFault::Missing); 3],
+            clock_result: Err(StateFault::Clock),
+            result: Err(StateFault::Context),
+        };
+        process_state::screen_frame(&mut frame, expected, eligible && last_ok);
+        let result = frame.result;
+        self.native_grant_process_frame = Some(frame);
+        if result.is_err() {
+            input.setup.close_reference_path();
+            let parent_fault = if self.watch_error.is_some() || !self.watch_ready() {
+                Fault::Supervision
+            } else if self.monitor.report().stop().is_some() {
+                Fault::Monitor
+            } else if self.now_ns >= self.setup_deadline {
+                Fault::SetupDeadline
+            } else if matches!(result, Err(StateFault::Clock)) {
+                Fault::Clock
+            } else {
+                Fault::Context
+            };
+            self.fail(parent_fault, self.now_ns);
         }
         result
     }
