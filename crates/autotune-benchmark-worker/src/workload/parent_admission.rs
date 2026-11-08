@@ -486,6 +486,9 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         {
             self.stage = Stage::Failed;
         }
+        if self.stage == Stage::Failed {
+            self.sampler.abort_for_parent_fault(sampler.anchor);
+        }
 
         Turn {
             sampler,
@@ -535,6 +538,9 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             Stage::NativeGrantQueued => AdmissionProgress::NativeGrantQueued,
             Stage::Failed => AdmissionProgress::Failed,
         };
+        if self.stage == Stage::Failed {
+            self.sampler.abort_for_parent_fault(observed.sampler.anchor);
+        }
         AdmissionTurn {
             observed,
             progress,

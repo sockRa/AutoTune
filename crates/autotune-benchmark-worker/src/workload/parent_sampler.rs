@@ -986,6 +986,27 @@ impl ParentSampler {
             watch.stop(window);
         }
     }
+
+    /// Fail closed after a sibling parent lane reports a terminal fault. Use
+    /// only an observed original-clock anchor; missing/invalid time records a
+    /// clock fault and never creates a fresh deadline epoch.
+    pub(crate) fn abort_for_parent_fault(&mut self, anchor: Option<Anchor>) {
+        let trigger = match anchor {
+            Some(anchor) => match self.observe(Some(anchor)) {
+                Ok(now) => now,
+                Err(_) => self.now_ns,
+            },
+            None => {
+                self.fail(Fault::Clock, self.now_ns);
+                self.now_ns
+            }
+        };
+        self.fail(Fault::Stopped, trigger);
+    }
+
+    pub(crate) fn retain_abort_stop_event(&mut self, result: Result<(), Option<i32>>) {
+        self.stop_event.get_or_insert(result);
+    }
     fn observe(&mut self, a: Option<Anchor>) -> Result<u64, Fault> {
         let n = self.history.observe(a).map_err(|_| Fault::Clock);
         let n = match n {

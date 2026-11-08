@@ -212,6 +212,21 @@ impl<'a> ParentSamplerChannel<'a> {
         self.parent.finish(anchor, &mut self.sender)
     }
 
+    /// Issue an immediate fail-closed stop when another parent lane fails.
+    /// The request is retained on the original ParentSampler/process owner and
+    /// the bounded Stop frame uses the same sender; no new time window is made.
+    pub fn abort_for_parent_fault(&mut self, anchor: Option<Anchor>) {
+        self.parent.abort_for_parent_fault(anchor);
+        if self.parent.stop_event().is_none() {
+            self.parent.retain_abort_stop_event(
+                self.process
+                    .request_stop()
+                    .map_err(|error| error.raw_os_error()),
+            );
+        }
+        self.parent.queue_stop(&mut self.sender);
+    }
+
     /// Release the process-borrowing sender and transfer the accumulated
     /// ParentSampler owner to retirement/finalization. The caller can then
     /// move the same process owner into `retirement_collector::Assets`.
