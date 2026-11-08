@@ -1713,3 +1713,11 @@ composition are still required before a runnable benchmark can be claimed.
   failures instead of dropping partial evidence. Windows GNU/Linux
   all-target/all-feature checks, warning-denied Clippy, formatting and diff
   check pass. No tests or process/runtime/native/GPU execution.
+- 2026-11-08 fixed parent pilot writer binding: `FixedParentSession` now checks
+  the manifest digest against its retained `BoundRun` and exposes one
+  writer-start attempt using the manifest output root, with sink opening
+  deferred to the writer thread. The session records the attempt before
+  startup so a failed start cannot accidentally be duplicated. Windows GNU
+  formatting, package all-target/all-feature check and warning-denied Clippy
+  pass. No tests or process/runtime/native/GPU execution; manifest preparation,
+  top-level polling and writer completion handling remain outside this seam.

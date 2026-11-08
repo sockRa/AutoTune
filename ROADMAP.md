@@ -1123,3 +1123,11 @@ This is a product roadmap, **not** a generated BMAD sprint-status file or a clai
   and diff check pass. No tests or process/runtime/native/GPU execution. The
   fixed parent still must supply host/peer/consent context and drive the loop;
   E3/Gate B remain open.
+- 2026-11-08 continuation (fixed parent pilot writer binding): the retained
+  `FixedParentSession` now permits one writer-start attempt after verifying the
+  `PilotManifest` digest against its fixed `BoundRun`; the sink opens on the
+  dedicated writer thread from the manifest's output root. Windows GNU
+  formatting, package all-target/all-feature check and warning-denied Clippy
+  pass. No tests or process/runtime/native/GPU execution. The fixed parent still
+  must prepare the manifest, drive preflight/admission/terminal/completion
+  polls and coordinate cleanup; E3 remains partial and Gate B unmet.

@@ -22,6 +22,7 @@ use crate::{
     monitor::{windows_clock::WindowsClock, Anchor},
     sampler::budget::Budget,
 };
+use std::{io, path::PathBuf};
 
 #[must_use = "advance the fixed parent session or transfer its terminal/fault owners"]
 pub struct FixedParentSession<'a, 'p, 'r, 'm> {
@@ -29,6 +30,7 @@ pub struct FixedParentSession<'a, 'p, 'r, 'm> {
     run: &'r BoundRun<'m>,
     scope: &'a Scope,
     starting: &'a CompletedStarting,
+    writer_started: bool,
 }
 
 pub struct PreflightContext<'a> {
@@ -36,6 +38,12 @@ pub struct PreflightContext<'a> {
     pub starting_decision: &'a ConsentRecord,
     pub decisions: Decisions,
     pub now: Anchor,
+}
+
+pub enum PilotWriterStartFailure {
+    ManifestBinding,
+    AlreadyStarted,
+    Start(io::Error),
 }
 
 impl<'a, 'p, 'r, 'm> FixedParentSession<'a, 'p, 'r, 'm> {
@@ -77,11 +85,36 @@ impl<'a, 'p, 'r, 'm> FixedParentSession<'a, 'p, 'r, 'm> {
             run,
             scope,
             starting,
+            writer_started: false,
         })
     }
 
     pub fn stage(&self) -> Stage {
         self.admission.stage()
+    }
+
+    /// Start the one pilot-bound writer for this exact run. Its sink opens on
+    /// the dedicated writer thread using the manifest's preapproved empty
+    /// output directory, not on the parent poll path.
+    pub fn start_pilot_writer(
+        &mut self,
+        manifest: &super::manifest::PilotManifest,
+        budget: &Budget,
+    ) -> Result<crate::sampler::writer::Writer, PilotWriterStartFailure> {
+        if self.run.manifest_digest() != manifest.digest() {
+            return Err(PilotWriterStartFailure::ManifestBinding);
+        }
+        if self.writer_started {
+            return Err(PilotWriterStartFailure::AlreadyStarted);
+        }
+        self.writer_started = true;
+        let output_root = PathBuf::from(&manifest.manifest_draft().output_root);
+        crate::sampler::writer::Writer::start_pilot_workload_factory(
+            move || crate::sampler::writer::DirectorySink::open(&output_root),
+            budget.clone(),
+            manifest,
+        )
+        .map_err(PilotWriterStartFailure::Start)
     }
 
     /// Advance one bounded parent round while keeping the run binding fixed.
@@ -136,6 +169,7 @@ impl<'a, 'p, 'r, 'm> FixedParentSession<'a, 'p, 'r, 'm> {
         let run = self.run;
         let scope = self.scope;
         let starting = self.starting;
+        let writer_started = self.writer_started;
         match self.admission.into_terminal_owners() {
             Ok(owners) => Ok(owners),
             Err(admission) => Err(Self {
@@ -143,6 +177,7 @@ impl<'a, 'p, 'r, 'm> FixedParentSession<'a, 'p, 'r, 'm> {
                 run,
                 scope,
                 starting,
+                writer_started,
             }),
         }
     }
@@ -154,6 +189,7 @@ impl<'a, 'p, 'r, 'm> FixedParentSession<'a, 'p, 'r, 'm> {
         let run = self.run;
         let scope = self.scope;
         let starting = self.starting;
+        let writer_started = self.writer_started;
         match self.admission.into_faulted_owners() {
             Ok(owners) => Ok(owners),
             Err(admission) => Err(Self {
@@ -161,6 +197,7 @@ impl<'a, 'p, 'r, 'm> FixedParentSession<'a, 'p, 'r, 'm> {
                 run,
                 scope,
                 starting,
+                writer_started,
             }),
         }
     }

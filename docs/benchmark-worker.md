@@ -3371,3 +3371,17 @@ launch pair, parent watchdog, or a complete launch-to-archive session. Windows
 GNU and Linux all-target/all-feature package checks, warning-denied Clippy,
 formatting and diff checks pass. No tests, process/runtime/native/GPU execution
 or qualification were performed.
+
+### Fixed parent writer binding (2026-11-08)
+
+`FixedParentSession::start_pilot_writer` verifies that the `PilotManifest`
+digest matches its retained `BoundRun`, then starts the pilot workload writer
+with `DirectorySink::open` deferred to the writer thread. The session allows
+only one start attempt, including when writer startup fails, to avoid silently
+creating a second writer for the same run. The manifest's output directory
+must already satisfy the sink's empty-directory contract. This is a callable
+source seam only: the fixed parent still has to create the manifest and writer,
+drive the session and completion driver, and handle startup faults. Windows
+GNU `fmt --check`, package all-target/all-feature `check` and warning-denied
+`clippy` pass. No tests, process/runtime/native/GPU execution or qualification
+were performed.
