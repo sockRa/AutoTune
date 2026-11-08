@@ -14,9 +14,16 @@ use super::{
 use crate::{monitor::windows_clock::WindowsClock, sampler::budget::Budget};
 use std::io;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PumpControl {
+    Continue,
+    Cancel,
+}
+
 #[allow(clippy::large_enum_variant)] // Preserve launch/process/handoff owners inline on every failure path.
 pub enum Failure {
     LaunchStart(starting_launch::LaunchStartFault),
+    LaunchCancelled(starting_launch::LaunchGuard),
     LaunchPending(starting_launch::LaunchGuard),
     LaunchFailed(LaunchFailure),
     LaunchIneligible(starting_launch::LaunchGuard),
@@ -30,6 +37,13 @@ pub enum Failure {
         process: AdmissionProcess,
         handoff: ClosedHandoff,
         fault: super::transport::SendFailure,
+        stop_request: starting_launch::RequestAttempt,
+        termination_request: Option<starting_launch::RequestAttempt>,
+    },
+    Cancelled {
+        process: AdmissionProcess,
+        handoff: ClosedHandoff,
+        step: Step,
         stop_request: starting_launch::RequestAttempt,
         termination_request: Option<starting_launch::RequestAttempt>,
     },
@@ -51,8 +65,10 @@ pub enum Failure {
 
 /// Launch the fixed starting child, send its one-shot bootstrap, and poll the
 /// bounded response to completion. `pump` runs between pending polls so the
-/// host can dispatch UI/events and apply its polling cadence; all deadline
-/// checks still use the launch/session's original epoch on the next poll.
+/// host can dispatch UI/events and apply its polling cadence; returning
+/// `Cancel` requests cooperative stop while returning every live owner. All
+/// deadline checks still use the launch/session's original epoch on the next
+/// poll.
 #[allow(clippy::result_large_err)] // The failure value intentionally returns the complete live owner graph.
 pub fn launch_and_receive(
     declaration: Declaration,
@@ -60,7 +76,7 @@ pub fn launch_and_receive(
     consent: &mut Record,
     clock: WindowsClock,
     budget: &Budget,
-    mut pump: impl FnMut(),
+    mut pump: impl FnMut() -> PumpControl,
 ) -> Result<(AdmissionProcess, ClosedHandoff, Receipt), Failure> {
     let mut guard =
         starting_launch::LaunchGuard::start(declaration, scope, consent, clock.clone(), budget)
@@ -68,7 +84,12 @@ pub fn launch_and_receive(
 
     loop {
         match guard.poll() {
-            LaunchPoll::Pending => pump(),
+            LaunchPoll::Pending => {
+                if pump() == PumpControl::Cancel {
+                    guard.request_cancel();
+                    return Err(Failure::LaunchCancelled(guard));
+                }
+            }
             LaunchPoll::ProcessReady => break,
             LaunchPoll::Failed => {
                 return match guard.into_failure() {
@@ -108,7 +129,20 @@ pub fn launch_and_receive(
 
     loop {
         match handoff.poll(process.process(), || clock.capture().ok()) {
-            Step::Idle | Step::Accepted { .. } => pump(),
+            Step::Idle | Step::Accepted { .. } => {
+                if pump() == PumpControl::Cancel {
+                    let step = handoff.session_mut().stop();
+                    let handoff = handoff.close();
+                    let (stop_request, termination_request) = request_stop(&mut process);
+                    return Err(Failure::Cancelled {
+                        process,
+                        handoff,
+                        step,
+                        stop_request,
+                        termination_request,
+                    });
+                }
+            }
             Step::Complete { .. } => break,
             step => {
                 let handoff = handoff.close();

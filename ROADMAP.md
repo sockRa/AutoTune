@@ -1082,3 +1082,12 @@ This is a product roadmap, **not** a generated BMAD sprint-status file or a clai
   and diff check pass. No tests or process/runtime/native/GPU execution. Host
   preflight, pilot pair, fixed parent session loop and archive caller are still
   missing; E3 remains partial and Gate B unmet.
+- 2026-11-08 continuation (parent cancellation propagation): starting launch
+  and receipt polling now accepts an explicit host cancellation result. It
+  requests cooperative stop and returns the original launch guard or process,
+  closes a pending response session, and preserves terminal/request outcomes
+  for caller cleanup. Windows GNU/Linux all-target/all-feature checks,
+  warning-denied Clippy, formatting and diff check pass. No tests or
+  process/runtime/native/GPU execution. This remains a source component; parent
+  preflight, pilot admission and fixed end-to-end loop are still missing, so E3
+  is partial and Gate B unmet.

@@ -302,6 +302,13 @@ impl LaunchGuard {
         }
     }
 
+    /// Request cooperative cancellation from the parent while retaining this
+    /// guard for continued polling and any required termination escalation.
+    pub fn request_cancel(&mut self) -> LaunchFacts {
+        self.request_stop_once();
+        self.facts
+    }
+
     fn request_termination_once(&mut self) {
         if self.facts.termination_request.is_some() {
             return;

@@ -1642,3 +1642,12 @@ composition are still required before a runnable benchmark can be claimed.
   Clippy, formatting and diff check pass. No tests, process/runtime/native/GPU
   execution or qualification. This does not assemble preflight or drive the
   sampler/worker admission, full session or archive loop; E3/Gate B remain open.
+- 2026-11-08 parent cancellation propagation: the starting-parent poll callback
+  now returns `Continue` or `Cancel`. Cancellation during process launch records
+  the guard's cooperative-stop request and retains the guard for later polling
+  and escalation. Cancellation during response reception closes the session,
+  requests process stop (escalating if the request fails), and returns the
+  process, closed handoff, terminal step and request outcomes. Windows
+  GNU/Linux all-target/all-feature checks, warning-denied Clippy, formatting
+  and diff check pass. No tests or execution/qualification. Parent preflight,
+  pilot launch/admission and the complete fixed session loop remain open.

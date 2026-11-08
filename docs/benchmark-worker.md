@@ -3322,8 +3322,11 @@ stop/termination request outcomes. The new `AdmissionProcess` forwarding
 methods keep cleanup requests within the launch-bound owner.
 
 This is Windows-only source composition. The host must still supply consent,
-scope, budget, clock and pump behavior; the helper does not drive cancellation,
-preflight assembly, the pilot sampler/worker launch pair, parent watchdog, or a
-complete launch-to-archive session. Windows GNU and Linux all-target/all-feature
-package checks, warning-denied Clippy, formatting and diff checks pass. No tests,
-process/runtime/native/GPU execution or qualification were performed.
+scope, budget, clock and pump behavior. The pump can now cancel while the
+starting launch or response is pending; cancellation requests cooperative stop,
+closes the reception, and returns the active guard/process/handoff plus request
+outcomes. The helper does not drive preflight assembly, the pilot sampler/worker
+launch pair, parent watchdog, or a complete launch-to-archive session. Windows
+GNU and Linux all-target/all-feature package checks, warning-denied Clippy,
+formatting and diff checks pass. No tests, process/runtime/native/GPU execution
+or qualification were performed.
