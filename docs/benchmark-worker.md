@@ -1255,7 +1255,10 @@ inbound process, preflight peer, and sender with another process.
 The adapter does not launch the process, start the independent controller,
 prove peer truth, grant the worker, or qualify a live sample. It does not split
 the control reader for a concurrent controller; full fixed-parent orchestration
-must still coordinate that ownership and the remaining session roles.
+must still coordinate that ownership and the remaining session roles. After
+polling/finish, `into_parent` drops the borrowing sender and transfers the
+accumulated parent state so the caller can move the same sampler process into
+`retirement_collector::Assets`; it does not certify that shutdown completed.
 
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing

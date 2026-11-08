@@ -87,4 +87,17 @@ impl<'a> ParentSamplerChannel<'a> {
     pub fn finish(&mut self, anchor: Option<Anchor>) -> Result<(), parent_sampler::Fault> {
         self.parent.finish(anchor, &mut self.sender)
     }
+
+    /// Release the process-borrowing sender and transfer the accumulated
+    /// ParentSampler owner to retirement/finalization. The caller can then
+    /// move the same process owner into `retirement_collector::Assets`.
+    pub fn into_parent(self) -> ParentSampler {
+        let Self {
+            process: _,
+            parent,
+            sender,
+        } = self;
+        drop(sender);
+        parent
+    }
 }
