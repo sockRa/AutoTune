@@ -144,13 +144,21 @@ pub struct Finalized<E> {
 impl<E> Finalized<E> {
     pub fn complete(&self) -> bool {
         self.retirement.result.is_ok()
+            && self.retirement.operation == Some(Ok(()))
+            && self.retirement.panics.iter().all(Option::is_none)
             && self
                 .retirement
                 .assets
                 .progress()
                 .is_some_and(|frame| frame.result().is_ok())
             && self.retirement_acknowledged
-            && self.controller.is_ok()
+            && self.controller.as_ref().is_ok_and(|report| {
+                report.state.retired()
+                    && report.state.fault().is_none()
+                    && report.state.overflow().is_none()
+                    && report.state.capture_error().is_none()
+                    && report.pending.is_empty()
+            })
             && self.operations.iter().flatten().all(Result::is_ok)
     }
 }

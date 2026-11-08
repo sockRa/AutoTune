@@ -16,7 +16,7 @@ use crate::{
 };
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError},
         Arc, OnceLock,
     },
@@ -104,6 +104,7 @@ struct Control {
     external: OnceLock<StopRequest>,
     unplanned: OnceLock<StopWindow>,
     send: SyncSender<Update>,
+    pending_count: Arc<AtomicUsize>,
     _allocation: Arc<Reservation>,
     rejected: OnceLock<Update>,
     send_error: OnceLock<MailboxFault>,
@@ -175,7 +176,13 @@ pub struct Pending<T> {
 }
 impl<T> Pending<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        self.receiver.try_recv()
+        self.receiver.try_recv().map(|value| {
+            self.pending_count.fetch_sub(1, Ordering::AcqRel);
+            value
+        })
+    }
+    pub fn is_empty(&self) -> bool {
+        self.pending_count.load(Ordering::Acquire) == 0
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -277,6 +284,7 @@ impl Handle {
             }
         };
         let (send, receive) = mpsc::sync_channel(4);
+        let pending_count = Arc::new(AtomicUsize::new(0));
         let control = Arc::new(Control {
             arbitration: Arc::new(Arbitration::new()),
             retirement: OnceLock::new(),
@@ -291,6 +299,7 @@ impl Handle {
             external: OnceLock::new(),
             unplanned: OnceLock::new(),
             send,
+            pending_count,
             _allocation: Arc::new(metadata),
             rejected: OnceLock::new(),
             send_error: OnceLock::new(),
@@ -530,7 +539,9 @@ impl super::parent_watch_publication::Endpoint for Endpoint<'_> {
         self.0.closed.load(Ordering::Acquire)
     }
     fn send(&mut self, update: Update) -> Result<(), Fault> {
+        self.0.pending_count.fetch_add(1, Ordering::AcqRel);
         if let Err(e) = self.0.send.try_send(update) {
+            self.0.pending_count.fetch_sub(1, Ordering::AcqRel);
             let (fault, rejected) = match e {
                 mpsc::TrySendError::Full(v) => (MailboxFault::Full, v),
                 mpsc::TrySendError::Disconnected(v) => (MailboxFault::Disconnected, v),
@@ -720,6 +731,7 @@ fn controller(
             for _ in 0..4 {
                 match pending.try_recv() {
                     Ok(update) => {
+                        control.pending_count.fetch_sub(1, Ordering::AcqRel);
                         // Receipt time follows this exact try_recv, never a
                         // tick captured before a concurrently arriving update.
                         let raw = capture(&clock);
@@ -757,6 +769,7 @@ fn controller(
         state,
         pending: Pending {
             receiver: pending,
+            pending_count: control.pending_count.clone(),
             _allocation: control._allocation.clone(),
         },
         _control: control.clone(),
@@ -774,6 +787,7 @@ mod tests {
         send.try_send(7u8).unwrap();
         let pending = Pending {
             receiver,
+            pending_count: Arc::new(AtomicUsize::new(1)),
             _allocation: charge.clone(),
         };
         drop(charge);
