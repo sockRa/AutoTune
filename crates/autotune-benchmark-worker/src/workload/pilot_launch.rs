@@ -114,6 +114,59 @@ pub struct Pair {
     _metadata: Reservation,
 }
 
+/// Successfully launched sampler/worker owners retained together so their
+/// exact handles and facts can open parent admission as one handoff.
+pub struct AdmissionPair {
+    sampler: AdmissionProcess,
+    worker: AdmissionProcess,
+}
+
+impl AdmissionPair {
+    pub fn sampler_facts(&self) -> Facts {
+        self.sampler.facts()
+    }
+
+    pub fn worker_facts(&self) -> Facts {
+        self.worker.facts()
+    }
+
+    /// Compose the exact guarded process pair into the supervised parent
+    /// admission coordinator while retaining both wrappers in the caller.
+    #[allow(clippy::result_large_err)] // Keep constructed channel/controller owners inline on failure.
+    #[allow(clippy::too_many_arguments)] // Preserve the exact run, epoch and starting owner inputs.
+    pub fn admit<'a, 'p>(
+        &'p mut self,
+        run: &BoundRun<'_>,
+        setup_entry: Anchor,
+        first: Anchor,
+        starting: &'a super::starting_launch::AdmissionProcess,
+        setup_receiver: Option<super::worker_setup_delivery::Receiver>,
+        clock: &WindowsClock,
+        budget: &Budget,
+    ) -> Result<
+        super::parent_admission::ParentAdmission<'a, 'p, 'p>,
+        super::parent_admission::ProcessAdmissionFailure<'a, 'p, 'p>,
+    > {
+        super::parent_admission::ParentAdmission::from_processes(
+            &mut self.sampler,
+            &mut self.worker,
+            run,
+            setup_entry,
+            first,
+            starting,
+            setup_receiver,
+            clock,
+            budget,
+        )
+    }
+
+    /// Release the exact process/facts pairs after parent admission has been
+    /// consumed and its process borrows have ended.
+    pub fn into_parts(self) -> ((Process, Facts), (Process, Facts)) {
+        (self.sampler.into_parts(), self.worker.into_parts())
+    }
+}
+
 impl Pair {
     #[allow(clippy::result_large_err)] // Preserve an already-started sampler if worker startup fails.
     #[allow(clippy::too_many_arguments)] // Keep the exact shared run/clock/consent inputs visible at launch.
@@ -215,6 +268,12 @@ impl Pair {
             Err(_) => unreachable!("worker transfer precondition was checked"),
         };
         Ok((sampler, worker))
+    }
+
+    #[allow(clippy::result_large_err)] // Return both launch guards inline if either is not transferable.
+    pub fn into_admission_pair(self) -> Result<AdmissionPair, Self> {
+        self.into_admission_processes()
+            .map(|(sampler, worker)| AdmissionPair { sampler, worker })
     }
 }
 

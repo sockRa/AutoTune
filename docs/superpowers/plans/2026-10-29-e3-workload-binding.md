@@ -1605,3 +1605,9 @@ composition are still required before a runnable benchmark can be claimed.
   eligible. Windows GNU/Linux all-target/all-feature checks, warning-denied
   Clippy and formatting pass. No tests or process/runtime/native/GPU execution;
   fixed parent loop and Gate B remain open.
+- 2026-11-08 pilot launch/admission composition: `AdmissionPair::admit` now
+  calls `ParentAdmission::from_processes` with the exact guarded sampler/worker
+  wrappers and retains those wrappers for later finalizer transfer. Windows
+  GNU/Linux all-target/all-feature checks, warning-denied Clippy and formatting
+  pass. No tests or process/runtime/native/GPU execution. Parent preflight
+  assembly, finalizer/archive caller and fixed executable remain open.
