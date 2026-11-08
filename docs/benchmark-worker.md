@@ -1219,6 +1219,11 @@ observations with another worker owner through this adapter. Its nonblocking
 the setup receiver's original deadline on idle polls, and transfers the
 `ReadyDelivery` only after the strict response and Ready are both present; the
 caller retains the receiver and its raw failure evidence on every rejection.
+`queue_start_when_watch_ready` returns `WaitingForWatch` without doing process
+queries or consuming the one-shot Start attempt until the attached original
+controller is ready; it then delegates to the same retained worker sequence.
+ParentSampler rechecks watch state at every Start boundary, so a lost readiness
+race remains a sticky supervision failure rather than an unchecked send.
 Before its first `queue_start`, the adapter reserves bounded storage for both
 the result packets and the audit. If reservation fails, Start is not sent.
 After Start succeeds, it constructs the audit from the exact issued anchor

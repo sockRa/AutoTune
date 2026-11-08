@@ -313,6 +313,12 @@ pub enum ResultPoll {
     Unavailable(assessment::Fault),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartProgress {
+    WaitingForWatch,
+    Queued,
+}
+
 /// Transferable raw worker evidence retained under the same parent budget.
 /// This moves into `PilotOwners::worker_report_evidence` before finalization.
 pub struct WorkerReportEvidence {
@@ -896,6 +902,25 @@ impl<'a> ParentWorkerChannel<'a> {
             return Err(parent_start::Fault::Context);
         }
         Ok(())
+    }
+
+    /// Leave the session untouched until the attached original controller is
+    /// ready. Once ready, perform the one blocking process observation and
+    /// Start attempt through `queue_start`; a readiness race is still checked
+    /// by ParentSampler at every boundary.
+    pub fn queue_start_when_watch_ready(
+        &mut self,
+        parent: &mut ParentSampler,
+        starting: &windows_process::Process<starting_bootstrap::Declaration>,
+        sampler: &windows_process::Process,
+        setup: &mut ReadyDelivery,
+        clock: &WindowsClock,
+    ) -> Result<StartProgress, parent_start::Fault> {
+        if parent.start_attempt().is_none() && !parent.watch_ready() {
+            return Ok(StartProgress::WaitingForWatch);
+        }
+        self.queue_start(parent, starting, sampler, setup, clock)?;
+        Ok(StartProgress::Queued)
     }
 
     /// Collect a fresh retained-process frame and queue NativeGrant on the
