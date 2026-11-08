@@ -1565,3 +1565,10 @@ composition are still required before a runnable benchmark can be claimed.
   starting artifact (these are distinct evidence roles). Invalid low-level
   retirement context returns clock/cause evidence without invoking process
   queries. Static read-through/format only; no tests, build or Windows calls.
+- 2026-11-08 terminal completion predicate: `Finalized::complete` no longer
+  treats a clean controller thread join as a successful controller outcome. It
+  requires explicit retirement state, no controller fault/clock/overflow, no
+  operation panic/error, successful final-observation callback/frame/ack and no
+  unreceived controller update. Added an atomic mailbox item count so querying
+  emptiness cannot consume retained updates. `Report.pending` remains available
+  to drain. Formatting/static review only; no tests/build/run performed.

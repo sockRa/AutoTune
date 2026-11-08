@@ -2892,8 +2892,12 @@ collector outcome, original assets, caller evidence, controller report/error,
 joined per-lane results and whether retirement was acknowledged. Collection,
 controller, or lane failure remains visible; `complete()` is true only for
 successful collection/frame, acknowledged retirement, a successful controller
-report and successful joined operations. Request cancellation works through the
-independent controller reference before or after collection.
+report with a committed retirement state and no controller/clock/overflow fault,
+an empty retained mailbox, and successful joined operations. The mailbox tracks
+its exact accepted-but-unreceived count atomically; checking `complete()` never
+consumes a queued update. `Report.pending` remains owned by the final result and
+can be drained explicitly. Request cancellation works through the independent
+controller reference before or after collection.
 
 The typed `PilotOwners<E>` bundle now names the
 pilot manifest, starting scope/process, closed starting handoff (including an
