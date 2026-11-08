@@ -1339,6 +1339,12 @@ accepted sampler RoleFinished and the worker audit has accepted StopAck plus
 RoleFinished with no pending work, cleanup failure, native failure or audit
 fault. Failed admission/assessment remains failed; this helper does not turn
 fault recovery into successful completion.
+The pilot writer also has `Writer::start_pilot_workload_factory`: it reserves
+the canonical manifest/profile leaf buffers before starting the writer, then
+creates the sink on the dedicated writer thread and queues those two leaves
+first. A parent can therefore construct the pilot-bound directory sink without
+doing filesystem setup on its deadline path. This is archive plumbing only;
+it does not create the output directory or call the fixed parent flow.
 This coordinator does not launch the three processes, poll the pre-manifest
 starting session, own the whole execution/retirement loop, or prove hardware or
 GPU qualification.

@@ -158,12 +158,9 @@ impl Writer {
         budget: Budget,
         manifest: &crate::workload::manifest::PilotManifest,
     ) -> io::Result<Self> {
+        let (frozen_manifest, frozen_profile) = pilot_header(manifest, &budget)?;
         let mut writer = Self::start_workload(sink, budget.clone())?;
-        let frozen_manifest = BoundText::copy(manifest.canonical(), &budget)
-            .map_err(|_| io::Error::other("workload manifest evidence capacity"))?;
         writer.enqueue(Artifact::Manifest, frozen_manifest)?;
-        let frozen_profile = BoundText::copy(manifest.profile_canonical(), &budget)
-            .map_err(|_| io::Error::other("workload profile evidence capacity"))?;
         writer.enqueue(Artifact::Profile, frozen_profile)?;
         Ok(writer)
     }
@@ -184,6 +181,23 @@ impl Writer {
         budget: Budget,
     ) -> io::Result<Self> {
         Self::start_factory_mode(factory, budget, ArchiveMode::Workload)
+    }
+    /// Start a pilot-bound workload writer whose sink is created on its
+    /// dedicated writer thread. This keeps filesystem setup off the parent
+    /// deadline path while preserving the manifest/profile-first archive.
+    pub fn start_pilot_workload_factory<
+        S: Sink + Send + 'static,
+        F: FnOnce() -> io::Result<S> + Send + 'static,
+    >(
+        factory: F,
+        budget: Budget,
+        manifest: &crate::workload::manifest::PilotManifest,
+    ) -> io::Result<Self> {
+        let (frozen_manifest, frozen_profile) = pilot_header(manifest, &budget)?;
+        let mut writer = Self::start_workload_factory(factory, budget)?;
+        writer.enqueue(Artifact::Manifest, frozen_manifest)?;
+        writer.enqueue(Artifact::Profile, frozen_profile)?;
+        Ok(writer)
     }
     fn start_factory_mode<
         S: Sink + Send + 'static,
@@ -390,6 +404,17 @@ impl Writer {
             Err(unsafe { windows_sys::Win32::Foundation::GetLastError() })
         }
     }
+}
+
+fn pilot_header(
+    manifest: &crate::workload::manifest::PilotManifest,
+    budget: &Budget,
+) -> io::Result<(BoundText, BoundText)> {
+    let frozen_manifest = BoundText::copy(manifest.canonical(), budget)
+        .map_err(|_| io::Error::other("workload manifest evidence capacity"))?;
+    let frozen_profile = BoundText::copy(manifest.profile_canonical(), budget)
+        .map_err(|_| io::Error::other("workload profile evidence capacity"))?;
+    Ok((frozen_manifest, frozen_profile))
 }
 
 fn pilot_session_digest(
