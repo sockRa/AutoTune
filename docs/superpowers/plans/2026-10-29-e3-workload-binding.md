@@ -1633,3 +1633,12 @@ composition are still required before a runnable benchmark can be claimed.
   envelope/raw generation. Windows GNU/Linux all-target/all-feature checks,
   warning-denied Clippy, formatting and diff check pass. No tests or runtime /
   native / GPU qualification. Fixed parent caller remains open.
+- 2026-11-08 parent starting launch to strict receipt: added Windows-only
+  `starting_parent::launch_and_receive` to poll the bounded launch guard,
+  transmit its one-shot bootstrap, poll the response handoff and strictly read
+  the receipt. Every handoff/send/receive/read failure returns the live process
+  and closed handoff where available, with explicit stop and escalation
+  outcomes. Windows GNU/Linux all-target/all-feature checks, warning-denied
+  Clippy, formatting and diff check pass. No tests, process/runtime/native/GPU
+  execution or qualification. This does not assemble preflight or drive the
+  sampler/worker admission, full session or archive loop; E3/Gate B remain open.

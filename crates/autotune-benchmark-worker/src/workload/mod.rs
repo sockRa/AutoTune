@@ -66,6 +66,8 @@ pub mod starting_entry;
 pub mod starting_export;
 #[cfg(windows)]
 pub mod starting_launch;
+#[cfg(windows)]
+pub mod starting_parent;
 pub mod starting_read;
 pub mod starting_receive;
 pub mod starting_runtime;

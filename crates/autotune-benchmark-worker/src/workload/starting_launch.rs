@@ -113,6 +113,14 @@ impl AdmissionProcess {
         &self.process
     }
 
+    pub fn request_stop(&self) -> io::Result<()> {
+        self.process.request_stop()
+    }
+
+    pub fn request_termination(&mut self) -> io::Result<()> {
+        self.process.request_termination()
+    }
+
     pub fn facts(&self) -> LaunchFacts {
         self.facts
     }

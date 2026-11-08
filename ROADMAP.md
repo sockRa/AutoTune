@@ -1073,3 +1073,12 @@ This is a product roadmap, **not** a generated BMAD sprint-status file or a clai
   Clippy, formatting and diff check pass. No tests/runtime/native/GPU execution.
   The fixed parent still must construct/poll this driver and own startup,
   preflight and the complete session loop; E3/Gate B remain open.
+- 2026-11-08 continuation (starting process through verified receipt): added a
+  Windows-only parent helper that polls the original-deadline launch and
+  starting-response guards, sends one bootstrap, and strictly reads the
+  starting receipt. On handoff/send/receive/read failure it retains process and
+  handoff owners and records stop/escalation request outcomes. Windows
+  GNU/Linux all-target/all-feature checks, warning-denied Clippy, formatting
+  and diff check pass. No tests or process/runtime/native/GPU execution. Host
+  preflight, pilot pair, fixed parent session loop and archive caller are still
+  missing; E3 remains partial and Gate B unmet.

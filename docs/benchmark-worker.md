@@ -3309,3 +3309,21 @@ only one final observation; its successful result is not retirement
 acknowledgment, joined controller/operation threads, GPU quiescence, or permission
 to repeat. Starting-read/artifact/consent owners and complete session
 orchestration are not yet composed here.
+
+### Parent-side starting launch and receipt composition (2026-11-08)
+
+`workload::starting_parent::launch_and_receive` now drives the fixed starting
+child's asynchronous `LaunchGuard`, pumps the host between bounded polls, sends
+the one-shot bootstrap, polls the original-deadline handoff, and strictly reads
+the starting receipt. If opening the handoff, sending bootstrap, receiving the
+response, or reading the receipt fails, the returned `Failure` retains the
+process and (when created) closed handoff, plus the stage fault and explicit
+stop/termination request outcomes. The new `AdmissionProcess` forwarding
+methods keep cleanup requests within the launch-bound owner.
+
+This is Windows-only source composition. The host must still supply consent,
+scope, budget, clock and pump behavior; the helper does not drive cancellation,
+preflight assembly, the pilot sampler/worker launch pair, parent watchdog, or a
+complete launch-to-archive session. Windows GNU and Linux all-target/all-feature
+package checks, warning-denied Clippy, formatting and diff checks pass. No tests,
+process/runtime/native/GPU execution or qualification were performed.
