@@ -100,6 +100,36 @@ pub struct LaunchFailure {
     pub facts: LaunchFacts,
 }
 
+/// Successfully observed starting-process owner. Keeping the process and its
+/// launch facts together prevents callers from pairing a different process
+/// with eligible timing evidence.
+pub struct AdmissionProcess {
+    process: Process<starting_bootstrap::Declaration>,
+    facts: LaunchFacts,
+}
+
+impl AdmissionProcess {
+    pub fn process(&self) -> &Process<starting_bootstrap::Declaration> {
+        &self.process
+    }
+
+    pub fn facts(&self) -> LaunchFacts {
+        self.facts
+    }
+
+    pub fn open_handoff<'a>(
+        &'a self,
+        scope: &Scope,
+        budget: &Budget,
+    ) -> Result<Handoff<'a>, Fault> {
+        Handoff::open(&self.process, scope, budget)
+    }
+
+    pub fn into_parts(self) -> (Process<starting_bootstrap::Declaration>, LaunchFacts) {
+        (self.process, self.facts)
+    }
+}
+
 /// Parent-side starting launch guard. It enforces the approved preflight and
 /// response-arrival bounds from the scope's original epoch while process
 /// hashing/startup runs on the launch thread. It never reruns a launch.
@@ -300,6 +330,19 @@ impl LaunchGuard {
                 Ok((process, self.facts))
             }
             None => Err(self),
+        }
+    }
+
+    /// Transfer only a clock-clean, on-time process into the normal admission
+    /// path. Ineligible late processes remain inside this guard for cleanup.
+    #[allow(clippy::result_large_err)] // Keep the launch/process owner intact on rejection.
+    pub fn into_admission_process(self) -> Result<AdmissionProcess, Self> {
+        if !self.facts.admission_eligible() {
+            return Err(self);
+        }
+        match self.into_process() {
+            Ok((process, facts)) => Ok(AdmissionProcess { process, facts }),
+            Err(guard) => Err(guard),
         }
     }
 

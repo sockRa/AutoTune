@@ -362,7 +362,7 @@ pub struct PreflightInput<'a, 'r> {
 pub struct ParentAdmission<'a, 's, 'w> {
     sampler: ParentSamplerChannel<'s>,
     worker: ParentWorkerChannel<'w>,
-    starting: &'a Process<starting_bootstrap::Declaration>,
+    starting: &'a super::starting_launch::AdmissionProcess,
     starting_launch: super::starting_launch::LaunchFacts,
     setup_receiver: Option<SetupReceiver>,
     setup: Option<ReadyDelivery>,
@@ -375,10 +375,10 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
     pub fn new(
         sampler: ParentSamplerChannel<'s>,
         worker: ParentWorkerChannel<'w>,
-        starting: &'a Process<starting_bootstrap::Declaration>,
-        starting_launch: super::starting_launch::LaunchFacts,
+        starting: &'a super::starting_launch::AdmissionProcess,
         setup_receiver: Option<SetupReceiver>,
     ) -> Result<Self, InitFailure> {
+        let starting_launch = starting.facts();
         let fault = if sampler.parent().fault().is_some() {
             Some(InitFault::SamplerAlreadyFaulted)
         } else if worker.assessment_fault().is_some() || worker.overflowed() {
@@ -663,7 +663,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             });
         }
         let processes = super::parent_peers::Processes {
-            starting: self.starting,
+            starting: self.starting.process(),
             sampler: self.sampler.process(),
             worker: self.worker.process(),
             starting_session,
@@ -730,7 +730,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             .ok_or(super::parent_start::Fault::Context)?;
         match self.sampler.queue_worker_start_when_watch_ready(
             &mut self.worker,
-            self.starting,
+            self.starting.process(),
             setup,
             clock,
         ) {
@@ -759,7 +759,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         let setup = self.setup.as_mut().ok_or(parent_sampler::Fault::Context)?;
         match self.sampler.collect_and_queue_native_grant(
             &mut self.worker,
-            self.starting,
+            self.starting.process(),
             setup,
             clock,
         ) {
@@ -830,7 +830,9 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
         AdmissionFinalizerFailure<'a, 's, 'w, E>,
     > {
-        if self.starting_launch != inputs.starting_launch {
+        if self.starting_launch != inputs.starting_launch
+            || !std::ptr::eq(self.starting.process(), &inputs.starting_process)
+        {
             return Err(AdmissionFinalizerFailure::StartingLaunchBinding {
                 admission: self,
                 sampler,

@@ -3204,11 +3204,15 @@ Incomplete setup and rejected owner bindings return all owners to the caller,
 including a setup receiver and any simultaneously retained setup delivery.
 
 `ParentAdmission::new` now also requires eligible original-epoch
-`LaunchFacts`. It retains that exact value through admission; finalizer transfer
-compares it to `PilotOwnerInputs` and returns every owner on mismatch. This
-prevents replacing a failed or late launch record between parent admission and
-finalization. It still relies on the caller to supply the facts obtained from
-the corresponding `LaunchGuard`; no fixed parent caller currently exists.
+`starting_launch::AdmissionProcess`, produced by
+`LaunchGuard::into_admission_process` only after the guard has observed an
+on-time process without clock/stop/termination faults. The bundle provides the
+process reference, its matching launch facts and a one-shot `open_handoff`
+operation. ParentAdmission retains the bundle through admission; finalizer
+transfer checks both the exact facts and process address against
+`PilotOwnerInputs`, returning all owners on mismatch. Ineligible processes
+remain owned by LaunchGuard for cleanup. No fixed parent caller currently
+drives this complete sequence.
 
 This is a typed source composition only. It has no fixed parent executable or
 launch loop call site, and does not qualify Windows process retirement, GPU
