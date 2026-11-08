@@ -275,6 +275,7 @@ pub struct ParentWorkerChannel<'a> {
     result_packets: Vec<crate::workload::transport::WorkerReceived>,
     result_packet_limit: usize,
     result_storage: Option<crate::sampler::budget::Reservation>,
+    budget: Budget,
     overflowed: bool,
     sender: crate::workload::transport::Sender<CancelQueue<windows_process::ProcessQueue<'a>>>,
 }
@@ -459,6 +460,7 @@ impl<'a> ParentWorkerChannel<'a> {
             result_packets: Vec::new(),
             result_packet_limit: 0,
             result_storage: None,
+            budget: budget.clone(),
             overflowed: false,
             sender,
         })
@@ -834,7 +836,18 @@ impl<'a> ParentWorkerChannel<'a> {
             },
             clock,
             &mut self.sender,
-        )
+        )?;
+        let issued = parent
+            .start_attempt()
+            .and_then(|attempt| attempt.observations[1])
+            .and_then(|observation| observation.anchor)
+            .ok_or(parent_start::Fault::Context)?;
+        let budget = self.budget.clone();
+        if let Err(fault) = self.begin_result_audit(issued, &budget) {
+            self.assessment_fault.get_or_insert(fault);
+            return Err(parent_start::Fault::Context);
+        }
+        Ok(())
     }
 
     /// Collect a fresh retained-process frame and queue NativeGrant on the
@@ -848,6 +861,11 @@ impl<'a> ParentWorkerChannel<'a> {
         setup: &mut ReadyDelivery,
         clock: &WindowsClock,
     ) -> Result<(), Fault> {
+        if self.audit.is_none() || self.assessment_fault.is_some() || self.overflowed {
+            self.assessment_fault
+                .get_or_insert(assessment::Fault::Closed);
+            return Err(Fault::Context);
+        }
         parent.collect_and_queue_native_grant(
             Processes {
                 starting,
