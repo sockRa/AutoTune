@@ -58,6 +58,24 @@ impl WorkerBinding {
     pub fn manifest_digest(self) -> Digest {
         self.manifest
     }
+    pub fn profile_digest(self) -> Digest {
+        self.profile
+    }
+    pub fn worker_digest(self) -> Digest {
+        self.worker
+    }
+    pub fn sampler_digest(self) -> Digest {
+        self.sampler
+    }
+    pub fn origin_ns(self) -> u64 {
+        self.origin_ns
+    }
+    pub fn epoch(self) -> Anchor {
+        self.epoch
+    }
+    pub fn run_plan(self) -> RunPlan {
+        self.plan
+    }
     /// Maximum ordinary worker result packets for one frozen plan: one phase
     /// transition, one record per dispatch, and one first-failure vector.
     pub fn max_result_messages(self) -> Option<usize> {

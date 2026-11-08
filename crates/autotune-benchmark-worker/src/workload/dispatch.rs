@@ -400,6 +400,9 @@ impl FailureVector {
     pub fn bits(&self) -> &[u32] {
         &self.bits
     }
+    pub fn dispatch(&self) -> u32 {
+        self.dispatch
+    }
     pub fn complete(&self) -> bool {
         self.complete
     }

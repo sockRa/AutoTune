@@ -390,6 +390,410 @@ pub fn build_envelope(
     })
 }
 
+/// Build a workload-session v1 projection from one frozen pilot run plus its
+/// sampler and worker owners. Any fact that cannot be represented faithfully
+/// remains in raw NDJSON and makes this summary explicitly incomplete.
+#[cfg(windows)]
+pub fn build_pilot_envelope(
+    manifest: &crate::workload::manifest::PilotManifest,
+    s: &Supervisor,
+    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
+    provenance: Provenance,
+) -> Result<BoundEnvelope, WireError> {
+    let binding = worker.binding();
+    let monitor = binding.monitor();
+    if binding.manifest_digest() != manifest.digest()
+        || binding.profile_digest() != manifest.profile_digest()
+        || binding.worker_digest() != manifest.manifest_draft().artifacts.worker
+        || binding.sampler_digest() != manifest.manifest_draft().artifacts.sampler
+        || setup.receipt().binding() != binding
+        || setup.origin().ok() != Some(worker.origin())
+        || s.binding().monitor != monitor
+        || s.binding().manifest_digest != *manifest.digest().as_bytes()
+    {
+        return Err(WireError::Binding);
+    }
+    let provenance = if setup.receipt().reported().simulated {
+        Provenance::SimulatedFixture
+    } else {
+        provenance
+    };
+    let run_index = manifest
+        .manifest_draft()
+        .runs
+        .iter()
+        .position(|run| *run == monitor.run)
+        .ok_or(WireError::Binding)?;
+    let run = manifest
+        .bind_run(run_index, binding.origin_ns())
+        .map_err(|_| WireError::Binding)?;
+    if run
+        .binding(monitor.qpc_frequency)
+        .map_err(|_| WireError::Binding)?
+        != monitor
+    {
+        return Err(WireError::Binding);
+    }
+
+    let p = autotune_fma_reference::profile::Profile::approved_design().limits;
+    let mut sampler_identity = None;
+    let mut sampler_identity_conflict = false;
+    for trace in s.traces() {
+        if let Input::Message(super::wire::Message::Ready {
+            raw_uuid, raw_pci, ..
+        }) = &trace.input
+        {
+            let observed = (raw_uuid.as_str(), raw_pci.as_str());
+            if sampler_identity.is_some_and(|prior| prior != observed) {
+                sampler_identity_conflict = true;
+            } else {
+                sampler_identity.get_or_insert(observed);
+            }
+        }
+    }
+    let (nvml_uuid, nvml_pci) = if sampler_identity_conflict {
+        (None, None)
+    } else {
+        sampler_identity.map_or((None, None), |(uuid, pci)| (Some(uuid), Some(pci)))
+    };
+    let ready = match setup.ready().message().map_err(|_| WireError::Body)? {
+        crate::workload::wire::Message::Ready {
+            identity, context, ..
+        } => Some((*identity, *context)),
+        _ => None,
+    };
+    let (cuda_identity, context_identity) = ready.ok_or(WireError::Binding)?;
+    let cuda_uuid = uuid_text(cuda_identity.uuid);
+    let declared_identity = crate::worker::DiscoveryBinding::parse(
+        &manifest.manifest_draft().raw_uuid,
+        &manifest.manifest_draft().raw_pci,
+    )
+    .map_err(|_| WireError::Binding)?
+    .identity;
+    let uuid_match = match nvml_uuid {
+        Some(raw) => {
+            match crate::worker::DiscoveryBinding::parse(raw, &manifest.manifest_draft().raw_pci) {
+                Ok(nvml) if nvml.identity.uuid == cuda_identity.uuid => MatchState::Match,
+                Ok(_) => MatchState::Mismatch,
+                Err(_) => MatchState::Unknown,
+            }
+        }
+        None => MatchState::Unknown,
+    };
+    let setup_accepted = matches!(setup.assessment(), Some(Ok(_)));
+    let context_device = setup
+        .assessment()
+        .and_then(Result::ok)
+        .map(|summary| summary.selected_device.to_string())
+        .map_or_else(|| missing("setup_not_accepted"), Obs::Known);
+
+    let plan = binding.run_plan();
+    let expected_dispatches = plan
+        .warmup_dispatches
+        .checked_add(plan.measured_dispatches)
+        .ok_or(WireError::Capacity)? as usize;
+    let estimate = expected_dispatches
+        .checked_add(s.samples().count())
+        .and_then(|n| n.checked_add(worker.result_packets().len()))
+        .and_then(|n| n.checked_mul(4096))
+        .and_then(|n| n.checked_add(32768))
+        .ok_or(WireError::Capacity)?;
+    let budget = s.failure_budget();
+    let allocation = budget.reserve(estimate).map_err(|_| WireError::Capacity)?;
+    let mut dispatches = Vec::new();
+    dispatches
+        .try_reserve_exact(expected_dispatches)
+        .map_err(|_| WireError::Capacity)?;
+    let mut omitted_dispatches = 0u64;
+    let mut raw_mismatch = false;
+    let mut projection_open = true;
+    for received in worker.result_packets() {
+        let message = match received.message() {
+            Ok(message) => message,
+            Err(_) => {
+                omitted_dispatches = omitted_dispatches.saturating_add(1);
+                projection_open = false;
+                continue;
+            }
+        };
+        let crate::workload::wire::Message::DispatchRecord(record) = message else {
+            continue;
+        };
+        raw_mismatch |= record.mismatches > 0 || record.nonfinite > 0;
+        if !projection_open {
+            omitted_dispatches = omitted_dispatches.saturating_add(1);
+            continue;
+        }
+        if record.dispatch as usize != dispatches.len() {
+            omitted_dispatches = omitted_dispatches.saturating_add(1);
+            projection_open = false;
+            continue;
+        }
+        let query_status = record
+            .calls
+            .iter()
+            .rev()
+            .find(|call| call.operation == crate::workload::dispatch::Operation::Query)
+            .and_then(|call| call.status);
+        let (Some(input_digest), Some(return_code)) = (record.input_sha256, query_status) else {
+            omitted_dispatches = omitted_dispatches.saturating_add(1);
+            projection_open = false;
+            continue;
+        };
+        let full_failure_retained = worker
+            .failure_vector()
+            .is_some_and(|vector| vector.complete() && vector.dispatch() == record.dispatch);
+        let (retention, output_digest) =
+            if (record.mismatches > 0 || record.nonfinite > 0) && full_failure_retained {
+                (
+                    Retention::FullFailure,
+                    record
+                        .output_sha256
+                        .map_or_else(|| missing("digest_unavailable"), Obs::Known),
+                )
+            } else if let Some(digest) = record.output_sha256 {
+                (Retention::DigestOnly, Obs::Known(digest))
+            } else {
+                omitted_dispatches = omitted_dispatches.saturating_add(1);
+                projection_open = false;
+                continue;
+            };
+        let elapsed = |anchor: Option<Anchor>| {
+            anchor
+                .and_then(|anchor| {
+                    Clock::new(monitor, binding.epoch())
+                        .ok()?
+                        .observe(anchor)
+                        .ok()
+                })
+                .map_or_else(|| missing("invalid_or_missing_clock"), Obs::Known)
+        };
+        let call_time = |operation, after: bool| {
+            let mut calls = record
+                .calls
+                .iter()
+                .filter(|call| call.operation == operation);
+            let call = if operation == crate::workload::dispatch::Operation::Query {
+                calls.next_back()
+            } else {
+                calls.next()
+            };
+            call.map(|call| elapsed(if after { call.after } else { call.before }))
+                .unwrap_or_else(|| missing("call_not_reported"))
+        };
+        dispatches.push(Dispatch {
+            j: u64::from(record.dispatch),
+            role: match record.phase {
+                crate::workload::dispatch::Phase::Warmup => Role::Warmup,
+                crate::workload::dispatch::Phase::Measured => Role::Measured,
+            },
+            shape: format!("{}x{}", record.lanes, record.steps),
+            input_digest,
+            submit_ns: call_time(crate::workload::dispatch::Operation::UploadA, false),
+            query_ns: call_time(crate::workload::dispatch::Operation::Query, true),
+            readback_ns: call_time(crate::workload::dispatch::Operation::Readback, true),
+            check_ns: call_time(crate::workload::dispatch::Operation::Hash, true),
+            return_code: i64::from(return_code),
+            checked_lanes: u64::from(record.checked_lanes),
+            mismatch: u64::from(record.mismatches),
+            nonfinite: u64::from(record.nonfinite),
+            work: record.verified_fma,
+            output_digest,
+            retention,
+        });
+    }
+    let total_events = s
+        .traces()
+        .len()
+        .checked_add(s.report().events().count())
+        .and_then(|n| n.checked_add(worker.receive_events().len()))
+        .and_then(|n| n.checked_add(1))
+        .ok_or(WireError::Capacity)?;
+    if total_events as u64 > p.event_capacity {
+        return Err(WireError::Capacity);
+    }
+    let terminal = s.terminal();
+    let cutoff = terminal.map_or_else(|| s.report().now_ns(), |t| t.at_ns);
+    let expected_slots = (cutoff / p.cadence_ns + 1)
+        .checked_mul(u64::from(p.metric_count))
+        .ok_or(WireError::Capacity)?;
+    let audit_failed = worker.assessment_fault().is_some()
+        || worker.control_audit().is_none_or(|audit| {
+            audit.fault().is_some() || audit.native_failure() || !audit.role_finished()
+        })
+        || worker.overflowed()
+        || s.retention_overflow()
+        || terminal.is_some_and(|t| !matches!(t.reason, Fault::Requested | Fault::Preflight));
+    let reports_complete = worker.reports_complete()
+        && dispatches.len() == expected_dispatches
+        && omitted_dispatches == 0;
+    let late = s
+        .samples()
+        .filter(|sample| time(s, sample.receipt).is_none_or(|receipt| receipt > cutoff))
+        .count() as u64;
+    let rejected = omitted_dispatches.saturating_add(
+        s.traces()
+            .iter()
+            .filter(|trace| matches!(trace.input, Input::Rejected { .. }))
+            .count() as u64,
+    );
+    let mut limitations = vec![
+        Reason::new("worker_exit_unobserved").expect("fixed reason"),
+        Reason::new("native_completion_unknown").expect("fixed reason"),
+        Reason::new("telemetry_details_in_raw_stream").expect("fixed reason"),
+        Reason::new("pci_function_unobserved").expect("fixed reason"),
+        Reason::new("gpu_correctness_not_independently_replayed").expect("fixed reason"),
+    ];
+    if !setup_accepted {
+        limitations.push(Reason::new("setup_not_accepted").expect("fixed reason"));
+    }
+    if !reports_complete {
+        limitations.push(Reason::new("dispatch_projection_incomplete").expect("fixed reason"));
+    }
+    if sampler_identity_conflict {
+        limitations.push(Reason::new("sampler_identity_conflict").expect("fixed reason"));
+    }
+    if expected_slots > 0 {
+        limitations.push(Reason::new("telemetry_summary_incomplete").expect("fixed reason"));
+    }
+    if uuid_match != MatchState::Match
+        || declared_identity != cuda_identity
+        || context_identity != cuda_identity
+    {
+        limitations.push(Reason::new("device_identity_not_fully_matched").expect("fixed reason"));
+    }
+    let origin = s.origin();
+    let sampler_exit = s
+        .exit_observation()
+        .and_then(|(_, observation)| observation.exit_code)
+        .map_or_else(
+            || missing("sampler_exit_unobserved"),
+            |code| Obs::Known(i64::from(code)),
+        );
+    let envelope = Envelope {
+        provenance,
+        identity: Identity {
+            nonce: super::wire_model::hex(&monitor.run),
+            nvml_uuid: nvml_uuid.map_or_else(
+                || missing("nvml_identity_unobserved"),
+                |v| Obs::Known(v.to_owned()),
+            ),
+            cuda_uuid: if cuda_identity.valid() {
+                Obs::Known(cuda_uuid)
+            } else {
+                missing("cuda_identity_invalid")
+            },
+            pci_bus_id: nvml_pci.map_or_else(
+                || missing("nvml_pci_unobserved"),
+                |v| Obs::Known(v.to_owned()),
+            ),
+            context_device,
+            boot: missing("boot_context_unobserved"),
+            uuid_match,
+            pci_match: MatchState::Unknown,
+        },
+        artifacts: Artifacts {
+            source_commit: manifest.manifest_draft().source_commit.clone(),
+            worker_sha256: Obs::Known(manifest.manifest_draft().artifacts.worker),
+            lockfile_sha256: Obs::Known(manifest.manifest_draft().artifacts.lockfile),
+            sampler_sha256: Obs::Known(manifest.manifest_draft().artifacts.sampler),
+            ptx_sha256: Obs::Known(manifest.manifest_draft().artifacts.ptx),
+            kernel_entry: "autotune_fma".into(),
+            generator_version: autotune_fma_reference::input::GENERATOR_ID.into(),
+            oracle_version: "autotune-fma-reference-0.1.0".into(),
+        },
+        manifest: Manifest {
+            manifest_digest: Obs::Known(manifest.digest()),
+            profile_digest: Obs::Known(manifest.profile_digest()),
+            shape: Obs::Known(format!(
+                "{}x{}",
+                plan.shape.lanes(),
+                plan.shape.steps().value()
+            )),
+            stop_policy: Obs::Known("e3-fma-qualification-v0.1".into()),
+            approval_ref: Obs::Known(manifest.manifest_draft().approval_ref.clone()),
+            seed: Obs::Known(plan.seed),
+            control_writes: ControlWrites::None,
+        },
+        clocks: Clocks {
+            qpc_frequency: monitor.qpc_frequency,
+            qpc_epoch_ticks: origin.qpc_before,
+            interrupt_ticks: origin.interrupt_100ns,
+            unbiased_ticks: Obs::Known(origin.unbiased_100ns),
+            resolution_ns: crate::monitor::clock::ticks_to_ns(1, monitor.qpc_frequency, true)
+                .map_err(|_| WireError::Body)?
+                .max(100),
+            utc_context: missing("utc_context_unobserved"),
+            discontinuities: u64::from(!s.report().current_clock_valid()),
+        },
+        lifecycle: Lifecycle {
+            requested_ns: missing("parent_request_time_unavailable"),
+            launch_ns: missing("role_launch_time_unavailable"),
+            ready_ns: setup.assessment().and_then(Result::ok).map_or_else(
+                || missing("setup_ready_not_accepted"),
+                |summary| elapsed_at(monitor, binding.epoch(), Some(summary.ready)),
+            ),
+            start_ns: missing("start_issue_time_unavailable"),
+            stop_requested_ns: missing("parent_stop_issue_time_unavailable"),
+            exit_ns: missing("worker_process_exit_unobserved"),
+            empty_job: EmptyJobLifecycle::Unknown,
+        },
+        dispatches,
+        telemetry: Vec::new(),
+        integrity: Integrity {
+            capacity_bytes: p.serialized_bytes,
+            observed_bytes: 0,
+            failed: u64::from(audit_failed),
+            late,
+            rejected,
+            overflow: u64::from(worker.overflowed() || s.retention_overflow()),
+            expected_slots,
+            observed_slots: 0,
+            raw_records: total_events as u64,
+            writer_status: WriterStatus::Bounded,
+        },
+        result: SessionResult {
+            admission: Admission::NotQualified,
+            correctness: Correctness::NotChecked,
+            worker_exit: missing("worker_process_exit_unobserved"),
+            sampler_exit,
+            empty_job: ResultEmptyJob::Unknown,
+            native_completion: NativeCompletion::Unknown,
+            coverage: Coverage::Incomplete,
+            limitations,
+            verdict: if audit_failed || raw_mismatch {
+                Verdict::Invalid
+            } else {
+                Verdict::Inconclusive
+            },
+        },
+    };
+    Ok(BoundEnvelope {
+        envelope,
+        _allocation: allocation,
+        budget,
+        estimate,
+        artifacts_accounted: false,
+    })
+}
+
+#[cfg(windows)]
+fn uuid_text(bytes: [u8; 16]) -> String {
+    format!(
+        "GPU-{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+    )
+}
+
+#[cfg(windows)]
+fn elapsed_at(monitor: crate::monitor::Binding, epoch: Anchor, anchor: Option<Anchor>) -> Obs<u64> {
+    anchor
+        .and_then(|anchor| Clock::new(monitor, epoch).ok()?.observe(anchor).ok())
+        .map_or_else(|| missing("invalid_or_missing_clock"), Obs::Known)
+}
+
 /// Bounded offline collection of the raw trace. The fixed controller uses this
 /// only after admission has closed; storage runs on its separate writer lane.
 pub fn raw_events(s: &Supervisor) -> Result<BoundText, WireError> {
