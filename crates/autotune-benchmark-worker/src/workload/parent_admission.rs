@@ -45,6 +45,10 @@ pub struct InitFailure<'s, 'w> {
 #[allow(clippy::large_enum_variant)] // Keep original owners inline; boxing adds an unbudgeted allocation.
 pub enum AdmissionStartFailure<'a, 's, 'w> {
     Initialization(InitFailure<'s, 'w>),
+    SupervisedInitialization {
+        fault: InitFault,
+        admission: ParentAdmission<'a, 's, 'w>,
+    },
     SafetyWatch {
         fault: parent_sampler_channel::ControllerStartFault,
         admission: ParentAdmission<'a, 's, 'w>,
@@ -521,12 +525,42 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         clock: &WindowsClock,
         budget: &Budget,
     ) -> Result<Self, AdmissionStartFailure<'a, 's, 'w>> {
-        let mut admission = Self::new_unwatched(sampler, worker, starting, setup_receiver)
-            .map_err(|mut failure| {
+        let mut admission = match Self::new_unwatched(sampler, worker, starting, setup_receiver) {
+            Ok(admission) => admission,
+            Err(failure) if failure.fault == InitFault::MissingSetupReceiver => {
+                let InitFailure {
+                    fault,
+                    setup,
+                    starting_launch,
+                    sampler,
+                    worker,
+                } = failure;
+                let mut admission = Self {
+                    sampler,
+                    worker,
+                    starting,
+                    starting_launch,
+                    setup_receiver: setup,
+                    setup: None,
+                    controller: None,
+                    stage: Stage::SetupPending,
+                };
+                if let Err(fault) = admission.start_safety_watch_early(clock, budget) {
+                    admission.sampler.abort_for_parent_fault(None);
+                    admission.worker.abort_for_parent_fault();
+                    return Err(AdmissionStartFailure::SafetyWatch { fault, admission });
+                }
+                admission.stage = Stage::Failed;
+                admission.sampler.abort_for_parent_fault(None);
+                admission.worker.abort_for_parent_fault();
+                return Err(AdmissionStartFailure::SupervisedInitialization { fault, admission });
+            }
+            Err(mut failure) => {
                 failure.sampler.abort_for_parent_fault(None);
                 failure.worker.abort_for_parent_fault();
-                AdmissionStartFailure::Initialization(failure)
-            })?;
+                return Err(AdmissionStartFailure::Initialization(failure));
+            }
+        };
         if let Err(fault) = admission.start_safety_watch_early(clock, budget) {
             admission.sampler.abort_for_parent_fault(None);
             admission.worker.abort_for_parent_fault();

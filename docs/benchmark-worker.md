@@ -1275,8 +1275,13 @@ preflight checks remain mandatory before Start. `ParentAdmission::new` now
 starts this early watch before returning; if initialization fails, its typed
 error retains the admission and any partial controller/stop owners, after
 issuing the retained sampler Stop frame and both original process stop events.
-Those requests do not prove child exit. A fixed parent entrypoint still does
-not exist, so the broader session-loop integration is not claimed.
+If only the setup receiver is missing and the process/context owners remain
+eligible, it starts the controller first, then returns a supervised
+initialization fault with those owners retained. Other earlier-fault cases make
+the direct stop requests but cannot attach a controller to a closed/faulted
+context. Those requests do not prove child exit, and setup-missing sessions
+still lack an archive/finalizer path. A fixed parent entrypoint still does not
+exist, so the broader session-loop integration is not claimed.
 The adapter also exposes `queue_worker_start_when_watch_ready` and
 `collect_and_queue_native_grant` over a `ParentWorkerChannel`. Both pass this
 exact retained sampler process into the worker channel's process observations;
