@@ -1338,15 +1338,14 @@ the controller, queue watch-gated Start, or collect and queue NativeGrant.
 Preflight input, including consent decisions, is returned unchanged until the
 peer/setup gate is ready; every failed transition remains explicit in the
 returned progress value. The caller still owns launch, starting-session
-construction, run-loop scheduling, terminal stop/audit, finalizer polling and
-archive completion.
+construction, run-loop scheduling and provision of the pilot-bound writer.
 `advance_pilot_once` joins that admission path to the successful terminal
 path: before NativeGrant it delegates to the ordered admission driver; after
 NativeGrant it polls once and advances result completion, planned sampler stop
 and the worker control audit against the same original stop window. It returns
 any unused preflight evidence intact. This removes the caller's need to switch
-between two poll APIs, but does not add launch, failed-session recovery,
-retirement/finalizer polling, archive completion or a fixed executable.
+between two poll APIs, but does not add launch, failed-session recovery or a
+fixed executable.
 `advance_successful_shutdown_once` drives the success terminal path: it waits
 for complete worker result assessment, issues one planned sampler stop through
 the retained sampler sender, and starts the worker control audit using that
@@ -1361,9 +1360,13 @@ creates the sink on the dedicated writer thread and queues those two leaves
 first. A parent can therefore construct the pilot-bound directory sink without
 doing filesystem setup on its deadline path. This is archive plumbing only;
 it does not create the output directory or call the fixed parent flow.
-This coordinator does not launch the three processes, poll the pre-manifest
-starting session, own the whole execution/retirement loop, or prove hardware or
-GPU qualification.
+`PilotCompletionDriver` now polls `SessionFinalizer` to terminal host evidence,
+then queues the workload raw stream and envelope into the pilot-bound writer
+and polls until its thread stops. Its owned archive guard retains `Finalized`
+and generated evidence buffers through writer completion without a
+self-referential borrow. The parent still must construct and poll this driver;
+it does not launch the three processes, poll the pre-manifest starting session,
+own the complete session loop, or prove hardware/GPU qualification.
 
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing

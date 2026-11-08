@@ -1626,3 +1626,10 @@ composition are still required before a runnable benchmark can be claimed.
   rejection. Windows GNU/Linux checks and warning-denied Clippy pass. No tests
   or execution/qualification. Fixed parent executable and archive poll caller
   remain open.
+- 2026-11-08 finalizer-to-archive polling composition: `PilotCompletionDriver`
+  advances the typed SessionFinalizer one round per call, moves completed
+  session owners into an owned archive guard, and reports archive completion
+  only after the writer thread stops. Shared preparation avoids duplicate
+  envelope/raw generation. Windows GNU/Linux all-target/all-feature checks,
+  warning-denied Clippy, formatting and diff check pass. No tests or runtime /
+  native / GPU qualification. Fixed parent caller remains open.
