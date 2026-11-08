@@ -5,7 +5,10 @@
 use super::{
     launch::CancelQueue,
     parent_sampler::{self, ParentSampler, PreflightFailure, PreflightFault, ReportedPreflight},
+    parent_worker_channel::{self, ParentWorkerChannel},
+    starting_bootstrap,
     windows_process::{Process, ProcessQueue},
+    worker_setup_delivery::ReadyDelivery,
 };
 use crate::{
     monitor::{windows_clock::WindowsClock, Anchor},
@@ -152,6 +155,38 @@ impl<'a> ParentSamplerChannel<'a> {
             Ok(()) => Ok(handle),
             Err(fault) => Err(ControllerStartFault::Attach { handle, fault }),
         }
+    }
+
+    /// Queue the worker's one-shot Start through its retained channel only
+    /// after this ParentSampler's original controller reports ready. The
+    /// process peer is fixed to this channel's sampler owner.
+    pub fn queue_worker_start_when_watch_ready(
+        &mut self,
+        worker: &mut ParentWorkerChannel<'_>,
+        starting: &Process<starting_bootstrap::Declaration>,
+        setup: &mut ReadyDelivery,
+        clock: &WindowsClock,
+    ) -> Result<parent_worker_channel::StartProgress, super::parent_start::Fault> {
+        worker.queue_start_when_watch_ready(&mut self.parent, starting, self.process, setup, clock)
+    }
+
+    /// Collect fresh process/safety/re-entry evidence and queue the one-shot
+    /// NativeGrant on the worker's existing Start sequence, using the same
+    /// sampler process that feeds this ParentSampler.
+    pub fn collect_and_queue_native_grant(
+        &mut self,
+        worker: &mut ParentWorkerChannel<'_>,
+        starting: &Process<starting_bootstrap::Declaration>,
+        setup: &mut ReadyDelivery,
+        clock: &WindowsClock,
+    ) -> Result<(), parent_sampler::Fault> {
+        worker.collect_and_queue_native_grant(
+            &mut self.parent,
+            starting,
+            self.process,
+            setup,
+            clock,
+        )
     }
 
     /// Performs one nonblocking process poll and any resulting bounded query

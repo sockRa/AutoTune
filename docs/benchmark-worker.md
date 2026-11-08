@@ -1268,6 +1268,11 @@ owner acquisition fails, the sampler stop owner stays in the returned fault;
 controller construction and attach failures likewise retain their partial
 owners/handle. Watch readiness remains a later poll before Start, and this method
 does not launch processes or authorize native execution.
+The adapter also exposes `queue_worker_start_when_watch_ready` and
+`collect_and_queue_native_grant` over a `ParentWorkerChannel`. Both pass this
+exact retained sampler process into the worker channel's process observations;
+Start remains gated on watch readiness and NativeGrant retains its fresh checks
+and original worker sequence.
 
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing
