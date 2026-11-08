@@ -263,7 +263,7 @@ impl RetirementOwners {
             starting_read,
             starting_evidence,
             host_environment,
-            worker_setup_delivery: setup,
+            worker_setup_delivery: Some(setup),
             worker_report_evidence: worker_report,
             additional,
         };
@@ -294,7 +294,7 @@ impl RetirementOwners {
                         stage,
                         worker_report: worker_report_evidence,
                         setup_receiver: None,
-                        setup: Some(worker_setup_delivery),
+                        setup: worker_setup_delivery,
                     },
                     inputs: PilotOwnerInputs {
                         manifest,
@@ -348,7 +348,8 @@ impl RetirementOwners {
             setup,
         } = self;
         let setup = match (setup_receiver, setup) {
-            (None, Some(setup)) => setup,
+            (None, Some(setup)) => Some(setup),
+            (None, None) => None,
             (setup_receiver, setup) => {
                 return Err(FinalizerFailure {
                     kind: FinalizerFailureKind::SetupIncomplete,
@@ -413,7 +414,7 @@ impl RetirementOwners {
                         stage,
                         worker_report: worker_report_evidence,
                         setup_receiver: None,
-                        setup: Some(worker_setup_delivery),
+                        setup: worker_setup_delivery,
                     },
                     inputs: PilotOwnerInputs {
                         manifest,

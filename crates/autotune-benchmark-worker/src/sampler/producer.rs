@@ -623,7 +623,7 @@ pub fn build_pilot_envelope(
     build_pilot_envelope_from_source(
         manifest,
         PilotSamplerInput::Supervisor(s),
-        setup,
+        Some(setup),
         worker,
         provenance,
         budget,
@@ -634,7 +634,7 @@ pub fn build_pilot_envelope(
 pub fn build_pilot_envelope_from_parent(
     manifest: &crate::workload::manifest::PilotManifest,
     parent: &crate::workload::parent_sampler::ParentSampler,
-    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    setup: Option<&crate::workload::worker_setup_delivery::ReadyDelivery>,
     worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
     provenance: Provenance,
     budget: &Budget,
@@ -653,7 +653,7 @@ pub fn build_pilot_envelope_from_parent(
 fn build_pilot_envelope_from_source(
     manifest: &crate::workload::manifest::PilotManifest,
     source: PilotSamplerInput<'_>,
-    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    setup: Option<&crate::workload::worker_setup_delivery::ReadyDelivery>,
     worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
     provenance: Provenance,
     budget: Budget,
@@ -674,13 +674,14 @@ fn build_pilot_envelope_from_source(
         || binding.profile_digest() != manifest.profile_digest()
         || binding.worker_digest() != manifest.manifest_draft().artifacts.worker
         || binding.sampler_digest() != manifest.manifest_draft().artifacts.sampler
-        || setup.receipt().binding() != binding
-        || setup.origin().ok() != Some(worker.origin())
+        || setup.is_some_and(|setup| {
+            setup.receipt().binding() != binding || setup.origin().ok() != Some(worker.origin())
+        })
         || !source_binding
     {
         return Err(WireError::Binding);
     }
-    let provenance = if setup.receipt().reported().simulated {
+    let provenance = if setup.is_some_and(|setup| setup.receipt().reported().simulated) {
         Provenance::SimulatedFixture
     } else {
         provenance
@@ -724,33 +725,37 @@ fn build_pilot_envelope_from_source(
         _telemetry_allocation: telemetry_allocation,
     } = sampler;
     let _telemetry_allocation = telemetry_allocation;
-    let ready = match setup.ready().message().map_err(|_| WireError::Body)? {
-        crate::workload::wire::Message::Ready {
-            identity, context, ..
-        } => Some((*identity, *context)),
-        _ => None,
+    let ready = match setup {
+        Some(setup) => match setup.ready().message().map_err(|_| WireError::Body)? {
+            crate::workload::wire::Message::Ready {
+                identity, context, ..
+            } => Some((*identity, *context)),
+            _ => return Err(WireError::Binding),
+        },
+        None => None,
     };
-    let (cuda_identity, context_identity) = ready.ok_or(WireError::Binding)?;
-    let cuda_uuid = uuid_text(cuda_identity.uuid);
+    let (cuda_identity, context_identity) = ready.map_or((None, None), |(identity, context)| {
+        (Some(identity), Some(context))
+    });
     let declared_identity = crate::worker::DiscoveryBinding::parse(
         &manifest.manifest_draft().raw_uuid,
         &manifest.manifest_draft().raw_pci,
     )
     .map_err(|_| WireError::Binding)?
     .identity;
-    let uuid_match = match nvml_uuid {
-        Some(ref raw) => {
+    let uuid_match = match (nvml_uuid.as_ref(), cuda_identity) {
+        (Some(raw), Some(cuda_identity)) => {
             match crate::worker::DiscoveryBinding::parse(raw, &manifest.manifest_draft().raw_pci) {
                 Ok(nvml) if nvml.identity.uuid == cuda_identity.uuid => MatchState::Match,
                 Ok(_) => MatchState::Mismatch,
                 Err(_) => MatchState::Unknown,
             }
         }
-        None => MatchState::Unknown,
+        _ => MatchState::Unknown,
     };
-    let setup_accepted = matches!(setup.assessment(), Some(Ok(_)));
+    let setup_accepted = setup.is_some_and(|setup| matches!(setup.assessment(), Some(Ok(_))));
     let context_device = setup
-        .assessment()
+        .and_then(|setup| setup.assessment())
         .and_then(Result::ok)
         .map(|summary| summary.selected_device.to_string())
         .map_or_else(|| missing("setup_not_accepted"), Obs::Known);
@@ -907,7 +912,7 @@ fn build_pilot_envelope_from_source(
         limitations.push(Reason::new("telemetry_summary_incomplete").expect("fixed reason"));
     }
     if uuid_match != MatchState::Match
-        || declared_identity != cuda_identity
+        || cuda_identity.is_none_or(|identity| declared_identity != identity)
         || context_identity != cuda_identity
     {
         limitations.push(Reason::new("device_identity_not_fully_matched").expect("fixed reason"));
@@ -920,11 +925,16 @@ fn build_pilot_envelope_from_source(
                 || missing("nvml_identity_unobserved"),
                 |v| Obs::Known(v.to_owned()),
             ),
-            cuda_uuid: if cuda_identity.valid() {
-                Obs::Known(cuda_uuid)
-            } else {
-                missing("cuda_identity_invalid")
-            },
+            cuda_uuid: cuda_identity.map_or_else(
+                || missing("setup_delivery_missing"),
+                |identity| {
+                    if identity.valid() {
+                        Obs::Known(uuid_text(identity.uuid))
+                    } else {
+                        missing("cuda_identity_invalid")
+                    }
+                },
+            ),
             pci_bus_id: nvml_pci.map_or_else(
                 || missing("nvml_pci_unobserved"),
                 |v| Obs::Known(v.to_owned()),
@@ -971,10 +981,13 @@ fn build_pilot_envelope_from_source(
         lifecycle: Lifecycle {
             requested_ns: missing("parent_request_time_unavailable"),
             launch_ns: missing("role_launch_time_unavailable"),
-            ready_ns: setup.assessment().and_then(Result::ok).map_or_else(
-                || missing("setup_ready_not_accepted"),
-                |summary| elapsed_at(monitor, binding.epoch(), Some(summary.ready)),
-            ),
+            ready_ns: setup
+                .and_then(|setup| setup.assessment())
+                .and_then(Result::ok)
+                .map_or_else(
+                    || missing("setup_ready_not_accepted"),
+                    |summary| elapsed_at(monitor, binding.epoch(), Some(summary.ready)),
+                ),
             start_ns: missing("start_issue_time_unavailable"),
             stop_requested_ns: missing("parent_stop_issue_time_unavailable"),
             exit_ns: missing("worker_process_exit_unobserved"),
@@ -1077,7 +1090,7 @@ pub fn raw_events_with_worker(
         {
             return Err(WireError::Capacity);
         }
-        append_worker_events(output, setup, worker)
+        append_worker_events(output, Some(setup), worker)
     })
 }
 
@@ -1356,14 +1369,15 @@ pub fn raw_events_with_parent_sampler(
 #[cfg(windows)]
 pub fn raw_events_with_parent_sampler_and_worker(
     parent: &crate::workload::parent_sampler::ParentSampler,
-    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    setup: Option<&crate::workload::worker_setup_delivery::ReadyDelivery>,
     worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
     budget: &Budget,
 ) -> Result<BoundText, WireError> {
     let binding = worker.binding();
     if parent.binding() != binding
-        || setup.receipt().binding() != binding
-        || setup.origin().ok() != Some(worker.origin())
+        || setup.is_some_and(|setup| {
+            setup.receipt().binding() != binding || setup.origin().ok() != Some(worker.origin())
+        })
     {
         return Err(WireError::Binding);
     }
@@ -1436,13 +1450,10 @@ pub fn append_pilot_owner_artifacts<E>(
         ),
         (
             "worker_setup",
-            Some(
-                owners
-                    .worker_setup_delivery
-                    .receipt()
-                    .canonical()
-                    .as_bytes(),
-            ),
+            owners
+                .worker_setup_delivery
+                .as_ref()
+                .map(|setup| setup.receipt().canonical().as_bytes()),
         ),
     ];
     let source_bytes = sources
@@ -2324,15 +2335,17 @@ where
 #[cfg(windows)]
 fn append_worker_events(
     output: &mut RawBuilder,
-    setup: &crate::workload::worker_setup_delivery::ReadyDelivery,
+    setup: Option<&crate::workload::worker_setup_delivery::ReadyDelivery>,
     worker: &crate::workload::parent_worker_channel::WorkerReportEvidence,
 ) -> Result<(), WireError> {
     let binding = worker.binding();
-    if setup.receipt().binding() != binding || setup.origin().ok() != Some(worker.origin()) {
+    if setup.is_some_and(|setup| {
+        setup.receipt().binding() != binding || setup.origin().ok() != Some(worker.origin())
+    }) {
         return Err(WireError::Binding);
     }
-    let setup_packet_count = setup.packets().count();
-    let mut setup_packets = setup.packets();
+    let setup_packet_count = setup.map_or(0, |setup| setup.packets().count());
+    let mut setup_packets = setup.into_iter().flat_map(|setup| setup.packets());
     let mut result_packets = worker.result_packets().iter();
     let mut control_packets = worker.control_packets().iter();
     let mut ordinary_packet_index = 0usize;

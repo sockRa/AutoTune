@@ -26,8 +26,10 @@ pub struct StartFailure<E> {
 /// Concrete pilot-session owners that have no slot in ParentSampler or the
 /// retirement process pair. Retaining these together prevents the starting
 /// process, local consent, and original artifacts from disappearing while the
-/// final controller outcome is unresolved. `additional` holds other bounded
-/// caller evidence, such as workload exports, with its existing reservations.
+/// final controller outcome is unresolved. Setup delivery is optional only for
+/// failed-session evidence; normal `start_pilot` validation requires it.
+/// `additional` holds other bounded caller evidence, such as workload exports,
+/// with its existing reservations.
 pub struct PilotOwners<E> {
     pub manifest: super::manifest::PilotManifest,
     pub scope: super::starting::Scope,
@@ -38,7 +40,7 @@ pub struct PilotOwners<E> {
     pub starting_read: super::starting_read::Receipt,
     pub starting_evidence: super::starting::ReportedSnapshot,
     pub host_environment: super::host_environment::Reported,
-    pub worker_setup_delivery: super::worker_setup_delivery::ReadyDelivery,
+    pub worker_setup_delivery: Option<super::worker_setup_delivery::ReadyDelivery>,
     pub worker_report_evidence: super::parent_worker_channel::WorkerReportEvidence,
     pub additional: E,
 }
@@ -64,19 +66,21 @@ impl<E> PilotOwners<E> {
             Some(super::starting_session::Outcome::Complete { digest, .. })
                 if digest == self.starting_read.digest()
         );
-        let parent_refs_match = assets.parent.context_check().is_some_and(|record| {
-            record.result.is_ok_and(|summary| {
-                let refs = summary.references;
-                refs.manifest == self.manifest.digest()
-                    && refs.scope == self.scope.digest()
-                    && refs.host == Some(self.host_environment.snapshot().digest())
-                    && refs.starting
-                        == self
-                            .starting_read
-                            .snapshot()
-                            .map(|snapshot| snapshot.snapshot().digest())
-                    && refs.starting_response == Some(self.starting_read.digest())
-                    && refs.worker_setup == self.worker_setup_delivery.receipt().digest()
+        let parent_refs_match = self.worker_setup_delivery.as_ref().is_some_and(|setup| {
+            assets.parent.context_check().is_some_and(|record| {
+                record.result.is_ok_and(|summary| {
+                    let refs = summary.references;
+                    refs.manifest == self.manifest.digest()
+                        && refs.scope == self.scope.digest()
+                        && refs.host == Some(self.host_environment.snapshot().digest())
+                        && refs.starting
+                            == self
+                                .starting_read
+                                .snapshot()
+                                .map(|snapshot| snapshot.snapshot().digest())
+                        && refs.starting_response == Some(self.starting_read.digest())
+                        && refs.worker_setup == setup.receipt().digest()
+                })
             })
         });
         let worker_control_finished = self
@@ -107,8 +111,10 @@ impl<E> PilotOwners<E> {
             || self.starting_consent.capture_ref() != start_origin.consent()
             || self.starting_handoff.session.origin().ok() != Some(start_origin)
             || !start_response_matches
-            || self.worker_setup_delivery.receipt().binding() != assets.parent.context_binding()
-            || !matches!(self.worker_setup_delivery.assessment(), Some(Ok(_)))
+            || self.worker_setup_delivery.as_ref().is_none_or(|setup| {
+                setup.receipt().binding() != assets.parent.context_binding()
+                    || !matches!(setup.assessment(), Some(Ok(_)))
+            })
             || self.worker_report_evidence.binding() != assets.parent.context_binding()
             || self.worker_report_evidence.origin() != assets.worker.origin()
             || !worker_control_finished
@@ -135,7 +141,10 @@ impl<E> PilotOwners<E> {
         ];
         if peers.peers.each_ref().map(|peer| peer.expected) != expected
             || peers.peers.each_ref().map(|peer| peer.received.ok()) != expected.map(Some)
-            || self.worker_setup_delivery.origin().ok() != Some(expected[2])
+            || self
+                .worker_setup_delivery
+                .as_ref()
+                .is_none_or(|setup| setup.origin().ok() != Some(expected[2]))
             || assets.parent.consent().is_none_or(|delivery| {
                 delivery.assessment.result.is_err()
                     || delivery.assessment.captures[0] != self.starting_consent.capture_ref()
@@ -248,7 +257,7 @@ impl<E> Finalized<PilotOwners<E>> {
             let parent = &self.retirement.assets.parent;
             let raw = crate::sampler::producer::raw_events_with_parent_sampler_and_worker(
                 parent,
-                &evidence.worker_setup_delivery,
+                evidence.worker_setup_delivery.as_ref(),
                 &evidence.worker_report_evidence,
                 budget,
             )
@@ -265,7 +274,7 @@ impl<E> Finalized<PilotOwners<E>> {
             let mut envelope = crate::sampler::producer::build_pilot_envelope_from_parent(
                 &evidence.manifest,
                 parent,
-                &evidence.worker_setup_delivery,
+                evidence.worker_setup_delivery.as_ref(),
                 &evidence.worker_report_evidence,
                 provenance,
                 budget,

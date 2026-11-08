@@ -3248,18 +3248,22 @@ GPU quiescence or successful worker cleanup. If a stop request is pending or
 failed, the caller must retain the process owners and continue the independent
 cleanup path.
 
-For a terminal admission fault after the controller and complete worker setup
-delivery exist, `ParentAdmission::into_failure_finalizer` now transfers the
-same process/controller assets into host retirement without requiring the
+For a terminal admission fault after the controller exists,
+`ParentAdmission::into_failure_finalizer` now transfers the same
+process/controller assets into host retirement without requiring the
 success-only `RoleFinished` audit. It requires `Stage::Failed`, a retained
 parent fault, and exact starting-process/launch binding.
 `RetirementOwners::start_pilot_failure_finalizer` preserves that faulted state
 and starts generic finalization; `complete_pilot()` additionally requires no
-parent fault and reported sampler completion. A caller can then attempt the
-existing workload archive path to retain an invalid/inconclusive outcome.
-Early failures without a controller or complete setup return all owners, and
-overflow/capacity may still prevent archive generation. No fixed parent
-currently calls this path.
+parent fault and reported sampler completion. Complete `ReadyDelivery` is
+retained when available; when the setup receiver was never created, failure
+finalization may instead retain `worker_setup_delivery = None`. The workload
+raw artifact marks setup unavailable and the envelope leaves CUDA identity and
+Ready time unknown while keeping admission unqualified and coverage incomplete.
+Normal successful finalization still requires an accepted setup delivery.
+Partially received setup owners and failures without a controller remain
+owner-return cases, and overflow/capacity may still prevent archive generation.
+No fixed parent currently calls this path.
 
 This is a typed source composition only. It has no fixed parent executable or
 launch loop call site, and does not qualify Windows process retirement, GPU
