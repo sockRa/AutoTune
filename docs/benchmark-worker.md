@@ -1261,13 +1261,19 @@ must still coordinate that ownership and the remaining session roles. After
 polling/finish, `into_parent` drops the borrowing sender and transfers the
 accumulated parent state so the caller can move the same sampler process into
 `retirement_collector::Assets`; it does not certify that shutdown completed.
-`start_and_attach_watch` requires successful retained environment, starting,
-context, peer and consent checks before claiming the sampler/worker stop owners,
-starting `parent_watch_windows::Handle`, and attaching its publisher. If worker
-owner acquisition fails, the sampler stop owner stays in the returned fault;
-controller construction and attach failures likewise retain their partial
-owners/handle. Watch readiness remains a later poll before Start, and this method
-does not launch processes or authorize native execution.
+`start_and_attach_safety_watch` can start the same original-deadline controller
+while the ParentSampler context is still open, before reported context, peer,
+consent and setup checks finish. It only claims the exact sampler/worker stop
+owners and attaches the publisher; it grants no Start or native authority.
+Starting early lets setup-deadline, clock and parent faults trigger retained
+stop/termination requests while later evidence is still arriving. The existing
+`start_and_attach_watch` remains the stricter entry after successful retained
+environment, starting, context, peer and consent checks. Either path retains a
+sampler stop owner if worker-owner acquisition fails, and retains partial
+controller owners on construction/attach failure. Watch readiness and all
+preflight checks remain mandatory before Start. The caller must invoke the
+early path after `ParentAdmission::new` to supervise setup reception; a fixed
+parent entrypoint still does not exist, so that integration is not claimed.
 The adapter also exposes `queue_worker_start_when_watch_ready` and
 `collect_and_queue_native_grant` over a `ParentWorkerChannel`. Both pass this
 exact retained sampler process into the worker channel's process observations;
@@ -1285,9 +1291,11 @@ coordinator retains `ReadyDelivery`, the setup receiver on failure, and the
 controller handle after successful attachment.
 
 Preflight can be attempted only after the worker setup delivery, sampler Ready,
-runtime and current-settings response are present. Successful ordered preflight
-is required before controller creation; Start is only queued by the
-watch-readiness path, and NativeGrant is only attempted after successful Start.
+runtime and current-settings response are present. The optional early safety
+watch can be attached while setup is pending; successful ordered preflight is
+still required before the coordinator advances to Start. Start is only queued
+by the watch-readiness path, and NativeGrant is only attempted after successful
+Start.
 Out-of-order requests fail closed. A failed stage still permits `poll_once` and
 `finish_sampler` so callers can retain further evidence and request shutdown.
 The caller must keep this owner and its controller alive, run the blocking

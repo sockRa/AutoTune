@@ -135,6 +135,34 @@ impl<'a> ParentSamplerChannel<'a> {
             return Err(ControllerStartFault::Parent(parent_sampler::Fault::Context));
         }
 
+        self.start_watch(worker, clock, budget)
+    }
+
+    /// Start safety supervision while the original context remains open,
+    /// without granting Start or requiring the later reported preflight. This
+    /// lets the original setup deadline and parent faults trigger retained
+    /// stop/termination requests while context and other evidence are checked.
+    #[allow(clippy::result_large_err)]
+    pub fn start_and_attach_safety_watch(
+        &mut self,
+        worker: &Process,
+        clock: &WindowsClock,
+        budget: &Budget,
+    ) -> Result<super::parent_watch_windows::Handle, ControllerStartFault> {
+        if self.parent.fault().is_some() || !self.parent.context_open() {
+            return Err(ControllerStartFault::Parent(parent_sampler::Fault::Context));
+        }
+
+        self.start_watch(worker, clock, budget)
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn start_watch(
+        &mut self,
+        worker: &Process,
+        clock: &WindowsClock,
+        budget: &Budget,
+    ) -> Result<super::parent_watch_windows::Handle, ControllerStartFault> {
         let sampler_owner = self
             .process
             .stop_owner(budget)

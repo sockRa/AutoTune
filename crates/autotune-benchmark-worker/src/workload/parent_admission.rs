@@ -552,6 +552,38 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         self.controller.as_ref()
     }
 
+    /// Start the original-deadline safety controller while setup is still in
+    /// flight. This grants no Start/native permission; the later ordered
+    /// reported preflight and watch-ready checks remain mandatory.
+    #[allow(clippy::result_large_err)]
+    pub fn start_safety_watch_early(
+        &mut self,
+        clock: &WindowsClock,
+        budget: &Budget,
+    ) -> Result<(), parent_sampler_channel::ControllerStartFault> {
+        if !matches!(self.stage, Stage::SetupPending | Stage::SetupReady)
+            || self.controller.is_some()
+        {
+            self.stage = Stage::Failed;
+            return Err(parent_sampler_channel::ControllerStartFault::Parent(
+                parent_sampler::Fault::Context,
+            ));
+        }
+        match self
+            .sampler
+            .start_and_attach_safety_watch(self.worker.process(), clock, budget)
+        {
+            Ok(handle) => {
+                self.controller = Some(handle);
+                Ok(())
+            }
+            Err(fault) => {
+                self.stage = Stage::Failed;
+                Err(fault)
+            }
+        }
+    }
+
     pub fn preflight_ready(&self) -> bool {
         self.stage == Stage::SetupReady
             && self.setup.is_some()
@@ -838,6 +870,10 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             return Err(parent_sampler_channel::ControllerStartFault::Parent(
                 parent_sampler::Fault::Context,
             ));
+        }
+        if self.controller.is_some() {
+            self.stage = Stage::ControllerAttached;
+            return Ok(());
         }
         match self
             .sampler
