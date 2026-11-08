@@ -3218,6 +3218,10 @@ receipt and reported artifacts) and the retained setup/report evidence before
 calling the existing three-role `SessionFinalizer::start_pilot` validation.
 Incomplete setup and rejected owner bindings return all owners to the caller,
 including a setup receiver and any simultaneously retained setup delivery.
+`Owners` and `RetirementOwners` also retain the original starting-launch facts;
+both normal and failed finalizer paths compare those facts with
+`PilotOwnerInputs` before rebuilding `PilotOwners`. Thus `into_parts()` no
+longer drops the starting-launch binding before finalizer validation.
 
 `ParentAdmission::new` now also requires eligible original-epoch
 `starting_launch::AdmissionProcess`, produced by

@@ -152,6 +152,7 @@ pub struct Owners {
     pub setup_receiver: Option<SetupReceiver>,
     pub setup: Option<ReadyDelivery>,
     pub controller: Option<ControllerHandle>,
+    pub starting_launch: super::starting_launch::LaunchFacts,
     /// Sampler then worker launch facts from their exact retained process owners.
     pub pilot_launches: [super::pilot_launch::Facts; 2],
 }
@@ -162,6 +163,7 @@ pub struct RetirementOwners {
     pub worker_report: parent_worker_channel::WorkerReportEvidence,
     pub setup_receiver: Option<SetupReceiver>,
     pub setup: Option<ReadyDelivery>,
+    pub starting_launch: super::starting_launch::LaunchFacts,
     pub pilot_launches: [super::pilot_launch::Facts; 2],
 }
 
@@ -183,6 +185,7 @@ pub struct PilotOwnerInputs<E> {
 pub enum FinalizerFailureKind {
     FailureNotObserved,
     SetupIncomplete,
+    StartingLaunchBinding,
     PilotLaunchBinding,
     Pilot(super::session_finalizer::StartFault),
 }
@@ -239,6 +242,13 @@ impl RetirementOwners {
         super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
         FinalizerFailure<E>,
     > {
+        if self.starting_launch != inputs.starting_launch {
+            return Err(FinalizerFailure {
+                kind: FinalizerFailureKind::StartingLaunchBinding,
+                owners: self,
+                inputs,
+            });
+        }
         if self.pilot_launches != inputs.pilot_launches {
             return Err(FinalizerFailure {
                 kind: FinalizerFailureKind::PilotLaunchBinding,
@@ -252,6 +262,7 @@ impl RetirementOwners {
             worker_report,
             setup_receiver,
             setup,
+            starting_launch: retained_starting_launch,
             pilot_launches,
         } = self;
         let (setup_receiver, setup) = match (setup_receiver, setup) {
@@ -265,6 +276,7 @@ impl RetirementOwners {
                         worker_report,
                         setup_receiver,
                         setup,
+                        starting_launch: retained_starting_launch,
                         pilot_launches,
                     },
                     inputs,
@@ -331,6 +343,7 @@ impl RetirementOwners {
                         worker_report: worker_report_evidence,
                         setup_receiver: worker_setup_receiver,
                         setup: worker_setup_delivery,
+                        starting_launch: retained_starting_launch,
                         pilot_launches,
                     },
                     inputs: PilotOwnerInputs {
@@ -378,6 +391,13 @@ impl RetirementOwners {
                 inputs,
             });
         }
+        if self.starting_launch != inputs.starting_launch {
+            return Err(FinalizerFailure {
+                kind: FinalizerFailureKind::StartingLaunchBinding,
+                owners: self,
+                inputs,
+            });
+        }
         if self.pilot_launches != inputs.pilot_launches {
             return Err(FinalizerFailure {
                 kind: FinalizerFailureKind::PilotLaunchBinding,
@@ -391,6 +411,7 @@ impl RetirementOwners {
             worker_report,
             setup_receiver,
             setup,
+            starting_launch: retained_starting_launch,
             pilot_launches,
         } = self;
         let (setup_receiver, setup) = match (setup_receiver, setup) {
@@ -406,6 +427,7 @@ impl RetirementOwners {
                         worker_report,
                         setup_receiver,
                         setup,
+                        starting_launch: retained_starting_launch,
                         pilot_launches,
                     },
                     inputs,
@@ -468,6 +490,7 @@ impl RetirementOwners {
                         worker_report: worker_report_evidence,
                         setup_receiver: worker_setup_receiver,
                         setup: worker_setup_delivery,
+                        starting_launch: retained_starting_launch,
                         pilot_launches,
                     },
                     inputs: PilotOwnerInputs {
@@ -507,34 +530,44 @@ impl Owners {
         worker: Process,
         clock: WindowsClock,
     ) -> Result<RetirementOwners, MissingController> {
-        let (stage, parent, worker_report, setup_receiver, setup, controller, pilot_launches) =
-            match self {
-                Self {
-                    stage,
-                    parent,
-                    worker_report,
-                    setup_receiver,
-                    setup,
-                    controller: Some(controller),
-                    pilot_launches,
-                } => (
-                    stage,
-                    parent,
-                    worker_report,
-                    setup_receiver,
-                    setup,
-                    controller,
-                    pilot_launches,
-                ),
-                owners => {
-                    return Err(MissingController {
-                        owners,
-                        sampler,
-                        worker,
-                        clock,
-                    })
-                }
-            };
+        let (
+            stage,
+            parent,
+            worker_report,
+            setup_receiver,
+            setup,
+            controller,
+            starting_launch,
+            pilot_launches,
+        ) = match self {
+            Self {
+                stage,
+                parent,
+                worker_report,
+                setup_receiver,
+                setup,
+                controller: Some(controller),
+                starting_launch,
+                pilot_launches,
+            } => (
+                stage,
+                parent,
+                worker_report,
+                setup_receiver,
+                setup,
+                controller,
+                starting_launch,
+                pilot_launches,
+            ),
+            owners => {
+                return Err(MissingController {
+                    owners,
+                    sampler,
+                    worker,
+                    clock,
+                })
+            }
+        };
         Ok(RetirementOwners {
             assets: super::retirement_collector::Assets::new(
                 parent, controller, sampler, worker, clock,
@@ -543,6 +576,7 @@ impl Owners {
             worker_report,
             setup_receiver,
             setup,
+            starting_launch,
             pilot_launches,
         })
     }
@@ -1219,7 +1253,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             controller,
             stage,
             starting: _,
-            starting_launch: _,
+            starting_launch,
             pilot_launches,
         } = self;
         Owners {
@@ -1229,6 +1263,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             setup_receiver,
             setup,
             controller,
+            starting_launch,
             pilot_launches,
         }
     }

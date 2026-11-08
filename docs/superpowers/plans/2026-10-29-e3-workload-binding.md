@@ -1611,3 +1611,10 @@ composition are still required before a runnable benchmark can be claimed.
   GNU/Linux all-target/all-feature checks, warning-denied Clippy and formatting
   pass. No tests or process/runtime/native/GPU execution. Parent preflight
   assembly, finalizer/archive caller and fixed executable remain open.
+- 2026-11-08 starting-launch fact retention audit: discovered that the generic
+  `ParentAdmission::into_parts` → `Owners::into_retirement` route dropped the
+  starting-launch facts that the direct admission finalizer checked. Those
+  facts now travel through both owner types and are compared to
+  `PilotOwnerInputs` by normal and failure finalization; mismatches return the
+  retained retirement/setup/report owners. Windows GNU/Linux compile and
+  warning-denied Clippy pass. No tests or runtime/native/GPU execution.
