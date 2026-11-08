@@ -1304,6 +1304,13 @@ the reports needed by `PilotOwners`.
 worker report/setup owners beside it. If no controller exists, its error
 returns the untouched `Owners`, both process handles and clock for explicit
 failure handling; retirement assets are never built without their controller.
+`ParentAdmission::into_pilot_finalizer` now composes `into_parts`,
+`into_retirement` and `start_pilot_finalizer` in one consuming transition. Its
+typed failure returns the original process pair, clock, admission owners and
+pilot inputs when the controller is missing; setup or cross-role binding
+failures return the retirement assets and all pilot inputs. This closes the
+source-level admission-to-finalizer ownership handoff, but it is not called by a
+fixed parent entrypoint and does not drive the preceding poll/admission loop.
 This coordinator does not launch the three processes, poll the pre-manifest
 starting session, own the whole execution/retirement loop, or prove hardware or
 GPU qualification.

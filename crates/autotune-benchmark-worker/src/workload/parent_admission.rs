@@ -96,6 +96,18 @@ pub struct FinalizerFailure<E> {
     pub inputs: PilotOwnerInputs<E>,
 }
 
+#[allow(clippy::large_enum_variant)] // Keep all original Windows/process owners inline on failure.
+pub enum AdmissionFinalizerFailure<E> {
+    MissingController {
+        owners: Owners,
+        sampler: Process,
+        worker: Process,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+    },
+    Finalizer(FinalizerFailure<E>),
+}
+
 impl RetirementOwners {
     /// Reassemble the exact starting/pilot evidence and run the existing
     /// three-role finalizer validation. Every failure returns both retirement
@@ -568,5 +580,38 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             setup,
             controller,
         }
+    }
+
+    /// Transfer the complete admission owner directly into the existing pilot
+    /// finalizer. Missing-watch and rejected-binding paths return all source
+    /// and process owners without dropping the clock or caller evidence.
+    #[allow(clippy::result_large_err)] // Preserve every session owner inline on failure.
+    pub fn into_pilot_finalizer<E>(
+        self,
+        sampler: Process,
+        worker: Process,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
+        AdmissionFinalizerFailure<E>,
+    > {
+        let owners = self.into_parts();
+        let retirement = match owners.into_retirement(sampler, worker, clock) {
+            Ok(retirement) => retirement,
+            Err(missing) => {
+                return Err(AdmissionFinalizerFailure::MissingController {
+                    owners: missing.owners,
+                    sampler: missing.sampler,
+                    worker: missing.worker,
+                    clock: missing.clock,
+                    inputs,
+                });
+            }
+        };
+        retirement
+            .start_pilot_finalizer(inputs, budget)
+            .map_err(AdmissionFinalizerFailure::Finalizer)
     }
 }
