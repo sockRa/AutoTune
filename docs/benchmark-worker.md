@@ -1271,9 +1271,11 @@ stop/termination requests while later evidence is still arriving. The existing
 environment, starting, context, peer and consent checks. Either path retains a
 sampler stop owner if worker-owner acquisition fails, and retains partial
 controller owners on construction/attach failure. Watch readiness and all
-preflight checks remain mandatory before Start. The caller must invoke the
-early path after `ParentAdmission::new` to supervise setup reception; a fixed
-parent entrypoint still does not exist, so that integration is not claimed.
+preflight checks remain mandatory before Start. `ParentAdmission::new` now
+starts this early watch before returning; if initialization fails, its typed
+error retains the admission and any partial controller/stop owners. A fixed
+parent entrypoint still does not exist, so the broader session-loop integration
+is not claimed.
 The adapter also exposes `queue_worker_start_when_watch_ready` and
 `collect_and_queue_native_grant` over a `ParentWorkerChannel`. Both pass this
 exact retained sampler process into the worker channel's process observations;

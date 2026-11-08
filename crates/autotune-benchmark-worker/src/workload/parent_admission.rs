@@ -42,6 +42,15 @@ pub struct InitFailure<'s, 'w> {
     pub worker: ParentWorkerChannel<'w>,
 }
 
+#[allow(clippy::large_enum_variant)] // Keep original owners inline; boxing adds an unbudgeted allocation.
+pub enum AdmissionStartFailure<'a, 's, 'w> {
+    Initialization(InitFailure<'s, 'w>),
+    SafetyWatch {
+        fault: parent_sampler_channel::ControllerStartFault,
+        admission: ParentAdmission<'a, 's, 'w>,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InitFault {
     SamplerAlreadyFaulted,
@@ -500,8 +509,28 @@ pub struct ParentAdmission<'a, 's, 'w> {
 }
 
 impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
-    #[allow(clippy::result_large_err)] // Return the unconsumed setup reader without allocating.
+    /// Construct admission and attach the original-deadline safety controller
+    /// before returning. The controller is containment only: ordered preflight,
+    /// watch readiness, Start and NativeGrant retain their separate gates.
+    #[allow(clippy::result_large_err)] // Preserve process/channel/controller owners on failure.
     pub fn new(
+        sampler: ParentSamplerChannel<'s>,
+        worker: ParentWorkerChannel<'w>,
+        starting: &'a super::starting_launch::AdmissionProcess,
+        setup_receiver: Option<SetupReceiver>,
+        clock: &WindowsClock,
+        budget: &Budget,
+    ) -> Result<Self, AdmissionStartFailure<'a, 's, 'w>> {
+        let mut admission = Self::new_unwatched(sampler, worker, starting, setup_receiver)
+            .map_err(AdmissionStartFailure::Initialization)?;
+        if let Err(fault) = admission.start_safety_watch_early(clock, budget) {
+            return Err(AdmissionStartFailure::SafetyWatch { fault, admission });
+        }
+        Ok(admission)
+    }
+
+    #[allow(clippy::result_large_err)] // Return the unconsumed setup reader without allocating.
+    fn new_unwatched(
         sampler: ParentSamplerChannel<'s>,
         worker: ParentWorkerChannel<'w>,
         starting: &'a super::starting_launch::AdmissionProcess,
@@ -556,7 +585,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
     /// flight. This grants no Start/native permission; the later ordered
     /// reported preflight and watch-ready checks remain mandatory.
     #[allow(clippy::result_large_err)]
-    pub fn start_safety_watch_early(
+    fn start_safety_watch_early(
         &mut self,
         clock: &WindowsClock,
         budget: &Budget,
