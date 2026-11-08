@@ -1345,6 +1345,9 @@ starting session to have completed with that same response digest. This
 prevents mismatched starting references from entering the admission poll API;
 the broader peer/environment/consent checks remain in
 `verify_reported_preflight`.
+If this source-binding step rejects, `PreflightInputFailure` returns both
+setup/workload consent decisions with the fault so the host can handle them;
+the construction edge does not silently drop consent owners.
 `advance_pilot_once` joins that admission path to the successful terminal
 path: before NativeGrant it delegates to the ordered admission driver; after
 NativeGrant it polls once and advances result completion, planned sampler stop

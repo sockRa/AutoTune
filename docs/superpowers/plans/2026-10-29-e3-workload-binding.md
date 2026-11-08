@@ -1697,3 +1697,10 @@ composition are still required before a runnable benchmark can be claimed.
   and correctly rejected the matrix's historical source revision before
   opening artifacts or launching a process. No fixture was executed; refresh
   source/artifact binding and obtain new explicit approval before any attempt.
+- 2026-11-08 preflight construction failure ownership: `PreflightInputFailure`
+  now returns the setup/workload `Decisions` alongside scope, snapshot or
+  session-binding faults from the strict starting-receipt builder. The
+  `CompletedStarting` convenience path propagates the same owner-preserving
+  error. Windows GNU/Linux all-target/all-feature checks, warning-denied
+  Clippy, formatting and diff check pass. No tests or process/runtime/native/GPU
+  execution; these decisions remain host-owned until admission consumes them.

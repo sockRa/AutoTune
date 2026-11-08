@@ -7,7 +7,7 @@ use super::{
     consent::Record,
     host_environment::Reported as HostEnvironment,
     manifest::BoundRun,
-    parent_admission::{self, PreflightInput, PreflightInputFault},
+    parent_admission::{self, PreflightInput, PreflightInputFailure},
     starting::Scope,
     starting_bootstrap::Declaration,
     starting_launch::{self, AdmissionProcess, ClosedHandoff, LaunchFailure, LaunchPoll},
@@ -91,6 +91,7 @@ impl CompletedStarting {
     /// Build parent preflight from this exact process's verified response and
     /// completed delivery session, preserving all remaining caller inputs.
     #[allow(clippy::too_many_arguments)] // Keep run/consent/context references explicit at preflight binding.
+    #[allow(clippy::result_large_err)] // Return both consent decisions intact on source-binding rejection.
     pub fn preflight_input<'a, 'r>(
         &'a self,
         run: &'a BoundRun<'r>,
@@ -99,7 +100,7 @@ impl CompletedStarting {
         starting_decision: &'a Record,
         decisions: super::consent::Decisions,
         now: Anchor,
-    ) -> Result<PreflightInput<'a, 'r>, PreflightInputFault> {
+    ) -> Result<PreflightInput<'a, 'r>, PreflightInputFailure> {
         parent_admission::PreflightInput::from_starting_response(
             run,
             scope,

@@ -807,11 +807,18 @@ pub enum PreflightInputFault {
     SessionBinding,
 }
 
+pub struct PreflightInputFailure {
+    pub fault: PreflightInputFault,
+    /// Preserve both decisions when source binding fails before admission.
+    pub decisions: consent::Decisions,
+}
+
 impl<'a, 'r> PreflightInput<'a, 'r> {
     /// Build preflight references from the strict starting receipt and the
     /// session that delivered it. This prevents callers from accidentally
     /// pairing a snapshot or session from a different starting response.
     #[allow(clippy::too_many_arguments)] // Keep the exact run, consent, receipt and session bindings explicit.
+    #[allow(clippy::result_large_err)] // Retain decisions inline when preflight source binding fails.
     pub fn from_starting_response(
         run: &'a BoundRun<'r>,
         scope: &'a Scope,
@@ -821,22 +828,34 @@ impl<'a, 'r> PreflightInput<'a, 'r> {
         decisions: consent::Decisions,
         now: Anchor,
         starting_session: &'a StartingSession,
-    ) -> Result<Self, PreflightInputFault> {
+    ) -> Result<Self, PreflightInputFailure> {
         if starting_response.scope_digest() != scope.digest() {
-            return Err(PreflightInputFault::ScopeBinding);
+            return Err(PreflightInputFailure {
+                fault: PreflightInputFault::ScopeBinding,
+                decisions,
+            });
         }
         let Some(starting) = starting_response.snapshot() else {
-            return Err(PreflightInputFault::MissingSnapshot);
+            return Err(PreflightInputFailure {
+                fault: PreflightInputFault::MissingSnapshot,
+                decisions,
+            });
         };
         if starting.snapshot().scope().digest() != scope.digest() {
-            return Err(PreflightInputFault::ScopeBinding);
+            return Err(PreflightInputFailure {
+                fault: PreflightInputFault::ScopeBinding,
+                decisions,
+            });
         }
         if !matches!(
             starting_session.outcome(),
             Some(super::starting_session::Outcome::Complete { digest, .. })
                 if digest == starting_response.digest()
         ) {
-            return Err(PreflightInputFault::SessionBinding);
+            return Err(PreflightInputFailure {
+                fault: PreflightInputFault::SessionBinding,
+                decisions,
+            });
         }
         Ok(Self {
             run,
