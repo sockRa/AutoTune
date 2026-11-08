@@ -250,6 +250,14 @@ pub enum AdmissionFinalizerFailure<'a, 's, 'w, E> {
     Finalizer(FinalizerFailure<E>),
 }
 
+/// Preserve the archive writer and provenance when terminal admission could
+/// not transfer into the finalizer/archive driver.
+pub struct CompletionStartFailure<'a, 's, 'w, 'archive, E> {
+    pub admission: AdmissionFinalizerFailure<'a, 's, 'w, E>,
+    pub writer: &'archive mut crate::sampler::writer::Writer,
+    pub provenance: crate::evidence::Provenance,
+}
+
 impl RetirementOwners {
     /// Reassemble the exact starting/pilot evidence and run the existing
     /// three-role finalizer validation. Every failure returns both retirement
@@ -1482,6 +1490,36 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             .map_err(AdmissionFinalizerFailure::Finalizer)
     }
 
+    /// Compose successful terminal admission directly into the owned
+    /// retirement-to-archive driver. On rejection the writer/provenance and
+    /// complete admission owner graph are all returned to the caller.
+    #[allow(clippy::result_large_err)] // Preserve the complete owner graph and writer on rejection.
+    #[allow(clippy::too_many_arguments)] // Keep the exact process/evidence/archive bindings explicit.
+    pub fn into_pilot_completion<'archive, E>(
+        self,
+        sampler: Process,
+        worker: Process,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        writer: &'archive mut crate::sampler::writer::Writer,
+        provenance: crate::evidence::Provenance,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::PilotCompletionDriver<'archive, E>,
+        CompletionStartFailure<'a, 's, 'w, 'archive, E>,
+    > {
+        match self.into_pilot_finalizer(sampler, worker, clock, inputs, budget) {
+            Ok(finalizer) => Ok(super::session_finalizer::PilotCompletionDriver::new(
+                finalizer, writer, provenance, budget,
+            )),
+            Err(admission) => Err(CompletionStartFailure {
+                admission,
+                writer,
+                provenance,
+            }),
+        }
+    }
+
     /// Consume a faulted admission into host retirement without requiring a
     /// successful worker terminal audit. The failure finalizer can then retain
     /// and archive an explicit invalid/inconclusive session outcome.
@@ -1533,5 +1571,34 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         retirement
             .start_pilot_failure_finalizer(inputs, budget)
             .map_err(AdmissionFinalizerFailure::Finalizer)
+    }
+
+    /// Compose a retained parent fault into host retirement and an incomplete
+    /// session archive without requiring the successful terminal gate.
+    #[allow(clippy::result_large_err)] // Preserve the complete owner graph and writer on rejection.
+    #[allow(clippy::too_many_arguments)] // Keep the exact process/evidence/archive bindings explicit.
+    pub fn into_failure_completion<'archive, E>(
+        self,
+        sampler: Process,
+        worker: Process,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        writer: &'archive mut crate::sampler::writer::Writer,
+        provenance: crate::evidence::Provenance,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::PilotCompletionDriver<'archive, E>,
+        CompletionStartFailure<'a, 's, 'w, 'archive, E>,
+    > {
+        match self.into_failure_finalizer(sampler, worker, clock, inputs, budget) {
+            Ok(finalizer) => Ok(super::session_finalizer::PilotCompletionDriver::new(
+                finalizer, writer, provenance, budget,
+            )),
+            Err(admission) => Err(CompletionStartFailure {
+                admission,
+                writer,
+                provenance,
+            }),
+        }
     }
 }

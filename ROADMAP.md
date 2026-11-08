@@ -1091,3 +1091,10 @@ This is a product roadmap, **not** a generated BMAD sprint-status file or a clai
   process/runtime/native/GPU execution. This remains a source component; parent
   preflight, pilot admission and fixed end-to-end loop are still missing, so E3
   is partial and Gate B unmet.
+- 2026-11-08 continuation (admission to archive driver): success and retained-
+  fault admission now each have a consuming transfer that starts retirement /
+  finalization and constructs `PilotCompletionDriver`, returning writer and
+  provenance if any gate rejects transfer. Windows GNU/Linux all-target/all-
+  feature checks, warning-denied Clippy, formatting and diff check pass. No
+  tests or execution/qualification. Parent preflight preparation and polling of
+  admission/completion remain outside this seam; E3/Gate B remain open.

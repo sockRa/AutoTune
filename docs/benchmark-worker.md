@@ -1367,6 +1367,15 @@ and generated evidence buffers through writer completion without a
 self-referential borrow. The parent still must construct and poll this driver;
 it does not launch the three processes, poll the pre-manifest starting session,
 own the complete session loop, or prove hardware/GPU qualification.
+`ParentAdmission::into_pilot_completion` now composes the successful terminal
+gate, retirement/finalizer transfer and `PilotCompletionDriver` construction.
+`into_failure_completion` provides the corresponding path after a retained
+parent fault. If either transfer is rejected, `CompletionStartFailure` returns
+the admission/process/evidence owners together with the borrowed writer and
+provenance; archive ownership is not silently consumed. These close the
+terminal-to-archive transfer at source level, while the fixed parent still
+must poll admission, prepare preflight/owner inputs, and poll the returned
+completion driver.
 
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing

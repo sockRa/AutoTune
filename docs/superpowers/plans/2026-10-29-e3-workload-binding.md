@@ -1651,3 +1651,11 @@ composition are still required before a runnable benchmark can be claimed.
   GNU/Linux all-target/all-feature checks, warning-denied Clippy, formatting
   and diff check pass. No tests or execution/qualification. Parent preflight,
   pilot launch/admission and the complete fixed session loop remain open.
+- 2026-11-08 admission-to-archive transfer: `ParentAdmission::into_pilot_completion`
+  and `into_failure_completion` now join the respective success/failure
+  terminal gate, retirement/finalizer setup and `PilotCompletionDriver`
+  construction. Rejected transfer returns the admission/process/evidence owner
+  graph plus writer/provenance. Windows GNU/Linux all-target/all-feature checks,
+  warning-denied Clippy, formatting and diff check pass. No tests or execution /
+  qualification. This closes a transfer seam only; the fixed parent still must
+  prepare inputs, poll admission and poll the returned completion driver.
