@@ -5,12 +5,16 @@
 //! failure and returns only a strictly read starting receipt on completion.
 use super::{
     consent::Record,
+    host_environment::Reported as HostEnvironment,
+    manifest::BoundRun,
+    parent_admission::{self, PreflightInput, PreflightInputFault},
     starting::Scope,
     starting_bootstrap::Declaration,
     starting_launch::{self, AdmissionProcess, ClosedHandoff, LaunchFailure, LaunchPoll},
     starting_read::{self, Receipt},
     starting_session::Step,
 };
+use crate::monitor::Anchor;
 use crate::{monitor::windows_clock::WindowsClock, sampler::budget::Budget};
 use std::io;
 
@@ -63,6 +67,56 @@ pub enum Failure {
     },
 }
 
+/// The process, completed response session and strict receipt remain one
+/// owner so preflight cannot accidentally mix evidence from different starts.
+pub struct CompletedStarting {
+    process: AdmissionProcess,
+    handoff: ClosedHandoff,
+    receipt: Receipt,
+}
+
+impl CompletedStarting {
+    pub fn process(&self) -> &AdmissionProcess {
+        &self.process
+    }
+
+    pub fn handoff(&self) -> &ClosedHandoff {
+        &self.handoff
+    }
+
+    pub fn receipt(&self) -> &Receipt {
+        &self.receipt
+    }
+
+    /// Build parent preflight from this exact process's verified response and
+    /// completed delivery session, preserving all remaining caller inputs.
+    #[allow(clippy::too_many_arguments)] // Keep run/consent/context references explicit at preflight binding.
+    pub fn preflight_input<'a, 'r>(
+        &'a self,
+        run: &'a BoundRun<'r>,
+        scope: &'a Scope,
+        environment: &'a HostEnvironment,
+        starting_decision: &'a Record,
+        decisions: super::consent::Decisions,
+        now: Anchor,
+    ) -> Result<PreflightInput<'a, 'r>, PreflightInputFault> {
+        parent_admission::PreflightInput::from_starting_response(
+            run,
+            scope,
+            environment,
+            &self.receipt,
+            starting_decision,
+            decisions,
+            now,
+            &self.handoff.session,
+        )
+    }
+
+    pub fn into_parts(self) -> (AdmissionProcess, ClosedHandoff, Receipt) {
+        (self.process, self.handoff, self.receipt)
+    }
+}
+
 /// Launch the fixed starting child, send its one-shot bootstrap, and poll the
 /// bounded response to completion. `pump` runs between pending polls so the
 /// host can dispatch UI/events and apply its polling cadence; returning
@@ -77,7 +131,7 @@ pub fn launch_and_receive(
     clock: WindowsClock,
     budget: &Budget,
     mut pump: impl FnMut() -> PumpControl,
-) -> Result<(AdmissionProcess, ClosedHandoff, Receipt), Failure> {
+) -> Result<CompletedStarting, Failure> {
     let mut guard =
         starting_launch::LaunchGuard::start(declaration, scope, consent, clock.clone(), budget)
             .map_err(Failure::LaunchStart)?;
@@ -175,7 +229,11 @@ pub fn launch_and_receive(
             });
         }
     };
-    Ok((process, handoff, receipt))
+    Ok(CompletedStarting {
+        process,
+        handoff,
+        receipt,
+    })
 }
 
 fn request_stop(

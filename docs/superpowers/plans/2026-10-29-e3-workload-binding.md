@@ -1674,3 +1674,11 @@ composition are still required before a runnable benchmark can be claimed.
   GNU/Linux all-target/all-feature checks, warning-denied Clippy, formatting and
   diff check pass. No tests or execution/qualification; the fixed parent still
   needs to build remaining inputs and drive admission/completion polls.
+- 2026-11-08 starting outcome to preflight input: `starting_parent::launch_and_receive`
+  now returns `CompletedStarting`, which keeps the eligible process, closed
+  response session and strict receipt in one owner. Its `preflight_input` method
+  derives the snapshot and session refs from that same owner and delegates
+  receipt/scope/digest checks to `PreflightInput::from_starting_response`.
+  Windows GNU/Linux all-target/all-feature checks, warning-denied Clippy,
+  formatting and diff check pass. No tests or process/runtime/native/GPU
+  execution. Later host/peer/consent checks and the full parent loop remain open.

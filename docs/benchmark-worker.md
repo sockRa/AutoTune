@@ -3334,11 +3334,14 @@ orchestration are not yet composed here.
 `workload::starting_parent::launch_and_receive` now drives the fixed starting
 child's asynchronous `LaunchGuard`, pumps the host between bounded polls, sends
 the one-shot bootstrap, polls the original-deadline handoff, and strictly reads
-the starting receipt. If opening the handoff, sending bootstrap, receiving the
-response, or reading the receipt fails, the returned `Failure` retains the
-process and (when created) closed handoff, plus the stage fault and explicit
-stop/termination request outcomes. The new `AdmissionProcess` forwarding
-methods keep cleanup requests within the launch-bound owner.
+the starting receipt. Success returns `CompletedStarting`, which keeps the
+process, closed session handoff and receipt together and can build a bound
+`PreflightInput` without re-pairing their references. If opening the handoff,
+sending bootstrap, receiving the response, or reading the receipt fails, the
+returned `Failure` retains the process and (when created) closed handoff, plus
+the stage fault and explicit stop/termination request outcomes. The new
+`AdmissionProcess` forwarding methods keep cleanup requests within the launch-
+bound owner.
 
 This is Windows-only source composition. The host must still supply consent,
 scope, budget, clock and pump behavior. The pump can now cancel while the

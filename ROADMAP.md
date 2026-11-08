@@ -1112,3 +1112,11 @@ This is a product roadmap, **not** a generated BMAD sprint-status file or a clai
   in parent admission. Windows GNU/Linux all-target/all-feature checks,
   warning-denied Clippy, formatting and diff check pass. No tests or
   execution/qualification; fixed parent loop and Gate B remain open.
+- 2026-11-08 continuation (completed starting owner to preflight):
+  `starting_parent::launch_and_receive` now returns a `CompletedStarting`
+  owner containing process, closed response session and strict receipt; its
+  preflight builder derives snapshot/session from that exact owner. Windows
+  GNU/Linux all-target/all-feature checks, warning-denied Clippy, formatting
+  and diff check pass. No tests or process/runtime/native/GPU execution. The
+  fixed parent still must supply host/peer/consent context and drive the loop;
+  E3/Gate B remain open.
