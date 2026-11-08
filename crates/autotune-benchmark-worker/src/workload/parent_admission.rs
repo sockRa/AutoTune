@@ -147,6 +147,7 @@ pub struct PilotOwnerInputs<E> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizerFailureKind {
+    FailureNotObserved,
     SetupIncomplete,
     Pilot(super::session_finalizer::StartFault),
 }
@@ -159,6 +160,13 @@ pub struct FinalizerFailure<E> {
 
 #[allow(clippy::large_enum_variant)] // Keep all original Windows/process owners inline on failure.
 pub enum AdmissionFinalizerFailure<'a, 's, 'w, E> {
+    FailureNotObserved {
+        admission: ParentAdmission<'a, 's, 'w>,
+        sampler: Process,
+        worker: Process,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+    },
     StartingLaunchBinding {
         admission: ParentAdmission<'a, 's, 'w>,
         sampler: Process,
@@ -250,6 +258,125 @@ impl RetirementOwners {
             super::session_finalizer::PilotOwners<E>,
         >::start_pilot(assets, evidence, budget)
         {
+            Ok(finalizer) => Ok(finalizer),
+            Err(failure) => {
+                let super::session_finalizer::PilotOwners {
+                    manifest,
+                    scope,
+                    starting_process,
+                    starting_launch,
+                    starting_handoff,
+                    starting_consent,
+                    starting_read,
+                    starting_evidence,
+                    host_environment,
+                    worker_setup_delivery,
+                    worker_report_evidence,
+                    additional,
+                } = failure.evidence;
+                Err(FinalizerFailure {
+                    kind: FinalizerFailureKind::Pilot(failure.fault),
+                    owners: Self {
+                        assets: failure.assets,
+                        stage,
+                        worker_report: worker_report_evidence,
+                        setup_receiver: None,
+                        setup: Some(worker_setup_delivery),
+                    },
+                    inputs: PilotOwnerInputs {
+                        manifest,
+                        scope,
+                        starting_process,
+                        starting_launch,
+                        starting_handoff,
+                        starting_consent,
+                        starting_read,
+                        starting_evidence,
+                        host_environment,
+                        additional,
+                    },
+                })
+            }
+        }
+    }
+
+    /// Start host retirement for an explicitly failed pilot after all required
+    /// starting/setup owners exist. This does not run success validation; the
+    /// retained fault keeps `complete_pilot` false and the envelope invalid.
+    #[allow(clippy::result_large_err)] // Keep every process, protocol and report owner inline.
+    pub fn start_pilot_failure_finalizer<E>(
+        self,
+        inputs: PilotOwnerInputs<E>,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
+        FinalizerFailure<E>,
+    > {
+        let failure_observed = self.stage == Stage::Failed
+            && (self.assets.parent.fault().is_some()
+                || self.worker_report.assessment_fault().is_some()
+                || self.worker_report.overflowed()
+                || self
+                    .worker_report
+                    .control_audit()
+                    .is_some_and(|audit| audit.fault().is_some() || audit.native_failure()));
+        if !failure_observed {
+            return Err(FinalizerFailure {
+                kind: FinalizerFailureKind::FailureNotObserved,
+                owners: self,
+                inputs,
+            });
+        }
+        let Self {
+            assets,
+            stage,
+            worker_report,
+            setup_receiver,
+            setup,
+        } = self;
+        let setup = match (setup_receiver, setup) {
+            (None, Some(setup)) => setup,
+            (setup_receiver, setup) => {
+                return Err(FinalizerFailure {
+                    kind: FinalizerFailureKind::SetupIncomplete,
+                    owners: Self {
+                        assets,
+                        stage,
+                        worker_report,
+                        setup_receiver,
+                        setup,
+                    },
+                    inputs,
+                });
+            }
+        };
+        let PilotOwnerInputs {
+            manifest,
+            scope,
+            starting_process,
+            starting_launch,
+            starting_handoff,
+            starting_consent,
+            starting_read,
+            starting_evidence,
+            host_environment,
+            additional,
+        } = inputs;
+        let evidence = super::session_finalizer::PilotOwners {
+            manifest,
+            scope,
+            starting_process,
+            starting_launch,
+            starting_handoff,
+            starting_consent,
+            starting_read,
+            starting_evidence,
+            host_environment,
+            worker_setup_delivery: setup,
+            worker_report_evidence: worker_report,
+            additional,
+        };
+        match super::session_finalizer::SessionFinalizer::start(assets, evidence, budget) {
             Ok(finalizer) => Ok(finalizer),
             Err(failure) => {
                 let super::session_finalizer::PilotOwners {
@@ -877,6 +1004,59 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         };
         retirement
             .start_pilot_finalizer(inputs, budget)
+            .map_err(AdmissionFinalizerFailure::Finalizer)
+    }
+
+    /// Consume a faulted admission into host retirement without requiring a
+    /// successful worker terminal audit. The failure finalizer can then retain
+    /// and archive an explicit invalid/inconclusive session outcome.
+    #[allow(clippy::result_large_err)] // Return the complete owner graph unchanged when not eligible.
+    pub fn into_failure_finalizer<E>(
+        self,
+        sampler: Process,
+        worker: Process,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
+        AdmissionFinalizerFailure<'a, 's, 'w, E>,
+    > {
+        if self.stage != Stage::Failed || self.sampler.parent().fault().is_none() {
+            return Err(AdmissionFinalizerFailure::FailureNotObserved {
+                admission: self,
+                sampler,
+                worker,
+                clock,
+                inputs,
+            });
+        }
+        if self.starting_launch != inputs.starting_launch
+            || !std::ptr::eq(self.starting.process(), &inputs.starting_process)
+        {
+            return Err(AdmissionFinalizerFailure::StartingLaunchBinding {
+                admission: self,
+                sampler,
+                worker,
+                clock,
+                inputs,
+            });
+        }
+        let owners = self.into_parts();
+        let retirement = match owners.into_retirement(sampler, worker, clock) {
+            Ok(retirement) => retirement,
+            Err(missing) => {
+                return Err(AdmissionFinalizerFailure::MissingController {
+                    owners: missing.owners,
+                    sampler: missing.sampler,
+                    worker: missing.worker,
+                    clock: missing.clock,
+                    inputs,
+                });
+            }
+        };
+        retirement
+            .start_pilot_failure_finalizer(inputs, budget)
             .map_err(AdmissionFinalizerFailure::Finalizer)
     }
 }

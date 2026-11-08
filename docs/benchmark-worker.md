@@ -3232,6 +3232,19 @@ GPU quiescence or successful worker cleanup. If a stop request is pending or
 failed, the caller must retain the process owners and continue the independent
 cleanup path.
 
+For a terminal admission fault after the controller and complete worker setup
+delivery exist, `ParentAdmission::into_failure_finalizer` now transfers the
+same process/controller assets into host retirement without requiring the
+success-only `RoleFinished` audit. It requires `Stage::Failed`, a retained
+parent fault, and exact starting-process/launch binding.
+`RetirementOwners::start_pilot_failure_finalizer` preserves that faulted state
+and starts generic finalization; `complete_pilot()` additionally requires no
+parent fault and reported sampler completion. A caller can then attempt the
+existing workload archive path to retain an invalid/inconclusive outcome.
+Early failures without a controller or complete setup return all owners, and
+overflow/capacity may still prevent archive generation. No fixed parent
+currently calls this path.
+
 This is a typed source composition only. It has no fixed parent executable or
 launch loop call site, and does not qualify Windows process retirement, GPU
 quiescence, native calls, workload correctness or Gate B.

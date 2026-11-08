@@ -185,6 +185,8 @@ impl<E> Finalized<PilotOwners<E>> {
     /// proof, and does not imply candidate correctness or acceptance.
     pub fn complete_pilot(&self) -> bool {
         self.complete()
+            && self.retirement.assets.parent.fault().is_none()
+            && self.retirement.assets.parent.reported_finished()
             && self
                 .evidence
                 .worker_report_evidence
