@@ -1098,3 +1098,10 @@ This is a product roadmap, **not** a generated BMAD sprint-status file or a clai
   feature checks, warning-denied Clippy, formatting and diff check pass. No
   tests or execution/qualification. Parent preflight preparation and polling of
   admission/completion remain outside this seam; E3/Gate B remain open.
+- 2026-11-08 continuation (paired-owner completion/archive handoff): `Owners`
+  now transfers a terminal or faulted session plus the exact `AdmissionPair`
+  through retirement/finalization into `PilotCompletionDriver`; rejected gates
+  return the complete owner pair and archive writer context. Windows GNU/Linux
+  all-target/all-feature checks, warning-denied Clippy, formatting and diff
+  check pass. No tests or execution/qualification. Parent preflight construction
+  and the actual polling loop remain missing; E3/Gate B remain open.

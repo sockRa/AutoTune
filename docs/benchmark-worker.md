@@ -1376,6 +1376,10 @@ provenance; archive ownership is not silently consumed. These close the
 terminal-to-archive transfer at source level, while the fixed parent still
 must poll admission, prepare preflight/owner inputs, and poll the returned
 completion driver.
+For callers that retain the paired launch owner, `Owners::start_pilot_completion`
+and `start_pilot_failure_completion` compose that same transition directly
+from `AdmissionPair`, preserving launch-fact comparison. A rejected transfer
+returns the pair, admission/evidence owners, writer and provenance together.
 
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing

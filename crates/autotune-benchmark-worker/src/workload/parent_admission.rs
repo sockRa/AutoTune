@@ -258,6 +258,12 @@ pub struct CompletionStartFailure<'a, 's, 'w, 'archive, E> {
     pub provenance: crate::evidence::Provenance,
 }
 
+pub struct OwnerPairCompletionStartFailure<'archive, E> {
+    pub admission: OwnerPairFinalizerFailure<E>,
+    pub writer: &'archive mut crate::sampler::writer::Writer,
+    pub provenance: crate::evidence::Provenance,
+}
+
 impl RetirementOwners {
     /// Reassemble the exact starting/pilot evidence and run the existing
     /// three-role finalizer validation. Every failure returns both retirement
@@ -725,6 +731,60 @@ impl Owners {
         retirement
             .start_pilot_failure_finalizer(inputs, budget)
             .map_err(OwnerPairFinalizerFailure::Finalizer)
+    }
+
+    /// Transfer terminal admission and the exact guarded process pair directly
+    /// into retirement, finalization and the workload archive poll driver.
+    #[allow(clippy::result_large_err)] // Return admission, process pair, evidence and writer together on rejection.
+    pub fn start_pilot_completion<'archive, E>(
+        self,
+        pair: super::pilot_launch::AdmissionPair,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        writer: &'archive mut crate::sampler::writer::Writer,
+        provenance: crate::evidence::Provenance,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::PilotCompletionDriver<'archive, E>,
+        OwnerPairCompletionStartFailure<'archive, E>,
+    > {
+        match self.start_pilot_finalizer(pair, clock, inputs, budget) {
+            Ok(finalizer) => Ok(super::session_finalizer::PilotCompletionDriver::new(
+                finalizer, writer, provenance, budget,
+            )),
+            Err(admission) => Err(OwnerPairCompletionStartFailure {
+                admission,
+                writer,
+                provenance,
+            }),
+        }
+    }
+
+    /// Transfer a retained admission fault and the exact process pair into
+    /// host retirement, failure finalization and archive polling.
+    #[allow(clippy::result_large_err)] // Return admission, process pair, evidence and writer together on rejection.
+    pub fn start_pilot_failure_completion<'archive, E>(
+        self,
+        pair: super::pilot_launch::AdmissionPair,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+        writer: &'archive mut crate::sampler::writer::Writer,
+        provenance: crate::evidence::Provenance,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::PilotCompletionDriver<'archive, E>,
+        OwnerPairCompletionStartFailure<'archive, E>,
+    > {
+        match self.start_pilot_failure_finalizer(pair, clock, inputs, budget) {
+            Ok(finalizer) => Ok(super::session_finalizer::PilotCompletionDriver::new(
+                finalizer, writer, provenance, budget,
+            )),
+            Err(admission) => Err(OwnerPairCompletionStartFailure {
+                admission,
+                writer,
+                provenance,
+            }),
+        }
     }
 }
 

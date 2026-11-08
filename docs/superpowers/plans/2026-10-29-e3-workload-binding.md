@@ -1659,3 +1659,10 @@ composition are still required before a runnable benchmark can be claimed.
   warning-denied Clippy, formatting and diff check pass. No tests or execution /
   qualification. This closes a transfer seam only; the fixed parent still must
   prepare inputs, poll admission and poll the returned completion driver.
+- 2026-11-08 paired-owner completion to archive: `Owners::start_pilot_completion`
+  and `start_pilot_failure_completion` now compose the retained `AdmissionPair`
+  fact checks with retirement/finalization and archive-driver creation. Rejected
+  transfers return the pair, owners, writer and provenance intact. Windows
+  GNU/Linux all-target/all-feature checks, warning-denied Clippy, formatting and
+  diff check pass. No tests or execution/qualification. The fixed parent still
+  must construct preflight/owner inputs and poll admission/completion.
