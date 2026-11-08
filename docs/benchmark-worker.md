@@ -1775,6 +1775,17 @@ must be retained as a clock fault by the driver. This keeps the session clock
 domain meaningful on non-Windows targets and removes the cross-target dead-code
 warnings without a target-specific allow.
 
+`starting_launch::LaunchGuard` now binds that handoff to an asynchronous
+starting-process launch. It observes the scope's original epoch on every poll,
+requests the existing stop event at the approved preflight boundary and
+requests job termination at the fixed response-arrival bound. Clock failure or
+regression requests termination immediately. It retains the first clock and
+OS-request outcomes, launch errors, and a process that arrives after a stop
+request; the caller receives the process and facts together before creating the
+one-shot `Handoff`. This is bounded launch source only: it does not poll the
+starting response, create a controller/watchdog for the parent, or prove child
+exit/native cleanup. No process was launched in verification.
+
 Three compile-only cases cover the handoff composition and the session driver
 wiring, and one portable case covers anchor conversion and rejection. No process is
 created, no sender is exercised against a real pipe, and no native entry, GPU
