@@ -6,8 +6,14 @@ use super::{
 };
 use crate::sampler::budget::Budget;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartFault {
+    OwnerBinding,
+    Collector(CollectorFault),
+}
 pub struct StartFailure<E> {
-    pub collector: retirement_collector::StartFailure,
+    pub fault: StartFault,
+    pub assets: Assets,
     pub evidence: E,
 }
 
@@ -22,11 +28,106 @@ pub struct PilotOwners<E> {
     pub starting_process: super::windows_process::Process<super::starting_bootstrap::Declaration>,
     pub starting_handoff: super::starting_launch::ClosedHandoff,
     pub starting_consent: super::consent::Record,
-    pub starting_read: Option<super::starting_read::Receipt>,
-    pub starting_evidence: Option<super::starting::ReportedSnapshot>,
-    pub host_environment: Option<super::host_environment::Reported>,
-    pub worker_setup_delivery: Option<super::worker_setup_delivery::ReadyDelivery>,
+    pub starting_read: super::starting_read::Receipt,
+    pub starting_evidence: super::starting::ReportedSnapshot,
+    pub host_environment: super::host_environment::Reported,
+    pub worker_setup_delivery: super::worker_setup_delivery::ReadyDelivery,
     pub additional: E,
+}
+impl<E> PilotOwners<E> {
+    /// Require one cross-role-consistent set of immutable evidence before
+    /// starting normal retirement collection. This checks ownership/binding
+    /// links only; source claims remain untrusted and confer no execution right.
+    pub fn validate(&self, assets: &Assets) -> Result<(), StartFault> {
+        let scope = self.scope.draft();
+        let manifest = self.manifest.manifest_draft();
+        let starting_declaration = self.starting_process.declaration();
+        let start_origin = self.starting_process.origin();
+        let parent = &assets.parent;
+        let start_was_queued = parent
+            .start_attempt()
+            .is_some_and(|attempt| attempt.queued && attempt.result.is_ok());
+        let planned_stop_matches = parent
+            .stop()
+            .zip(assets.controller.requested_window())
+            .is_some_and(|(parent, controller)| parent == controller);
+        let start_response_matches = matches!(
+            self.starting_handoff.session.outcome(),
+            Some(super::starting_session::Outcome::Complete { digest, .. })
+                if digest == self.starting_read.digest()
+        );
+        let parent_refs_match = assets.parent.context_check().is_some_and(|record| {
+            record.result.is_ok_and(|summary| {
+                let refs = summary.references;
+                refs.manifest == self.manifest.digest()
+                    && refs.scope == self.scope.digest()
+                    && refs.host == Some(self.host_environment.snapshot().digest())
+                    && refs.starting
+                        == self
+                            .starting_read
+                            .snapshot()
+                            .map(|snapshot| snapshot.snapshot().digest())
+                    && refs.starting_response == Some(self.starting_read.digest())
+                    && refs.worker_setup == self.worker_setup_delivery.receipt().digest()
+            })
+        });
+        if scope.session != manifest.session
+            || scope.clock_token != manifest.clock_token
+            || scope.raw_uuid != manifest.raw_uuid
+            || scope.raw_pci != manifest.raw_pci
+            || scope.source_commit != manifest.source_commit
+            || scope.artifacts != manifest.artifacts
+            || starting_declaration.scope_digest() != self.scope.digest()
+            || self.starting_read.scope_digest() != self.scope.digest()
+            || self.starting_read.declaration() != starting_declaration.tag()
+            || self
+                .starting_read
+                .snapshot()
+                .is_none_or(|snapshot| snapshot.snapshot().scope().digest() != self.scope.digest())
+            || self.starting_evidence.snapshot().scope().digest() != self.scope.digest()
+            || self.starting_evidence.snapshot().digest() != manifest.starting_evidence
+            || self.host_environment.snapshot().scope().digest() != self.scope.digest()
+            || self.host_environment.snapshot().digest() != manifest.environment_evidence
+            || self.starting_consent.scope() != self.scope.digest()
+            || self.starting_consent.result().is_err()
+            || self.starting_consent.capture_ref() != start_origin.consent()
+            || self.starting_handoff.session.origin().ok() != Some(start_origin)
+            || !start_response_matches
+            || self.worker_setup_delivery.receipt().binding() != assets.parent.context_binding()
+            || !matches!(self.worker_setup_delivery.assessment(), Some(Ok(_)))
+            || !parent_refs_match
+            || parent.fault().is_some()
+            || !parent.is_finishing()
+            || !parent.reported_finished()
+            || !start_was_queued
+            || !planned_stop_matches
+            || assets.controller.abort_fault().is_some()
+            || assets.controller.retired()
+        {
+            return Err(StartFault::OwnerBinding);
+        }
+        let peers = assets
+            .parent
+            .peer_check()
+            .filter(|record| record.result.is_ok())
+            .ok_or(StartFault::OwnerBinding)?;
+        let expected = [
+            start_origin,
+            assets.sampler.origin(),
+            assets.worker.origin(),
+        ];
+        if peers.peers.each_ref().map(|peer| peer.expected) != expected
+            || peers.peers.each_ref().map(|peer| peer.received.ok()) != expected.map(Some)
+            || self.worker_setup_delivery.origin().ok() != Some(expected[2])
+            || assets.parent.consent().is_none_or(|delivery| {
+                delivery.assessment.result.is_err()
+                    || delivery.assessment.captures[0] != self.starting_consent.capture_ref()
+            })
+        {
+            return Err(StartFault::OwnerBinding);
+        }
+        Ok(())
+    }
 }
 
 /// One terminal handoff. `complete()` means only that host retirement was
@@ -77,7 +178,8 @@ impl<E> SessionFinalizer<E> {
                 controller: None,
             }),
             Err(collector) => Err(StartFailure {
-                collector,
+                fault: StartFault::Collector(collector.fault),
+                assets: collector.assets,
                 evidence,
             }),
         }
@@ -91,7 +193,14 @@ impl<E> SessionFinalizer<E> {
         evidence: PilotOwners<X>,
         budget: &Budget,
     ) -> Result<SessionFinalizer<PilotOwners<X>>, StartFailure<PilotOwners<X>>> {
-        SessionFinalizer::start(assets, evidence, budget)
+        if evidence.validate(&assets).is_err() {
+            return Err(StartFailure {
+                fault: StartFault::OwnerBinding,
+                assets,
+                evidence,
+            });
+        }
+        SessionFinalizer::<PilotOwners<X>>::start(assets, evidence, budget)
     }
 
     /// Returns `None` while collection, acknowledgment, controller shutdown or

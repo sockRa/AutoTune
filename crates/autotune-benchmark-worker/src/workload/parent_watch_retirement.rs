@@ -306,6 +306,13 @@ pub(crate) fn collect_into(
     });
     let f = output.as_mut().expect("initialized retirement evidence");
     f.before = capture(clock);
+    if !context {
+        // Invalid or premature retirement must not query an original process
+        // handle. Preserve only bounded boundary-clock facts and the cause.
+        f.after = capture(clock);
+        f.result = Err(Fault::Context);
+        return;
+    }
     let mut validator = Clock::new(window.binding.monitor(), window.binding.epoch).ok();
     let mut last = window.binding.epoch;
     let mut observe = |c: Capture| -> bool {
