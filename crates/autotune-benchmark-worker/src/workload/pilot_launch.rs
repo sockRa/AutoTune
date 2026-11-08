@@ -89,6 +89,135 @@ impl AdmissionProcess {
     }
 }
 
+/// Failure while creating the fixed sampler/worker launch pair. If worker
+/// launch setup fails, the already-started sampler guard remains owned here
+/// for explicit stop/termination handling.
+#[allow(clippy::large_enum_variant)] // Keep the already-started sampler owner inline on worker-start failure.
+pub enum PairStartFailure {
+    RoleBinding,
+    Capacity,
+    Sampler(StartFault),
+    Worker {
+        sampler: Guard,
+        fault: StartFault,
+        _metadata: Reservation,
+    },
+}
+
+/// The two fixed pilot processes launched against one manifest run and one
+/// original clock observation. Both guards remain available until both
+/// launches are eligible for admission or the caller takes the failure path.
+#[must_use = "poll both guarded launches and retain them through cleanup or admission"]
+pub struct Pair {
+    sampler: Guard,
+    worker: Guard,
+    _metadata: Reservation,
+}
+
+impl Pair {
+    #[allow(clippy::result_large_err)] // Preserve an already-started sampler if worker startup fails.
+    #[allow(clippy::too_many_arguments)] // Keep the exact shared run/clock/consent inputs visible at launch.
+    pub fn start(
+        run: &BoundRun<'_>,
+        sampler_declaration: Declaration,
+        worker_declaration: Declaration,
+        first_entry: Anchor,
+        sampler_consent: &mut Record,
+        worker_consent: &mut Record,
+        clock: WindowsClock,
+        budget: &Budget,
+    ) -> Result<Self, PairStartFailure> {
+        if sampler_declaration.role() != super::launch::Role::Sampler
+            || worker_declaration.role() != super::launch::Role::Worker
+        {
+            return Err(PairStartFailure::RoleBinding);
+        }
+        let metadata = budget
+            .reserve(std::mem::size_of::<Self>() + 512)
+            .map_err(|_| PairStartFailure::Capacity)?;
+        let sampler = Guard::start(
+            run,
+            sampler_declaration,
+            first_entry,
+            sampler_consent,
+            clock.clone(),
+            budget,
+        )
+        .map_err(PairStartFailure::Sampler)?;
+        let worker = match Guard::start(
+            run,
+            worker_declaration,
+            first_entry,
+            worker_consent,
+            clock,
+            budget,
+        ) {
+            Ok(worker) => worker,
+            Err(fault) => {
+                return Err(PairStartFailure::Worker {
+                    sampler,
+                    fault,
+                    _metadata: metadata,
+                });
+            }
+        };
+        Ok(Self {
+            sampler,
+            worker,
+            _metadata: metadata,
+        })
+    }
+
+    /// Poll each original launch guard exactly once; callers must preserve both
+    /// guards even when one side fails so cleanup can account for both owners.
+    /// A failed or clock-ineligible side requests stop on its companion at
+    /// once; request failures trigger that guard's existing termination path.
+    pub fn poll_once(&mut self) -> (Poll, Poll) {
+        let sampler = self.sampler.poll();
+        let worker = self.worker.poll();
+        let sampler_failed = sampler == Poll::Failed || !self.sampler.facts().admission_eligible();
+        let worker_failed = worker == Poll::Failed || !self.worker.facts().admission_eligible();
+        if sampler_failed {
+            self.worker.request_stop_once();
+        }
+        if worker_failed {
+            self.sampler.request_stop_once();
+        }
+        (sampler, worker)
+    }
+
+    pub fn sampler_facts(&self) -> Facts {
+        self.sampler.facts()
+    }
+
+    pub fn worker_facts(&self) -> Facts {
+        self.worker.facts()
+    }
+
+    /// Transfer both processes together only after each launch thread has
+    /// finished and both original-clock records remain admission-eligible.
+    #[allow(clippy::result_large_err)] // Return both guards together while either launch is pending/faulted.
+    pub fn into_admission_processes(self) -> Result<(AdmissionProcess, AdmissionProcess), Self> {
+        if !self.sampler.can_transfer_to_admission() || !self.worker.can_transfer_to_admission() {
+            return Err(self);
+        }
+        let Self {
+            sampler,
+            worker,
+            _metadata: _,
+        } = self;
+        let sampler = match sampler.into_admission_process() {
+            Ok(process) => process,
+            Err(_) => unreachable!("sampler transfer precondition was checked"),
+        };
+        let worker = match worker.into_admission_process() {
+            Ok(process) => process,
+            Err(_) => unreachable!("worker transfer precondition was checked"),
+        };
+        Ok((sampler, worker))
+    }
+}
+
 /// One bounded observation of an asynchronous pilot process launch.
 #[must_use = "retain and poll the launch guard until its process or failure is observed"]
 pub struct Guard {
@@ -281,10 +410,7 @@ impl Guard {
     /// valid. A failed check returns the complete guard for explicit cleanup.
     #[allow(clippy::result_large_err)] // Keep the live process and launcher owner inline.
     pub fn into_admission_process(mut self) -> Result<AdmissionProcess, Self> {
-        if !self.facts.admission_eligible()
-            || self.process.is_none()
-            || !self.launch.as_ref().is_none_or(Launch::thread_finished)
-        {
+        if !self.can_transfer_to_admission() {
             return Err(self);
         }
         let process = self.process.take().expect("checked process owner");
@@ -293,6 +419,12 @@ impl Guard {
             process,
             facts: self.facts,
         })
+    }
+
+    fn can_transfer_to_admission(&self) -> bool {
+        self.facts.admission_eligible()
+            && self.process.is_some()
+            && self.launch.as_ref().is_none_or(Launch::thread_finished)
     }
 
     /// Take an observed process even after a timing fault, but retain its facts

@@ -1598,3 +1598,10 @@ composition are still required before a runnable benchmark can be claimed.
   checks, warning-denied Clippy, formatting and `git diff --check` pass. No
   tests, process/runtime/native/GPU execution or qualification. Fixed parent
   entrypoint, process-exit/job-empty proof and Gate B remain open.
+- 2026-11-08 shared-epoch pilot launch pair: `pilot_launch::Pair` starts the
+  sampler and worker guards against one manifest run and original entry anchor,
+  advances each at most once per poll, requests the companion to stop on a failed or clock-ineligible launch, retains the first guard on second-launch
+  failure, and transfers both `AdmissionProcess` wrappers only when both remain
+  eligible. Windows GNU/Linux all-target/all-feature checks, warning-denied
+  Clippy and formatting pass. No tests or process/runtime/native/GPU execution;
+  fixed parent loop and Gate B remain open.
