@@ -1879,8 +1879,12 @@ It requires at most one decoded terminal teardown; duplicate/missing terminal
 evidence is marked unavailable while the raw packet and control-audit fault remain
 available. The retained `worker_setup` artifact contains the canonical CUDA setup
 ledger, so setup and teardown call evidence are both represented in the aggregate
-raw stream when the finalizer path is called. These are worker-reported facts: a
-return still cannot establish GPU quiescence or OS process exit. The fixed parent
+raw stream when the finalizer path is called. The `starting_handoff` artifact is
+the canonical completed starting response; its `native_calls`, `native_fault`,
+overflow and rejected-return fields already carry the bounded NVML call and
+shutdown ledger. The finalizer does not need another NVML owner transfer. These
+are child-reported facts: a return still cannot establish GPU quiescence or OS
+process exit. The fixed parent
 does not yet call the finalizer/archive composition; no Windows process, driver,
 GPU, or runtime execution was performed. Local checks are limited to formatting
 and warning-denied all-target/all-feature Clippy for Windows GNU and Linux; no
