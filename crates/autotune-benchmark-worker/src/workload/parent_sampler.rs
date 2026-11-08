@@ -1461,6 +1461,36 @@ impl<Q: Queue> super::parent_start::Source for StartSource<'_, '_, Q> {
     }
 }
 #[cfg(windows)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreflightFault {
+    Environment(Fault),
+    Starting(Fault),
+    Context(super::parent_context::Rejection),
+    Peers(super::parent_peers::Fault),
+    Consent(super::consent::ParentFault),
+}
+
+#[cfg(windows)]
+pub struct PreflightFailure {
+    pub fault: PreflightFault,
+    /// Returned when consent has not been consumed by ParentSampler.
+    pub decisions: Option<super::consent::Decisions>,
+}
+
+#[cfg(windows)]
+pub struct ReportedPreflight<'a, 'r> {
+    pub run: &'a BoundRun<'r>,
+    pub scope: &'a super::starting::Scope,
+    pub environment: &'a super::host_environment::Reported,
+    pub starting: &'a super::starting::ReportedSnapshot,
+    pub starting_response: &'a super::starting_read::Receipt,
+    pub starting_decision: &'a super::consent::Record,
+    pub decisions: super::consent::Decisions,
+    pub now: Anchor,
+    pub processes: super::parent_peers::Processes<'a>,
+}
+
+#[cfg(windows)]
 impl ParentSampler {
     fn watch_window(&self) -> super::parent_watch::Window {
         super::parent_watch::Window {
@@ -1505,6 +1535,86 @@ impl ParentSampler {
                 .as_ref()
                 .is_some_and(|w| w.ready(self.watch_window(), self.watch_peers()))
     }
+
+    /// Compose the fixed reported-artifact/peer/consent checks in their
+    /// required order. This is a pre-Start gate only; it does not start a
+    /// watcher, queue Start or grant native execution.
+    #[allow(clippy::result_large_err)] // Preserve caller consent owners on early rejection.
+    pub fn verify_reported_preflight(
+        &mut self,
+        input: ReportedPreflight<'_, '_>,
+    ) -> Result<(), PreflightFailure> {
+        let ReportedPreflight {
+            run,
+            scope,
+            environment,
+            starting,
+            starting_response,
+            starting_decision,
+            decisions,
+            now,
+            processes,
+        } = input;
+        let super::parent_peers::Processes {
+            starting: starting_process,
+            sampler,
+            worker,
+            starting_session,
+            setup,
+        } = processes;
+        let fail = |fault, decisions| PreflightFailure {
+            fault,
+            decisions: Some(decisions),
+        };
+        let epoch = scope.draft().epoch;
+        if let Err(fault) = self.check_environment(environment, run, epoch) {
+            setup.close_reference_path();
+            return Err(fail(PreflightFault::Environment(fault), decisions));
+        }
+        if let Err(fault) = self.check_starting(starting, run, epoch) {
+            setup.close_reference_path();
+            return Err(fail(PreflightFault::Starting(fault), decisions));
+        }
+        if let Err(fault) = self.check_context(super::parent_context::Inputs {
+            run,
+            scope,
+            host: Some(environment),
+            starting: Some(starting_response),
+            worker: setup,
+        }) {
+            setup.close_reference_path();
+            return Err(fail(PreflightFault::Context(fault), decisions));
+        }
+        if let Err(fault) = self.check_processes(super::parent_peers::Processes {
+            starting: starting_process,
+            sampler,
+            worker,
+            starting_session,
+            setup,
+        }) {
+            setup.close_reference_path();
+            return Err(fail(PreflightFault::Peers(fault), decisions));
+        }
+        match self.accept_consent(
+            decisions,
+            super::consent::ParentInputs {
+                starting: starting_decision,
+                starting_response,
+                setup,
+                now,
+            },
+        ) {
+            Ok(()) => Ok(()),
+            Err(rejected) => {
+                setup.close_reference_path();
+                Err(PreflightFailure {
+                    fault: PreflightFault::Consent(rejected.fault),
+                    decisions: rejected.returned,
+                })
+            }
+        }
+    }
+
     pub fn watch_status(&self) -> Option<super::parent_watch_publication::Status> {
         self.watch.as_ref().map(|w| w.status())
     }

@@ -2476,6 +2476,24 @@ Native admission remains unavailable. Peer/image/process evidence, separate
 pre-setup/workload consent, fresh safety/re-entry/Start, aggregate export/resources,
 fixed mains and real qualification remain open; E3 partial and Gate B unmet.
 
+### Ordered parent preflight composition — 2026-11-08
+
+`ParentSampler::verify_reported_preflight` now binds the existing one-shot checks
+into one ordered call: host environment, starting settings, cross-artifact context,
+all three local process/session peers, then setup/workload consent. The input retains
+the exact `BoundRun`, scope, environment and starting report owners, consent records,
+and process/session/setup references. Each rejection returns unconsumed consent
+decisions where applicable, closes the setup reference path and leaves detailed
+check results with `ParentSampler`.
+
+This is only the reported preflight boundary. It does not start or wait for the
+controller, queue Start or NativeGrant, launch processes, or establish that child
+reports are true. `ParentSampler::queue_start` still requires its attached watch to
+be ready, and NativeGrant still needs fresh process/safety/re-entry checks. The
+fixed parent session and runtime qualification remain open. Formatting and
+warning-denied all-target/all-feature Clippy pass for Windows GNU/Linux; no tests or
+process/native/GPU execution were run.
+
 ## Reported starting timeline assessment — 2026-11-05
 
 The strict reader now retains `Summary::lifecycle_timing` independently from raw
