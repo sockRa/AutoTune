@@ -27,6 +27,13 @@ pub struct Handoff<'a> {
     frame: Option<Frame>,
     send_fault: Option<SendFailure>,
 }
+/// Owned terminal parent-side starting evidence after its process borrow ends.
+pub struct ClosedHandoff {
+    pub session: Session,
+    /// Exact bootstrap frame remains owned if its one-shot send failed.
+    pub unsent_frame: Option<Frame>,
+    pub send_fault: Option<SendFailure>,
+}
 impl<'a> Handoff<'a> {
     /// Bind the session and freeze the one-shot frame before any bytes move.
     pub fn open(
@@ -73,6 +80,22 @@ impl<'a> Handoff<'a> {
     }
     pub fn session_mut(&mut self) -> &mut Session {
         &mut self.session
+    }
+    /// Close the process-borrowing sender and retain the complete reception
+    /// state plus any unsent frame/failure for later session finalization.
+    pub fn close(self) -> ClosedHandoff {
+        let Self {
+            sender,
+            session,
+            frame,
+            send_fault,
+        } = self;
+        drop(sender);
+        ClosedHandoff {
+            session,
+            unsent_frame: frame,
+            send_fault,
+        }
     }
     /// Drive one nonblocking poll of the caller-owned process into the session.
     pub fn poll(

@@ -11,6 +11,24 @@ pub struct StartFailure<E> {
     pub evidence: E,
 }
 
+/// Concrete pilot-session owners that have no slot in ParentSampler or the
+/// retirement process pair. Retaining these together prevents the starting
+/// process, local consent, and original artifacts from disappearing while the
+/// final controller outcome is unresolved. `additional` holds other bounded
+/// caller evidence, such as workload exports, with its existing reservations.
+pub struct PilotOwners<E> {
+    pub manifest: super::manifest::PilotManifest,
+    pub scope: super::starting::Scope,
+    pub starting_process: super::windows_process::Process<super::starting_bootstrap::Declaration>,
+    pub starting_handoff: super::starting_launch::ClosedHandoff,
+    pub starting_consent: super::consent::Record,
+    pub starting_read: Option<super::starting_read::Receipt>,
+    pub starting_evidence: Option<super::starting::ReportedSnapshot>,
+    pub host_environment: Option<super::host_environment::Reported>,
+    pub worker_setup_delivery: Option<super::worker_setup_delivery::ReadyDelivery>,
+    pub additional: E,
+}
+
 /// One terminal handoff. `complete()` means only that host retirement was
 /// acknowledged and all retained control threads returned cleanly. It is not
 /// workload, GPU, correctness or profile acceptance.
@@ -63,6 +81,17 @@ impl<E> SessionFinalizer<E> {
                 evidence,
             }),
         }
+    }
+
+    /// Typed construction path for the three-role pilot. The sampler and
+    /// worker process/control owners stay in `Assets`; the original starting
+    /// process/reception/consent and parsed artifacts stay in `PilotOwners`.
+    pub fn start_pilot<X>(
+        assets: Assets,
+        evidence: PilotOwners<X>,
+        budget: &Budget,
+    ) -> Result<SessionFinalizer<PilotOwners<X>>, StartFailure<PilotOwners<X>>> {
+        SessionFinalizer::start(assets, evidence, budget)
     }
 
     /// Returns `None` while collection, acknowledgment, controller shutdown or
