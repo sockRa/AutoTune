@@ -3214,6 +3214,11 @@ transfer checks both the exact facts and process address against
 remain owned by LaunchGuard for cleanup. No fixed parent caller currently
 drives this complete sequence.
 
+Initialization failures from `ParentAdmission::new` also return the exact
+sampler and worker channel owners, optional setup receiver and launch facts.
+The caller can continue polling or take the retained fail-closed cleanup path;
+constructor rejection does not silently drop sender/protocol audit ownership.
+
 This is a typed source composition only. It has no fixed parent executable or
 launch loop call site, and does not qualify Windows process retirement, GPU
 quiescence, native calls, workload correctness or Gate B.

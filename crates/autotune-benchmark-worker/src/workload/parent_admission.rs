@@ -34,10 +34,12 @@ pub enum Stage {
     Failed,
 }
 
-pub struct InitFailure {
+pub struct InitFailure<'s, 'w> {
     pub fault: InitFault,
     pub setup: Option<SetupReceiver>,
     pub starting_launch: super::starting_launch::LaunchFacts,
+    pub sampler: ParentSamplerChannel<'s>,
+    pub worker: ParentWorkerChannel<'w>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -377,7 +379,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         worker: ParentWorkerChannel<'w>,
         starting: &'a super::starting_launch::AdmissionProcess,
         setup_receiver: Option<SetupReceiver>,
-    ) -> Result<Self, InitFailure> {
+    ) -> Result<Self, InitFailure<'s, 'w>> {
         let starting_launch = starting.facts();
         let fault = if sampler.parent().fault().is_some() {
             Some(InitFault::SamplerAlreadyFaulted)
@@ -395,6 +397,8 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
                 fault,
                 setup: setup_receiver,
                 starting_launch,
+                sampler,
+                worker,
             });
         }
         Ok(Self {
