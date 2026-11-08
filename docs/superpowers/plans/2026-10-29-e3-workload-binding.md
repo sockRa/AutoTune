@@ -1516,3 +1516,15 @@ composition are still required before a runnable benchmark can be claimed.
   `target/workload-verification/starting-receive3-manifest.json`. Cross
   target Linux workspace/all-target check passes. The concrete pipe/OS path
   is compiled, not executed; no live/native/GPU verification follows.
+- 2026-11-08 retained asynchronous retirement collector: a fixed one-shot
+  collector now retains ParentSampler, controller, original sampler/worker
+  Process owners, WindowsClock and partial retirement Frame while the final
+  original-handle observation runs off the deadline path. Capacity/spawn
+  failure returns the assets; operation and outer panic evidence are distinct;
+  cancellation uses an independent controller reference; poll observes thread
+  completion before its one-time join/transfer. Eight scoped CPU model tests
+  pass (`async-retire-final3-cpu.log`) and warning-denied scoped Clippy is
+  recorded (`async-retire-final2-clippy.log`). No Windows/API/thread invocation,
+  controller acknowledgment, complete session composition, native authority or
+  GPU qualification. Full session orchestration and remaining deadline/timing
+  coverage stay open; E3 partial and Gate B unmet.

@@ -2879,3 +2879,29 @@ invoke no OS callback and retain original request snapshots; an unrequested
 retired io result is NotConnected, not fabricated pending/native success. These
 rules close the race between final exit assessment and a force call by another
 original owner. Observed exit still cannot authorize another GPU run.
+
+## Retained asynchronous retirement collector — 2026-11-08
+
+`workload::retirement_collector::Collector` moves one final host-retirement
+observation off the deadline/controller path. Its fixed `Assets` owner keeps the
+parent sampler, controller, both original process owners, original Windows clock
+and partial retirement frame together. The private `collector_task` owns this
+value in a mutex cell and invokes only a fixed function pointer; there is no
+public caller-supplied native callback. Capacity or thread-spawn failure returns
+the original assets and signals cancellation. Operation panics and outer thread
+panics retain their payloads separately from partial evidence. Cancellation is
+through the controller's independent control reference and never takes the
+collector-owner mutex. `poll` is nonblocking until `JoinHandle::is_finished`,
+then joins once and transfers the assets and reservation once.
+
+The scoped CPU model suite has eight cases for retained ownership/charges,
+partial state and panic payloads, distinct operation and outer panics, missing
+operation rejection, independent cancellation, capacity failure and nonblocking
+poll. `target/workload-verification/async-retire-final3-cpu.log` records 8/8
+passing; `async-retire-final2-clippy.log` records warning-denied scoped Clippy.
+No actual Windows thread, clock adapter, process/job query, controller
+acknowledgment, native call or GPU workload was invoked. The collector performs
+only one final observation; its successful result is not retirement
+acknowledgment, joined controller/operation threads, GPU quiescence, or permission
+to repeat. Starting-read/artifact/consent owners and complete session
+orchestration are not yet composed here.
