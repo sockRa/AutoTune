@@ -196,6 +196,27 @@ pub struct FinalizerFailure<E> {
     pub inputs: PilotOwnerInputs<E>,
 }
 
+#[allow(clippy::large_enum_variant)] // Preserve every process and evidence owner on the caller's retry path.
+pub enum OwnerPairFinalizerFailure<E> {
+    AdmissionNotReady {
+        owners: Owners,
+        pair: super::pilot_launch::AdmissionPair,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+    },
+    LaunchBinding {
+        owners: Owners,
+        pair: super::pilot_launch::AdmissionPair,
+        clock: WindowsClock,
+        inputs: PilotOwnerInputs<E>,
+    },
+    MissingController {
+        failure: MissingController,
+        inputs: PilotOwnerInputs<E>,
+    },
+    Finalizer(FinalizerFailure<E>),
+}
+
 #[allow(clippy::large_enum_variant)] // Keep all original Windows/process owners inline on failure.
 pub enum AdmissionFinalizerFailure<'a, 's, 'w, E> {
     FailureNotObserved {
@@ -579,6 +600,123 @@ impl Owners {
             starting_launch,
             pilot_launches,
         })
+    }
+
+    /// Transfer a terminally audited process pair into the normal pilot
+    /// finalizer. The paired guard facts replace caller copies in the input
+    /// bundle, after exact retained-fact comparisons have passed.
+    #[allow(clippy::result_large_err)] // Return the complete admission/process/input graph on every early failure.
+    pub fn start_pilot_finalizer<E>(
+        self,
+        pair: super::pilot_launch::AdmissionPair,
+        clock: WindowsClock,
+        mut inputs: PilotOwnerInputs<E>,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
+        OwnerPairFinalizerFailure<E>,
+    > {
+        let launches = [pair.sampler_facts(), pair.worker_facts()];
+        if self.starting_launch != inputs.starting_launch || self.pilot_launches != launches {
+            return Err(OwnerPairFinalizerFailure::LaunchBinding {
+                owners: self,
+                pair,
+                clock,
+                inputs,
+            });
+        }
+        let terminal_ready = self.stage == Stage::NativeGrantQueued
+            && self.parent.fault().is_none()
+            && self.parent.is_finishing()
+            && self.parent.reported_finished()
+            && self.worker_report.assessment_fault().is_none()
+            && !self.worker_report.overflowed()
+            && self.worker_report.reports_complete()
+            && self.worker_report.control_audit().is_some_and(|audit| {
+                audit.stop_acknowledged()
+                    && audit.role_finished()
+                    && !audit.native_failure()
+                    && audit.fault().is_none()
+            })
+            && self
+                .parent
+                .stop()
+                .zip(
+                    self.controller
+                        .as_ref()
+                        .and_then(|controller| controller.requested_window()),
+                )
+                .is_some_and(|(parent, requested)| parent == requested);
+        if !terminal_ready {
+            return Err(OwnerPairFinalizerFailure::AdmissionNotReady {
+                owners: self,
+                pair,
+                clock,
+                inputs,
+            });
+        }
+        inputs.pilot_launches = launches;
+        let ((sampler, _), (worker, _)) = pair.into_parts();
+        let retirement = match self.into_retirement(sampler, worker, clock) {
+            Ok(retirement) => retirement,
+            Err(failure) => {
+                return Err(OwnerPairFinalizerFailure::MissingController { failure, inputs });
+            }
+        };
+        retirement
+            .start_pilot_finalizer(inputs, budget)
+            .map_err(OwnerPairFinalizerFailure::Finalizer)
+    }
+
+    /// Transfer a faulted process pair into failure finalization without
+    /// requiring the success-only worker terminal audit.
+    #[allow(clippy::result_large_err)] // Preserve process, clock and caller evidence until failure ownership is accepted.
+    pub fn start_pilot_failure_finalizer<E>(
+        self,
+        pair: super::pilot_launch::AdmissionPair,
+        clock: WindowsClock,
+        mut inputs: PilotOwnerInputs<E>,
+        budget: &Budget,
+    ) -> Result<
+        super::session_finalizer::SessionFinalizer<super::session_finalizer::PilotOwners<E>>,
+        OwnerPairFinalizerFailure<E>,
+    > {
+        let launches = [pair.sampler_facts(), pair.worker_facts()];
+        if self.starting_launch != inputs.starting_launch || self.pilot_launches != launches {
+            return Err(OwnerPairFinalizerFailure::LaunchBinding {
+                owners: self,
+                pair,
+                clock,
+                inputs,
+            });
+        }
+        let failure_observed = self.stage == Stage::Failed
+            && (self.parent.fault().is_some()
+                || self.worker_report.assessment_fault().is_some()
+                || self.worker_report.overflowed()
+                || self
+                    .worker_report
+                    .control_audit()
+                    .is_some_and(|audit| audit.fault().is_some() || audit.native_failure()));
+        if !failure_observed {
+            return Err(OwnerPairFinalizerFailure::AdmissionNotReady {
+                owners: self,
+                pair,
+                clock,
+                inputs,
+            });
+        }
+        inputs.pilot_launches = launches;
+        let ((sampler, _), (worker, _)) = pair.into_parts();
+        let retirement = match self.into_retirement(sampler, worker, clock) {
+            Ok(retirement) => retirement,
+            Err(failure) => {
+                return Err(OwnerPairFinalizerFailure::MissingController { failure, inputs });
+            }
+        };
+        retirement
+            .start_pilot_failure_finalizer(inputs, budget)
+            .map_err(OwnerPairFinalizerFailure::Finalizer)
     }
 }
 
@@ -1265,6 +1403,29 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             controller,
             starting_launch,
             pilot_launches,
+        }
+    }
+
+    /// Release channel borrows into finalizer owners only after the successful
+    /// sampler/worker terminal gate has been met. Otherwise return admission
+    /// unchanged for another poll round.
+    #[allow(clippy::result_large_err)] // Keep all live channels and process borrows inline while incomplete.
+    pub fn into_terminal_owners(self) -> Result<Owners, Self> {
+        if self.terminal_evidence_ready() {
+            Ok(self.into_parts())
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Release channel borrows for failure finalization only after admission
+    /// has retained a parent fault that will keep success permanently false.
+    #[allow(clippy::result_large_err)] // Keep all live channels and process borrows inline without an observed fault.
+    pub fn into_faulted_owners(self) -> Result<Owners, Self> {
+        if self.stage == Stage::Failed && self.sampler.parent().fault().is_some() {
+            Ok(self.into_parts())
+        } else {
+            Err(self)
         }
     }
 

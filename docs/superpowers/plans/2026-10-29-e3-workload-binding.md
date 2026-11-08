@@ -1618,3 +1618,11 @@ composition are still required before a runnable benchmark can be claimed.
   `PilotOwnerInputs` by normal and failure finalization; mismatches return the
   retained retirement/setup/report owners. Windows GNU/Linux compile and
   warning-denied Clippy pass. No tests or runtime/native/GPU execution.
+- 2026-11-08 terminal admission/finalizer composition: successful admission can
+  now release process borrows only after the full terminal predicate; faulted
+  admission can release them only with a retained parent fault. The Owners
+  transfer methods then bind the retained starting and sampler/worker launch
+  facts before retirement/finalizer startup, returning the full owner graph on
+  rejection. Windows GNU/Linux checks and warning-denied Clippy pass. No tests
+  or execution/qualification. Fixed parent executable and archive poll caller
+  remain open.

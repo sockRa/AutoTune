@@ -3222,6 +3222,14 @@ including a setup receiver and any simultaneously retained setup delivery.
 both normal and failed finalizer paths compare those facts with
 `PilotOwnerInputs` before rebuilding `PilotOwners`. Thus `into_parts()` no
 longer drops the starting-launch binding before finalizer validation.
+`ParentAdmission::into_terminal_owners` only releases its channel borrows after
+the complete worker result and StopAck/RoleFinished audit plus sampler
+RoleFinished are present; `into_faulted_owners` requires a retained parent
+fault. `Owners::start_pilot_finalizer` and
+`Owners::start_pilot_failure_finalizer` then pair those owners with the exact
+`AdmissionPair`, bind both launch-fact sets, and transfer the same processes to
+retirement and finalization. Early gates return the admission or complete owner
+graph for continued polling/cleanup.
 
 `ParentAdmission::new` now also requires eligible original-epoch
 `starting_launch::AdmissionProcess`, produced by
