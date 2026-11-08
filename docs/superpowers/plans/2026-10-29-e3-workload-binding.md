@@ -1704,3 +1704,12 @@ composition are still required before a runnable benchmark can be claimed.
   error. Windows GNU/Linux all-target/all-feature checks, warning-denied
   Clippy, formatting and diff check pass. No tests or process/runtime/native/GPU
   execution; these decisions remain host-owned until admission consumes them.
+- 2026-11-08 fixed parent preflight context and setup-owner retention:
+  `FixedParentSession` now binds `Scope`, `BoundRun` and `CompletedStarting`;
+  `advance_with_context` builds preflight from that exact receipt/session plus
+  host environment and retained consent decisions. A source-binding error
+  returns both decisions. `ProcessAdmissionFailure` now returns the worker
+  Setup receiver on binding/profile-capacity/sampler-channel/worker-channel
+  failures instead of dropping partial evidence. Windows GNU/Linux
+  all-target/all-feature checks, warning-denied Clippy, formatting and diff
+  check pass. No tests or process/runtime/native/GPU execution.

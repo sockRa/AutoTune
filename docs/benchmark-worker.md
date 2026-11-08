@@ -1364,6 +1364,13 @@ borrow the caller's process pair, consuming this session ends those borrows so
 the caller can pass that same pair and returned owners into the paired
 finalizer/archive transfer. It is a session owner, not an executable or a
 process launcher.
+`FixedParentSession::start` rejects a mismatch among its `Scope`, starting
+declaration, receipt and reported snapshot before creating channels.
+`advance_with_context` binds the host environment and retained consent records
+to that session's own receipt/session pair. A rejected construction returns
+both consent decisions. Pre-admission channel/binding/capacity failures now
+also return the still-owned worker Setup receiver for explicit failed-session
+handling.
 `advance_successful_shutdown_once` drives the success terminal path: it waits
 for complete worker result assessment, issues one planned sampler stop through
 the retained sampler sender, and starts the worker control audit using that

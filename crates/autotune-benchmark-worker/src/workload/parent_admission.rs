@@ -60,14 +60,20 @@ pub enum AdmissionStartFailure<'a, 's, 'w> {
 
 #[allow(clippy::large_enum_variant)] // Keep the already-created sampler owner inline.
 pub enum ProcessAdmissionFailure<'a, 's, 'w> {
-    Binding,
-    ProfileCapacity,
+    Binding {
+        setup_receiver: Option<SetupReceiver>,
+    },
+    ProfileCapacity {
+        setup_receiver: Option<SetupReceiver>,
+    },
     SamplerChannel {
         fault: parent_sampler_channel::InitFault,
+        setup_receiver: Option<SetupReceiver>,
     },
     WorkerChannel {
         fault: crate::workload::transport::SendFailure,
         sampler: ParentSamplerChannel<'s>,
+        setup_receiver: Option<SetupReceiver>,
     },
     Admission(AdmissionStartFailure<'a, 's, 'w>),
 }
@@ -920,7 +926,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             || sampler_binding != worker_owner.binding()
             || expected_binding != Some(sampler_binding)
         {
-            return Err(ProcessAdmissionFailure::Binding);
+            return Err(ProcessAdmissionFailure::Binding { setup_receiver });
         }
         let event_capacity = match usize::try_from(
             autotune_fma_reference::profile::Profile::approved_design()
@@ -929,7 +935,7 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         ) {
             Ok(capacity) => capacity,
             Err(_) => {
-                return Err(ProcessAdmissionFailure::ProfileCapacity);
+                return Err(ProcessAdmissionFailure::ProfileCapacity { setup_receiver });
             }
         };
         let sampler = match ParentSamplerChannel::new(
@@ -941,7 +947,10 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
         ) {
             Ok(sampler) => sampler,
             Err(fault) => {
-                return Err(ProcessAdmissionFailure::SamplerChannel { fault });
+                return Err(ProcessAdmissionFailure::SamplerChannel {
+                    fault,
+                    setup_receiver,
+                });
             }
         };
 
@@ -949,7 +958,11 @@ impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
             match ParentWorkerChannel::new(worker_process.process_mut(), budget, event_capacity) {
                 Ok(worker) => worker,
                 Err(fault) => {
-                    return Err(ProcessAdmissionFailure::WorkerChannel { fault, sampler });
+                    return Err(ProcessAdmissionFailure::WorkerChannel {
+                        fault,
+                        sampler,
+                        setup_receiver,
+                    });
                 }
             };
 
