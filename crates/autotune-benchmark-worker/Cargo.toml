@@ -10,6 +10,11 @@ default = []
 native-cuda = ["dep:libloading"]
 sampler-process-fixture = []
 
+[[bin]]
+name = "autotune-pilot-worker"
+path = "src/bin/autotune-pilot-worker.rs"
+required-features = ["native-cuda"]
+
 [dependencies]
 autotune-fma-reference = { path = "../autotune-fma-reference" }
 autotune-probe = { path = "../autotune-probe" }

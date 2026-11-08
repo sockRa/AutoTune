@@ -1147,8 +1147,18 @@ unsafe contract requires one exclusive inherited-endpoint adoption from the
 fixed launcher. Strict bounded arguments and bootstrap/image validation precede
 control startup; successful control readiness precedes NVML initialization.
 The entry returns its context/trace/owners, including a successfully built
-context if later trace construction fails. It introduces no worker executable,
-driver/compute initialization, human-consent authority or native-admission issuer.
+context if later trace construction fails. It does not perform driver/compute
+initialization, grant human-consent authority or issue native admission.
+
+The `autotune-pilot-worker` binary target is now declared behind the explicit
+`native-cuda` feature and routes only the fixed Worker role to
+`worker_entry::entry`. Its admission callback always rejects with
+`parent_grant_unavailable`: this wires the worker process boundary while the
+parent-to-worker grant protocol is absent, so it cannot dispatch the workload.
+Cargo metadata confirms the target is gated by `native-cuda`; formatting and
+`git diff --check` pass. The binary and native path have not been built or
+executed in this checkpoint. Do not use this entry for a pilot until the parent
+grant is bound to current facts and ongoing supervision.
 
 One sampler output channel owns Ready and all telemetry record sequence numbers.
 A bounded canonical role selector only routes an ordinary packet to the existing
