@@ -1407,6 +1407,97 @@ pub fn raw_events_with_parent_sampler_and_worker(
     Ok(output.finish())
 }
 
+/// Append canonical retained start, consent-request, environment and
+/// worker-setup artifacts owned by the finalized pilot. These are artifact rows rather
+/// than lifecycle events; their payloads remain byte-exact after hex encoding.
+/// Each row labels source ownership only and does not assert that reported
+/// contents are true or that a workload was qualified.
+#[cfg(windows)]
+pub fn append_pilot_owner_artifacts<E>(
+    raw: BoundText,
+    owners: &crate::workload::session_finalizer::PilotOwners<E>,
+    budget: &Budget,
+) -> Result<BoundText, WireError> {
+    let starting_handoff = owners.starting_handoff.session.canonical();
+    let sources: [(&str, Option<&[u8]>); 5] = [
+        ("starting_handoff", starting_handoff),
+        (
+            "consent_request",
+            Some(owners.starting_consent.request().canonical().as_bytes()),
+        ),
+        (
+            "starting_read",
+            Some(owners.starting_read.canonical().as_bytes()),
+        ),
+        (
+            "host_environment",
+            Some(owners.host_environment.snapshot().canonical().as_bytes()),
+        ),
+        (
+            "worker_setup",
+            Some(
+                owners
+                    .worker_setup_delivery
+                    .receipt()
+                    .canonical()
+                    .as_bytes(),
+            ),
+        ),
+    ];
+    let source_bytes = sources
+        .iter()
+        .try_fold(0usize, |total, (_, bytes)| {
+            total.checked_add(bytes.map_or(0, <[u8]>::len))
+        })
+        .ok_or(WireError::Capacity)?;
+    // The temporary Value tree, hex payloads and canonical lines coexist while
+    // RawBuilder charges the growing output buffer separately.
+    let scratch_bytes = source_bytes
+        .checked_mul(4)
+        .and_then(|n| n.checked_add(5 * 4096))
+        .ok_or(WireError::Capacity)?;
+    let _scratch = budget
+        .reserve(scratch_bytes)
+        .map_err(|_| WireError::Capacity)?;
+    let BoundText {
+        text,
+        _allocation: storage,
+        ..
+    } = raw;
+    let mut output = RawBuilder {
+        text,
+        storage,
+        budget: budget.clone(),
+    };
+    for (owner, source) in sources {
+        let bytes = source.unwrap_or_default();
+        let line = object([
+            ("kind", Value::Text("retained_owner_artifact".into())),
+            ("owner", Value::Text(owner.into())),
+            ("available", Value::Bool(source.is_some())),
+            (
+                "digest",
+                if source.is_none() {
+                    Value::Null
+                } else {
+                    Value::Text(Digest::of(Domain::RawArtifact, bytes).to_hex())
+                },
+            ),
+            (
+                "bytes_hex",
+                if source.is_none() {
+                    Value::Null
+                } else {
+                    Value::Text(super::wire_model::hex(bytes))
+                },
+            ),
+        ])
+        .to_canonical();
+        output.push_line(&line)?;
+    }
+    Ok(output.finish())
+}
+
 /// Derive typed telemetry only from actual receipts retained by the fixed
 /// workload ParentSampler. Raw packets remain the audit source for omitted or
 /// rejected rows; this projection never promotes a rejected reading.
