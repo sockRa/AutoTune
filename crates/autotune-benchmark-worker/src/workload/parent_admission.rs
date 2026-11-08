@@ -55,6 +55,19 @@ pub enum AdmissionStartFailure<'a, 's, 'w> {
     },
 }
 
+#[allow(clippy::large_enum_variant)] // Keep the already-created sampler owner inline.
+pub enum ProcessAdmissionFailure<'a, 's, 'w> {
+    ProfileCapacity,
+    SamplerChannel {
+        fault: parent_sampler_channel::InitFault,
+    },
+    WorkerChannel {
+        fault: crate::workload::transport::SendFailure,
+        sampler: ParentSamplerChannel<'s>,
+    },
+    Admission(AdmissionStartFailure<'a, 's, 'w>),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InitFault {
     SamplerAlreadyFaulted,
@@ -519,6 +532,52 @@ pub struct ParentAdmission<'a, 's, 'w> {
 }
 
 impl<'a, 's, 'w> ParentAdmission<'a, 's, 'w> {
+    /// Build the fixed sampler/worker channel pair and immediately start the
+    /// retained parent admission owner. On every construction failure, exact
+    /// process owners remain caller-owned or an already-created sampler channel
+    /// is returned, so cleanup can continue without reconstructing transport.
+    #[allow(clippy::result_large_err)] // Keep each already-created channel owner inline on failure.
+    #[allow(clippy::too_many_arguments)] // Keep exact process/run/clock inputs visible at this trust boundary.
+    pub fn from_processes(
+        sampler_process: &'s mut Process,
+        worker_process: &'w mut Process,
+        run: &BoundRun<'_>,
+        setup_entry: Anchor,
+        first: Anchor,
+        starting: &'a super::starting_launch::AdmissionProcess,
+        setup_receiver: Option<SetupReceiver>,
+        clock: &WindowsClock,
+        budget: &Budget,
+    ) -> Result<Self, ProcessAdmissionFailure<'a, 's, 'w>> {
+        let event_capacity = match usize::try_from(
+            autotune_fma_reference::profile::Profile::approved_design()
+                .limits
+                .event_capacity,
+        ) {
+            Ok(capacity) => capacity,
+            Err(_) => {
+                return Err(ProcessAdmissionFailure::ProfileCapacity);
+            }
+        };
+        let sampler =
+            match ParentSamplerChannel::new(sampler_process, run, setup_entry, first, budget) {
+                Ok(sampler) => sampler,
+                Err(fault) => {
+                    return Err(ProcessAdmissionFailure::SamplerChannel { fault });
+                }
+            };
+
+        let worker = match ParentWorkerChannel::new(worker_process, budget, event_capacity) {
+            Ok(worker) => worker,
+            Err(fault) => {
+                return Err(ProcessAdmissionFailure::WorkerChannel { fault, sampler });
+            }
+        };
+
+        Self::new(sampler, worker, starting, setup_receiver, clock, budget)
+            .map_err(ProcessAdmissionFailure::Admission)
+    }
+
     /// Construct admission and attach the original-deadline safety controller
     /// before returning. The controller is containment only: ordered preflight,
     /// watch readiness, Start and NativeGrant retain their separate gates.
