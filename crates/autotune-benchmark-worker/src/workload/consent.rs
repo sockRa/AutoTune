@@ -552,6 +552,178 @@ pub struct Record {
     rejected: Option<LaunchAttempt>,
 }
 impl Record {
+    /// Lossless bounded capture facts for the final workload raw export.
+    /// The caller must reserve temporary serialization capacity before
+    /// constructing this value; it records claims and console observations but
+    /// does not turn them into authenticated consent.
+    #[cfg(windows)]
+    pub(crate) fn raw_evidence_value(&self) -> Value {
+        let facts = &self.facts;
+        let optional_anchor = |anchor: Option<Anchor>| anchor.map_or(Value::Null, anchor_value);
+        let optional_error = |error: Option<String>| error.map_or(Value::Null, Value::Text);
+        let attempt_value = |attempt: LaunchAttempt| {
+            object([
+                ("target", target_value(attempt.target)),
+                ("anchor", optional_anchor(attempt.anchor)),
+                (
+                    "clock_error",
+                    optional_error(attempt.clock_error.map(|error| format!("{error:?}"))),
+                ),
+                (
+                    "result",
+                    Value::Text(match attempt.result {
+                        Ok(()) => "ok".to_owned(),
+                        Err(error) => format!("{error:?}"),
+                    }),
+                ),
+                (
+                    "observed_clock",
+                    attempt
+                        .observed_clock
+                        .map_or(Value::Null, |(frequency, token)| {
+                            object([
+                                ("frequency", Value::U64(frequency)),
+                                (
+                                    "token",
+                                    Value::Text(crate::sampler::wire_model::hex(&token)),
+                                ),
+                            ])
+                        }),
+                ),
+            ])
+        };
+        let events = facts.events[..facts.event_count.min(MAX_EVENTS)]
+            .iter()
+            .map(|event| {
+                object([
+                    ("kind", Value::U64(event.kind.into())),
+                    ("down", Value::I64(event.down.into())),
+                    ("repeats", Value::U64(event.repeats.into())),
+                    ("key", Value::U64(event.key.into())),
+                    ("scan", Value::U64(event.scan.into())),
+                    ("unicode", Value::U64(event.unicode.into())),
+                    ("controls", Value::U64(event.controls.into())),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let source = match self.source {
+            Source::Fixture => "simulated_fixture",
+            #[cfg(windows)]
+            Source::Console => "console",
+        };
+        let policy_error = facts.policy_error.map(|error| format!("{error:?}"));
+        object([
+            ("version", Value::Text("1".into())),
+            ("scope", Value::Text("owner_consent_capture".into())),
+            ("request", Value::Text(self.request.canonical().into())),
+            ("source", Value::Text(source.into())),
+            (
+                "result",
+                Value::Text(match self.result() {
+                    Ok(()) => "accepted".into(),
+                    Err(error) => format!("rejected:{error:?}"),
+                }),
+            ),
+            (
+                "capture_ref",
+                self.capture_ref().map_or(Value::Null, |capture| {
+                    object([
+                        ("request", d(capture.request)),
+                        ("receipt", anchor_value(capture.receipt)),
+                    ])
+                }),
+            ),
+            (
+                "input_hex",
+                Value::Text(crate::sampler::wire_model::hex(
+                    &facts.input[..facts.length.min(INPUT_CAP)],
+                )),
+            ),
+            ("input_length", Value::U64(facts.length as u64)),
+            ("overflow", Value::Bool(facts.overflow)),
+            ("stdin_terminal", Value::Bool(facts.stdin_terminal)),
+            ("stdout_terminal", Value::Bool(facts.stdout_terminal)),
+            ("before", optional_anchor(facts.before)),
+            ("receipt", optional_anchor(facts.receipt)),
+            (
+                "clock_error",
+                optional_error(facts.clock_error.map(|error| format!("{error:?}"))),
+            ),
+            (
+                "write_error",
+                facts.write_error.map_or(Value::Null, |error| {
+                    object([
+                        ("kind", Value::Text(format!("{:?}", error.kind))),
+                        (
+                            "code",
+                            error
+                                .code
+                                .map_or(Value::Null, |code| Value::I64(code.into())),
+                        ),
+                    ])
+                }),
+            ),
+            (
+                "read_error",
+                facts.read_error.map_or(Value::Null, |error| {
+                    object([
+                        ("kind", Value::Text(format!("{:?}", error.kind))),
+                        (
+                            "code",
+                            error
+                                .code
+                                .map_or(Value::Null, |code| Value::I64(code.into())),
+                        ),
+                    ])
+                }),
+            ),
+            ("policy_error", optional_error(policy_error)),
+            ("events", Value::Array(events)),
+            ("event_count", Value::U64(facts.event_count as u64)),
+            ("polls", Value::U64(facts.polls.into())),
+            ("last_pending", Value::U64(facts.last_pending.into())),
+            ("last_returned", Value::U64(facts.last_returned.into())),
+            ("invalid_input", Value::Bool(facts.invalid_input)),
+            ("deadline_expired", Value::Bool(facts.deadline_expired)),
+            ("rejected_anchor", optional_anchor(facts.rejected_anchor)),
+            (
+                "observed_clock",
+                facts
+                    .observed_clock
+                    .map_or(Value::Null, |(frequency, token)| {
+                        object([
+                            ("frequency", Value::U64(frequency)),
+                            (
+                                "token",
+                                Value::Text(crate::sampler::wire_model::hex(&token)),
+                            ),
+                        ])
+                    }),
+            ),
+            (
+                "launch_attempts",
+                Value::Array(
+                    self.attempts
+                        .iter()
+                        .flatten()
+                        .copied()
+                        .map(attempt_value)
+                        .collect(),
+                ),
+            ),
+            (
+                "rejected_attempt",
+                self.rejected.map_or(Value::Null, attempt_value),
+            ),
+            ("used", Value::Array(self.used.map(Value::Bool).into())),
+            (
+                "usage_fault",
+                self.usage_fault
+                    .map_or(Value::Null, |error| Value::Text(format!("{error:?}"))),
+            ),
+        ])
+    }
+
     /// Historical local identity survives rejection/revocation. Eligibility is
     /// always checked separately through result, source and original clocks.
     pub fn capture_ref(&self) -> Option<CaptureRef> {

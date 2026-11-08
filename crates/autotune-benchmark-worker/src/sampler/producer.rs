@@ -1455,10 +1455,12 @@ pub fn append_pilot_owner_artifacts<E>(
     let scratch_bytes = source_bytes
         .checked_mul(4)
         .and_then(|n| n.checked_add(5 * 4096))
+        .and_then(|n| n.checked_add(crate::workload::consent::CAP * 16))
         .ok_or(WireError::Capacity)?;
     let _scratch = budget
         .reserve(scratch_bytes)
         .map_err(|_| WireError::Capacity)?;
+    let consent_capture = owners.starting_consent.raw_evidence_value().to_canonical();
     let BoundText {
         text,
         _allocation: storage,
@@ -1495,6 +1497,22 @@ pub fn append_pilot_owner_artifacts<E>(
         .to_canonical();
         output.push_line(&line)?;
     }
+    let consent_bytes = consent_capture.as_bytes();
+    let consent_line = object([
+        ("kind", Value::Text("retained_owner_artifact".into())),
+        ("owner", Value::Text("consent_capture".into())),
+        ("available", Value::Bool(true)),
+        (
+            "digest",
+            Value::Text(Digest::of(Domain::RawArtifact, consent_bytes).to_hex()),
+        ),
+        (
+            "bytes_hex",
+            Value::Text(super::wire_model::hex(consent_bytes)),
+        ),
+    ])
+    .to_canonical();
+    output.push_line(&consent_line)?;
     Ok(output.finish())
 }
 
