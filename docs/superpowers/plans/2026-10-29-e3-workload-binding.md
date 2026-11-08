@@ -1682,3 +1682,18 @@ composition are still required before a runnable benchmark can be claimed.
   Windows GNU/Linux all-target/all-feature checks, warning-denied Clippy,
   formatting and diff check pass. No tests or process/runtime/native/GPU
   execution. Later host/peer/consent checks and the full parent loop remain open.
+- 2026-11-08 fixed parent session owner: added Windows-only `FixedParentSession`
+  to construct `ParentAdmission` from the exact retained `AdmissionPair` and
+  `CompletedStarting`, retain a fixed `BoundRun`, advance one bounded setup /
+  preflight / Start / NativeGrant / terminal round, and release Owners only
+  after success/fault terminal gates. Process pairs remain caller-owned through
+  the borrow boundary for paired finalizer/archive transfer. Windows GNU/Linux
+  all-target/all-feature checks, warning-denied Clippy, formatting and diff
+  check pass. No tests or process/runtime/native/GPU execution. Host inputs,
+  launch flow, pilot writer creation and archive polling are not yet an
+  executable top-level parent.
+- 2026-11-08 fixture matrix binding audit: the existing verification-only
+  runner was invoked at clean HEAD `c81c7cdda886a5a657a8f9ffc35dcc63b141ae59`
+  and correctly rejected the matrix's historical source revision before
+  opening artifacts or launching a process. No fixture was executed; refresh
+  source/artifact binding and obtain new explicit approval before any attempt.

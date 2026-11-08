@@ -6,6 +6,10 @@ requires a separately approved source/artifact-bound matrix before fake-process
 acceptance. This request makes that next action concrete. Product progress and
 results belong in ROADMAP.md, not in this execution contract.
 
+## Current binding audit — 2026-11-08
+
+The verification-only runner was invoked at clean `HEAD` `c81c7cdda886a5a657a8f9ffc35dcc63b141ae59` without `-ExecuteApprovedMatrix`. It rejected the prepared matrix because the working source no longer matches the reviewed `ef8786e0a4ea0831b17d14355ce98ecdcbe2883e` revision. The check occurs before artifact opening or any test-driver launch; no fixture/controller process was started. The matrix and image hashes remain historical preparation evidence only. Refresh source/artifact binding and obtain a new matching explicit approval before any later execution; do not reuse the old digest.
+
 ## Exact scope
 
 Run the five ignored `sampler_process` cases once, serially, on the current

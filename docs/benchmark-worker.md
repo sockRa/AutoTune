@@ -1352,6 +1352,15 @@ and the worker control audit against the same original stop window. It returns
 any unused preflight evidence intact. This removes the caller's need to switch
 between two poll APIs, but does not add launch, failed-session recovery or a
 fixed executable.
+The Windows-only `FixedParentSession` now constructs the process-bound
+`ParentAdmission` from a retained `AdmissionPair` and `CompletedStarting`, fixes
+the `BoundRun` for all subsequent rounds, and exposes one bounded
+`advance_once` call per host poll. It can release channels into success/fault
+`Owners` only after the corresponding terminal predicate. Because channels
+borrow the caller's process pair, consuming this session ends those borrows so
+the caller can pass that same pair and returned owners into the paired
+finalizer/archive transfer. It is a session owner, not an executable or a
+process launcher.
 `advance_successful_shutdown_once` drives the success terminal path: it waits
 for complete worker result assessment, issues one planned sampler stop through
 the retained sampler sender, and starts the worker control audit using that

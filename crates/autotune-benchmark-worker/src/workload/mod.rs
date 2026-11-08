@@ -28,6 +28,8 @@ pub mod parent_peers;
 pub mod parent_sampler;
 #[cfg(windows)]
 pub mod parent_sampler_channel;
+#[cfg(windows)]
+pub mod parent_session;
 pub mod parent_start;
 pub mod parent_watch;
 pub mod parent_watch_publication;
